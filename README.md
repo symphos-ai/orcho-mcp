@@ -7,6 +7,7 @@
 [![DCO](https://github.com/symphos-ai/orcho-mcp/actions/workflows/dco.yml/badge.svg)](https://github.com/symphos-ai/orcho-mcp/actions/workflows/dco.yml)
 [![Release](https://github.com/symphos-ai/orcho-mcp/actions/workflows/release.yml/badge.svg)](https://github.com/symphos-ai/orcho-mcp/actions/workflows/release.yml)
 [![codecov](https://codecov.io/gh/symphos-ai/orcho-mcp/branch/main/graph/badge.svg)](https://codecov.io/gh/symphos-ai/orcho-mcp)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/symphos-ai/orcho-mcp/badge)](https://scorecard.dev/viewer/?uri=github.com/symphos-ai/orcho-mcp)
 
 [Model Context Protocol](https://modelcontextprotocol.io) server for Orcho.
 
