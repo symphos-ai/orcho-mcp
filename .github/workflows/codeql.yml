@@ -16,6 +16,7 @@ permissions:
 jobs:
   analyze:
     name: Analyze Python
+    if: ${{ !github.event.repository.private }}
     runs-on: ubuntu-latest
 
     steps:
