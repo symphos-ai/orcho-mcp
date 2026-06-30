@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.venv/
+.DS_Store
+.mcp.json
+build/
+dist/
+uv.lock
+.orcho/.orcho-tasks/

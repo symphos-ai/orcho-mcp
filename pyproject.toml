@@ -1,0 +1,85 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "orcho-mcp"
+version = "0.1.0"
+description = "Orcho — Model Context Protocol server for Claude Code, Cursor, Zed, and other MCP-speaking clients"
+requires-python = ">=3.12"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "Symphos", email = "founder@symphos.ai" }]
+
+dependencies = [
+    # Pipeline runtime + the public APIs we depend on:
+    #   - pipeline.argv.build_orch_argv (public argv builder)
+    #   - ORCHO_RUN_ID env / --run-id flag
+    #   - core.observability.events.append_event (cross-process append)
+    "orcho-core>=0.1.0,<0.2",
+    # Anthropic's MCP SDK — server + client primitives.
+    "mcp>=1.2",
+    # JSON Schema generation for tool I/O.
+    "pydantic>=2.6",
+    # Async helpers used by FastMCP's stdio transport.
+    "anyio>=4.4",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "pytest-cov>=4.0", "ruff>=0.5"]
+
+[project.urls]
+Homepage = "https://github.com/symphos-ai/orcho-mcp"
+Repository = "https://github.com/symphos-ai/orcho-mcp"
+Issues = "https://github.com/symphos-ai/orcho-mcp/issues"
+
+[project.scripts]
+orcho-mcp = "orcho_mcp.server:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["orcho_mcp*"]
+
+[tool.setuptools.package-data]
+# Bundle the user-facing onboarding markdown so it's available under
+# non-editable wheel installs, not just `pip install -e .`.
+orcho_mcp = ["_onboarding/*.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# ``"src"`` puts THIS checkout's ``orcho_mcp`` package ahead of any editable
+# install on ``sys.path``, so a bare ``pytest`` exercises the source under
+# development rather than a stale stable install of the same dist.
+# ``"."`` makes ``tests.fixtures.*`` helpers resolvable under default
+# ``--import-mode=prepend``. ``tests/`` and its subdirectories are
+# intentionally NOT packages (no ``__init__.py``) to avoid shadowing the ``mcp``
+# SDK at import time inside test modules; pytest treats them as namespace
+# packages once ``tests/`` is on path.
+pythonpath = ["src", "."]
+addopts = "-ra -m 'not mcp_integration'"
+markers = [
+    "unit: pure unit tests for local handlers and services.",
+    "integration: multi-module tests or tests that exercise subprocess/protocol boundaries.",
+    "acceptance: end-to-end user-visible MCP behaviour checks.",
+    "smoke: small broad-coverage checks suitable for quick confidence.",
+    "serial: must run outside xdist because it uses shared process, filesystem, git, env, port, or global event state.",
+    "mcp_protocol: initialize/list/call stdio protocol, resources, prompts, subscriptions, and schema framing.",
+    "mcp_run_control: run start/status/control, typed pilot, async pilot, and Orcho run lifecycle integration.",
+    "mcp_supervisor: subprocess supervisor, spawn, process lifecycle, and run directory management.",
+    "mcp_observe: watch, event tailing, summaries, progress, and silent/terminal parity.",
+    "mcp_services: read/query services, workspace state, path resolution, and domain service helpers.",
+    "mcp_schema: tool/resource/prompt catalog snapshots and JSON schema contract checks.",
+    "mcp_integration: real pipeline subprocess via --mock; slower; gated. Run with `pytest -m mcp_integration`.",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+combine-as-imports = true
