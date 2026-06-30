@@ -1,5 +1,13 @@
 # orcho-mcp
 
+[![PyPI](https://img.shields.io/pypi/v/orcho-mcp.svg)](https://pypi.org/project/orcho-mcp/)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://pypi.org/project/orcho-mcp/)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
+[![CI](https://github.com/symphos-ai/orcho-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/symphos-ai/orcho-mcp/actions/workflows/ci.yml)
+[![DCO](https://github.com/symphos-ai/orcho-mcp/actions/workflows/dco.yml/badge.svg)](https://github.com/symphos-ai/orcho-mcp/actions/workflows/dco.yml)
+[![Release](https://github.com/symphos-ai/orcho-mcp/actions/workflows/release.yml/badge.svg)](https://github.com/symphos-ai/orcho-mcp/actions/workflows/release.yml)
+[![codecov](https://codecov.io/gh/symphos-ai/orcho-mcp/branch/main/graph/badge.svg)](https://codecov.io/gh/symphos-ai/orcho-mcp)
+
 [Model Context Protocol](https://modelcontextprotocol.io) server for Orcho.
 
 Exposes orcho's runtime to MCP-aware clients (Claude Code, Cursor, Zed, and other MCP-speaking tools) over stdio. Full async control loop — act, observe, decide, inspect — without raw log scraping.
