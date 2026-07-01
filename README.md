@@ -24,14 +24,35 @@ Exposes orcho's runtime to MCP-aware clients (Claude Code, Cursor, Zed, and othe
 
 ## Install
 
+If `pipx` is missing, install it first. On macOS with Homebrew:
+
 ```bash
-pipx install 'orcho[mcp]'
+brew install pipx
+pipx ensurepath
+exec zsh -l
 ```
 
-For a project-managed Python environment:
+For Linux or Windows, use the
+[official pipx installation guide](https://pipx.pypa.io/stable/installation/).
+
+### Recommended CLI install
+
+Use the `orcho` distribution with the `mcp` extra when you want both the Orcho
+commands and the MCP server available from your shell. `pipx` keeps the command
+set isolated from the current project or Python environment.
 
 ```bash
-pip install orcho-mcp
+pipx install "orcho[mcp]"
+orcho-mcp --help
+```
+
+### Direct MCP package install
+
+Use `pip` when you intentionally want `orcho-mcp` in the active virtual
+environment, CI image, devcontainer, or Docker image.
+
+```bash
+python -m pip install orcho-mcp
 ```
 
 This pulls `orcho-core` (the engine), the official `mcp` Python SDK, and the runtime pieces orcho-mcp depends on.
