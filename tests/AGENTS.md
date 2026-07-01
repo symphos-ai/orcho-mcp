@@ -43,7 +43,7 @@ to relax a guard, update the guard and the relevant architecture doc in the same
 diff, with the new intended boundary stated plainly.
 
 Run `pytest -q tests/unit/architecture` after touching adapters, resources,
-schemas, package imports, docs hygiene, or test layout.
+schemas, package imports, or test layout.
 
 ## Behavioral Tests
 

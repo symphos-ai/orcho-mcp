@@ -189,7 +189,6 @@ preferences.
 | `test_import_graph.py` | Domains cannot import forbidden peer layers such as `orcho_mcp.tools` |
 | `test_resources_boundary.py` | Resources do not import SDK, `tools.py`, or perform direct file reads |
 | `test_supervisor_boundary.py` | Supervisor package shape, operation exports, signatures, and singleton location stay stable |
-| `test_public_text_hygiene.py` | Public text does not reference retired paths or internal process labels |
 | `test_no_direct_run_state.py` | MCP read paths use SDK surfaces instead of private run-state parsers |
 | `test_resource_catalog.py` | Static resource URIs and resource templates are explicit expected sets |
 
