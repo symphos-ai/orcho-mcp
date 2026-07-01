@@ -421,7 +421,6 @@ the architecture, not a flaky test:
 | `resources/` purity | `test_resources_boundary.py` — no SDK, no `orcho_mcp.tools`, no direct file IO |
 | Supervisor package shape | `test_supervisor_boundary.py` — expected modules present, `_singleton` on the package `__init__`, soft size cap per module |
 | Test layout mirrors source | `test_test_layout_contract.py` — every production sub-package has a populated unit-test home OR an explicit exemption |
-| Public text hygiene | `test_public_text_hygiene.py` — no retired paths, internal process markers, or release-private vocabulary |
 
 When a guard fails, the test docstring explains the invariant. The
 fix is almost always a refactor — pushing the call into the right

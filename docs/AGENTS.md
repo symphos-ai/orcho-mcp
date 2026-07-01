@@ -33,7 +33,6 @@ instead of explaining why it changed.
 
 ## When Editing Docs
 
-- Run public text hygiene checks when editing docs, comments, or docstrings.
 - Keep examples aligned with the current `tests/` layout and source packages.
 - If a doc changes tool, resource, schema, or lifecycle behavior, check whether
   an architecture guard, schema snapshot, or resource catalog test also needs an
