@@ -12,10 +12,9 @@ Three scopes:
 2. **Internal process markers** — PR numbers, REA tags, ADR refs, and
    one-off phase codes that read fine in a commit message but turn
    into noise inside long-lived prose.
-3. **Public-boundary banned terms** — the same list enforced at edit
-   time by the workspace's ``orcho-public-boundary`` skill, now
-   materialised as a gate so a stray mention in docs or docstrings
-   blocks the build instead of waiting for a reviewer to spot it.
+3. **Release-private vocabulary**: internal product-line wording and
+   non-public package names that should not appear in public docs,
+   comments, or docstrings.
 
 Intentional carve-outs:
 
@@ -100,10 +99,10 @@ PROCESS_MARKERS = re.compile(
     r"|\bretired tests/mcp\b"
 )
 
-# Public-boundary blocked vocabulary, case-insensitive. Build the
-# pattern from split strings so broader cross-repo text scanners don't
-# flag this guard file for naming the vocabulary it enforces.
-_BOUNDARY_TERMS = (
+# Release-private vocabulary, case-insensitive. Build the pattern from
+# split strings so broader cross-repo text scanners don't flag this
+# guard file for naming the vocabulary it enforces.
+_RELEASE_PRIVATE_TERMS = (
     "desk" "top",
     "orcho-" "desk" "top",
     "py" "webview",
@@ -114,8 +113,8 @@ _BOUNDARY_TERMS = (
     "license-" "gate",
     "enterprise" " tier",
 )
-BANNED_TERMS = re.compile(
-    "|".join(rf"\b{re.escape(term)}\b" for term in _BOUNDARY_TERMS),
+PRIVATE_RELEASE_VOCABULARY = re.compile(
+    "|".join(rf"\b{re.escape(term)}\b" for term in _RELEASE_PRIVATE_TERMS),
     re.IGNORECASE,
 )
 
@@ -190,14 +189,14 @@ def test_no_internal_process_markers() -> None:
     )
 
 
-def test_no_banned_public_boundary_terms() -> None:
-    """Public-side text must not mention the open-core boundary or
-    closed-surface framing. Same rule as the workspace's
-    ``orcho-public-boundary`` skill, enforced here as a gate.
+def test_no_private_release_vocabulary() -> None:
+    """Public docs, comments, and docstrings must not mention
+    release-private vocabulary.
     """
-    hits = _scan(BANNED_TERMS)
+    hits = _scan(PRIVATE_RELEASE_VOCABULARY)
     assert not hits, (
-        "Banned public-boundary terms found:\n  " + "\n  ".join(hits)
-        + "\nThis repo is Apache-2.0 public — reword without the banned "
-          "terms. Open-core boundary discussion belongs in non-public repos."
+        "Release-private vocabulary found:\n  " + "\n  ".join(hits)
+        + "\nThis repo is Apache-2.0 public - reword without "
+          "release-private vocabulary. Move private product-line "
+          "discussion outside public repos."
     )
