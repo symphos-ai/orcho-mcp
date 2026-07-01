@@ -114,7 +114,9 @@ _RELEASE_PRIVATE_TERMS = (
     "enterprise" " tier",
 )
 PRIVATE_RELEASE_VOCABULARY = re.compile(
-    "|".join(rf"\b{re.escape(term)}\b" for term in _RELEASE_PRIVATE_TERMS),
+    "|".join(
+        rf"\b{re.escape(term)}\b" for term in _RELEASE_PRIVATE_TERMS
+    ),
     re.IGNORECASE,
 )
 
