@@ -15,8 +15,8 @@ from orcho_mcp.services.read_queries import get_project_skills
 @mcp.resource(
     "orcho://projects/{project_b64}/skills",
     name="orcho_project_skills",
-    description="Specialist skill registry under <project>/.agent/multiagent/skills/. "
-                "Project path is URL-safe base64 (see encode_project_dir).",
+    description="Agent Skills discovered for the project (same registry as "
+                "orcho_skills_list). Project path is URL-safe base64 (see encode_project_dir).",
     mime_type="application/json",
 )
 def project_skills_resource(project_b64: str) -> str:

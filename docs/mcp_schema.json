@@ -447,7 +447,7 @@
       "uriTemplate": "orcho://profiles/{name}"
     },
     {
-      "description": "Specialist skill registry under <project>/.agent/multiagent/skills/. Project path is URL-safe base64 (see encode_project_dir).",
+      "description": "Agent Skills discovered for the project (same registry as orcho_skills_list). Project path is URL-safe base64 (see encode_project_dir).",
       "mimeType": "application/json",
       "name": "orcho_project_skills",
       "uriTemplate": "orcho://projects/{project_b64}/skills"

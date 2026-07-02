@@ -17,7 +17,7 @@ URI scheme:
   orcho://runs/{run_id}/diff.patch             — captured unified diff
   orcho://profiles                             — profile catalogue
   orcho://profiles/{name}                      — single profile
-  orcho://projects/{project_b64}/skills        — skills under .agent/multiagent/skills/
+  orcho://projects/{project_b64}/skills        — Agent Skills discovered for the project
   orcho://workflows                            — workflow recipe catalogue
 
 ``project_b64`` is a URL-safe base64 of the project_dir absolute path; raw
