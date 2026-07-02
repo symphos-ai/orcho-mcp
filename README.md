@@ -13,6 +13,8 @@
 
 Exposes orcho's runtime to MCP-aware clients (Claude Code, Cursor, Zed, and other MCP-speaking tools) over stdio. Full async control loop — act, observe, decide, inspect — without raw log scraping.
 
+📖 **Documentation:** [docs.orcho.dev](https://docs.orcho.dev)
+
 > **Status:** ``v0.1.0`` public release line. Core control loop surfaces are available:
 >
 > - **Act**: ``orcho_run_start`` / ``orcho_run_resume`` / ``orcho_run_cancel`` with L4-test-pinned semantics (process-group signal handling, supervisor-owned restart-recovery, race-aware cancel).
