@@ -23,7 +23,7 @@ from sdk import (
     load_meta as _sdk_load_meta,
 )
 
-from orcho_mcp.errors import RunNotFoundError
+from orcho_mcp.errors import RunNotFoundError, WorkspaceNotResolvedError
 from orcho_mcp.services.errors import map_sdk_errors
 from orcho_mcp.services.run_lookup import find_run_dir
 
@@ -124,6 +124,31 @@ def get_run_commit_decision_raw(run_id: str) -> dict:
     return data
 
 
+def get_run_allowed_modifications(run_id: str) -> list[str]:
+    """Return the plan's top-level ``allowed_modifications`` globs.
+
+    Reads the durable ``parsed_plan.json`` artifact (via
+    :func:`get_run_parsed_plan_raw`) and projects its top-level
+    ``allowed_modifications`` list — the declared in-plan modification globs
+    (ADR 0087). The SDK ``PlanSummary`` does not carry this field, so the
+    durable plan artifact is the single source.
+
+    Fully defensive like the other evidence reads: an unknown run, a missing /
+    unreadable ``parsed_plan.json``, or a non-list ``allowed_modifications``
+    all yield ``[]`` — never an exception — so the plan slice degrades cleanly.
+    """
+    try:
+        plan = get_run_parsed_plan_raw(run_id)
+    except (RunNotFoundError, WorkspaceNotResolvedError):
+        return []
+    if not isinstance(plan, dict):
+        return []
+    raw = plan.get("allowed_modifications")
+    if not isinstance(raw, list):
+        return []
+    return [str(x) for x in raw if x is not None]
+
+
 def get_run_evidence_raw(run_id: str) -> dict:
     """Return the composed evidence bundle body for a run."""
     with map_sdk_errors(run_id):
@@ -177,6 +202,7 @@ def get_run_events_ndjson(run_id: str) -> str:
 
 
 __all__ = [
+    "get_run_allowed_modifications",
     "get_run_commit_decision_raw",
     "get_run_diff_patch",
     "get_run_evidence_raw",

@@ -1187,8 +1187,15 @@ def orcho_run_evidence(
 
     ``slice``:
       - ``"all"`` (default) — every slice populated in one response.
-      - ``"plan"`` — plan summary only.
-      - ``"findings"`` — flattened findings list (filterable).
+      - ``"plan"`` — plan summary only, including the plan's declared
+        ``allowed_modifications`` globs (from the durable plan artifact).
+      - ``"findings"`` — flattened findings list (filterable). Each finding
+        carries an ``advisory`` flag: the latest non-approved ``validate_plan``
+        attempt's findings, forwarded into a successful whole-plan implement,
+        are advisory (visible, NOT an active release blocker). ``advisory``
+        isolates only that subset — findings are flattened across all attempts,
+        so ``advisory=False`` still includes historical/resolved entries and is
+        NOT the active-blocker set.
       - ``"commands"`` — pipeline shell-outs.
       - ``"artifacts"`` — files the run wrote.
       - ``"errors"`` — errors + halt reason.
@@ -1240,6 +1247,34 @@ def orcho_run_evidence(
         ``stopped`` / ``unknown`` / ``usage``). ``resolved`` is tri-state
         (True / False / None). A run with no advisor surface returns an empty
         slice (``calls=[]``, zeroed summary), never an error.
+      - ``"scope_expansion"`` — the ADR 0110 scope-expansion audit recorded at
+        ``final_acceptance``: one item per out-of-plan path with its
+        ``classification`` (``notice`` / ``risk`` / ``blocker``), ``category``,
+        and supporting ``evidence``, plus the aggregate ``has_blocker``
+        decision-condition flag. A ``notice`` is informational ONLY — it never
+        forms an operator handoff / next_action; a ``blocker`` is surfaced via
+        ``has_blocker`` as the operator-decision condition. This is a SEPARATE
+        axis from the delivery ``scope_disclosure`` on ``orcho_delivery_gate``
+        (which names strict-mono sibling files behind a shipping block). Empty
+        slice (``items=[]``, ``has_blocker=False``) when the run recorded no
+        scope-expansion audit, never an error.
+      - ``"delivery"`` — the post-release commit-delivery outcome as typed
+        data: ``release_verdict`` (``approved`` / ``rejected`` / ``none``), the
+        raw ``decision_status`` + ``action``, and the distinguishable
+        ``applied`` / ``committed`` / ``skipped`` / ``failed`` booleans mapped
+        from the core ``CommitDeliveryStatus`` vocabulary, plus ``commit_sha`` /
+        ``halt_reason`` and the same ``implement_delivery`` audit as the
+        ``errors`` slice (single source). ``None`` when the run recorded no
+        commit-delivery decision. This is read-only evidence — NOT the
+        interactive ``orcho_delivery_gate``. The inherited-vs-current
+        verification receipts behind an approved gate-rerun child live in the
+        ``verification_timeline`` (``inherited`` + per-gate ``source_run_id``)
+        and ``receipts`` slices, not here.
+      - ``"correction"`` — the ADR 0098 correction fixed-point outcome:
+        ``non_converging`` (an operator-decision condition — the captain may
+        stop), the ``repeated`` blockers, ``parent_run_id`` / ``child_run_id``,
+        advisory ``suggested_actions`` (next-step hints, never auto-applied),
+        and ``reason``. ``None`` when core recorded no fixed-point block.
 
     ``severity_min`` (only honoured when findings are returned):
     minimum-criticality cutoff. ``"P0"`` returns only P0; ``"P1"``

@@ -18,7 +18,25 @@ from orcho_mcp.schemas.shared import NextActionRecord, ProviderPressure
 
 
 class FindingRecord(BaseModel):
-    """One reviewer finding flattened from a phase attempt."""
+    """One reviewer finding flattened from a phase attempt.
+
+    ``advisory`` is ``True`` for a finding core treats as *visible but not
+    active* — specifically the LATEST ``validate_plan`` attempt's findings, when
+    that attempt was not approved and its critique was forwarded into a
+    successful whole-plan implement (no subtask DAG, no guardrail-block /
+    failure). An advisory finding is NOT an active release blocker; it mirrors
+    core's ``_review_finding_summary`` advisory rule
+    (``pipeline.project.finalization``).
+
+    ``advisory`` isolates ONLY that forwarded-critique subset — it is NOT a full
+    active/resolved classification. Because ``sdk.list_findings`` flattens
+    findings across ALL phase attempts, the ``advisory=False`` set still
+    contains historical/resolved entries (e.g. an earlier ``validate_plan``
+    attempt superseded by a later approval). Do NOT read ``advisory=False`` as
+    "active": it means "not in the advisory subset", not "an active release
+    blocker". Build the active-blocker set from the reviewer / final_acceptance
+    verdicts (the ``delivery`` / ``correction`` slices), not from this flag.
+    """
     id: str
     severity: str
     title: str
@@ -28,6 +46,7 @@ class FindingRecord(BaseModel):
     line: int | None = None
     phase: str
     attempt: int
+    advisory: bool = False
 
 
 class PlanSliceRecord(BaseModel):
@@ -43,6 +62,15 @@ class PlanSliceRecord(BaseModel):
     commands_to_run: list[str] = Field(default_factory=list)
     risks: list[str] = Field(default_factory=list)
     review_focus: list[str] = Field(default_factory=list)
+    allowed_modifications: list[str] = Field(
+        default_factory=list,
+        description=(
+            "The plan's declared in-plan modification globs (ADR 0087), read "
+            "from the durable ``parsed_plan.json`` top-level "
+            "``allowed_modifications`` (the SDK plan summary does not carry "
+            "this field). Empty when the plan declared none."
+        ),
+    )
 
 
 class EvidenceCommandSliceRecord(BaseModel):
@@ -513,6 +541,156 @@ class HandoffAdviceSliceRecord(BaseModel):
     )
 
 
+class ScopeExpansionItemRecord(BaseModel):
+    """One scope-expansion observation recorded at ``final_acceptance``.
+
+    This is the ADR 0110 scope-expansion axis: ``final_acceptance`` compares
+    the change actually delivered against the plan's declared surface and
+    records paths that fell outside it, each with a triage ``classification``.
+    It is a SEPARATE fact from the delivery ``scope_disclosure`` on
+    :class:`DeliveryGateProjection` — that one names sibling-repo files
+    implicated by a strict-mono ``delivery_scope_violation`` (a shipping guard),
+    whereas this one is the plan-vs-delivered surface audit. Do not conflate the
+    two axes.
+
+    ``classification`` is EXACTLY one of ``'notice'`` / ``'risk'`` /
+    ``'blocker'`` (projected verbatim from the core item's ``status``):
+
+      - ``notice`` — informational only. It never implies an operator decision
+        or a human handoff; the MCP layer surfaces it as data and forms no
+        ``next_action`` for it.
+      - ``risk`` — a flagged expansion worth operator attention, still not a
+        hard stop on its own.
+      - ``blocker`` — an out-of-scope change core treats as a release-blocking
+        condition; reflected through the slice's ``has_blocker`` flag.
+
+    ``category`` is the optional core-supplied bucket for the observation;
+    ``evidence`` carries the supporting breadcrumbs (paths / notes) verbatim.
+    """
+    path: str
+    classification: str = Field(
+        description="'notice' | 'risk' | 'blocker' (from the core item status).",
+    )
+    category: str | None = None
+    evidence: list[str] = Field(default_factory=list)
+
+
+class ScopeExpansionSliceRecord(BaseModel):
+    """Typed projection of a run's ADR 0110 scope-expansion audit.
+
+    Folds ``meta['phases']['final_acceptance']['scope_expansion']`` into a
+    typed item list plus the aggregate ``has_blocker`` flag. A run whose
+    ``final_acceptance`` recorded no scope-expansion audit (missing / malformed
+    key, or none observed) yields a clean empty slice (``items=[]`` and
+    ``has_blocker=False``), never an error — read-only forensic data.
+
+    ``has_blocker`` is the decision-condition flag: ``True`` marks that at
+    least one ``blocker``-classified expansion is present, distinguishing an
+    operator-decision situation from a purely informational ``notice``-only
+    audit. It changes no core policy — it only reflects what core recorded.
+    """
+    items: list[ScopeExpansionItemRecord] = Field(default_factory=list)
+    has_blocker: bool = False
+
+
+class DeliverySummaryRecord(BaseModel):
+    """Typed projection of a run's post-release commit-delivery outcome.
+
+    Read-only evidence built from the authoritative ``meta['commit_delivery']``
+    decision (the persisted ``CommitDeliveryDecision`` from
+    ``pipeline.engine.commit_delivery``). This is NOT the interactive
+    :class:`DeliveryGateProjection` — it never resolves available actions or
+    mutates state; it only reads what already happened so a captain can tell an
+    applied / committed / skipped / failed delivery apart without parsing prose.
+
+    Booleans are mapped explicitly from the core ``CommitDeliveryStatus``
+    vocabulary (``disabled`` / ``not_applicable`` / ``no_diff`` / ``pending`` /
+    ``fix_requested`` / ``committed`` / ``applied_uncommitted`` / ``skipped`` /
+    ``halted`` / ``commit_failed`` / ``apply_failed`` / ``target_dirty`` /
+    ``verification_blocked``):
+
+      - ``applied`` — the diff landed in the target checkout: status is
+        ``applied_uncommitted`` or ``committed``.
+      - ``committed`` — a new commit was written: status is ``committed`` OR a
+        ``commit_sha`` is present.
+      - ``skipped`` — status is ``skipped``.
+      - ``failed`` — status is one of ``commit_failed`` / ``apply_failed`` /
+        ``halted`` / ``verification_blocked`` / ``target_dirty``.
+
+    An unrecognized status leaves all four ``False`` while ``decision_status``
+    preserves the raw value verbatim.
+
+    ``release_verdict`` mirrors ``services.delivery_gate._map_release`` (the
+    single source), so an approved correction child re-run after a
+    ``gate_rerun`` reads ``approved`` from its OWN ``commit_delivery`` block.
+    The inherited-vs-current verification receipts behind that verdict are NOT
+    duplicated here — read them from the ``verification_timeline`` slice
+    (``inherited`` set + per-gate ``inherited`` / ``source_run_id``) and the
+    ``receipts`` slice.
+
+    ``implement_delivery`` is the SAME :class:`ImplementDeliveryRecord` the
+    ``errors`` slice surfaces, projected from the errors-rollup (not a second
+    meta read) — single source for the implement-verdict
+    (clean / repaired / waived / incomplete + incomplete_subtasks /
+    missing_subtask_receipts).
+    """
+    release_verdict: str = Field(
+        description="Release outcome from meta ``release_verdict``: "
+                    "'approved' | 'rejected' | 'none'.",
+    )
+    decision_status: str | None = Field(
+        default=None,
+        description="Raw ``meta['commit_delivery'].status`` "
+                    "(CommitDeliveryStatus), preserved verbatim.",
+    )
+    action: str | None = Field(
+        default=None,
+        description="Raw ``meta['commit_delivery'].action`` "
+                    "(approve / apply / fix / skip / halt).",
+    )
+    applied: bool = False
+    committed: bool = False
+    commit_sha: str | None = None
+    skipped: bool = False
+    failed: bool = False
+    halt_reason: str | None = None
+    implement_delivery: ImplementDeliveryRecord | None = Field(
+        default=None,
+        description=(
+            "The same typed implement delivery/waiver audit as the ``errors`` "
+            "slice, projected from the errors-rollup (single source, not a "
+            "second meta read). None for a clean implement delivery."
+        ),
+    )
+
+
+class CorrectionSliceRecord(BaseModel):
+    """Typed projection of a run's ADR 0098 correction fixed-point outcome.
+
+    Read from ``meta['correction_fixed_point']`` (the durable non-convergence
+    block core writes when a correction child repeats its parent's blockers)
+    plus the run's ``halt_reason``. Absent block → the slice is ``None`` (never
+    an error).
+
+    ``non_converging`` True is an OPERATOR-DECISION condition, not an automation
+    hook: ``suggested_actions`` are next-step hints for the captain to choose
+    from (e.g. stop and inspect), NEVER an auto-applied fix. MCP surfaces the
+    fact; it does not act on it.
+    """
+    non_converging: bool = False
+    repeated: list[str] = Field(
+        default_factory=list,
+        description="Blocker fingerprints that recurred parent → child.",
+    )
+    parent_run_id: str | None = None
+    child_run_id: str | None = None
+    suggested_actions: list[str] = Field(
+        default_factory=list,
+        description="Operator next-step hints — advisory, never auto-applied.",
+    )
+    reason: str | None = None
+
+
 class EvidenceResult(BaseModel):
     """Returned by ``orcho_run_evidence``.
 
@@ -521,8 +699,15 @@ class EvidenceResult(BaseModel):
     populates every slice for one-shot inspection.
 
     Slices:
-      - ``"plan"`` — plan summary (PlanSliceRecord)
-      - ``"findings"`` — flattened reviewer findings (list)
+      - ``"plan"`` — plan summary incl. ``allowed_modifications`` from the
+        durable plan (PlanSliceRecord)
+      - ``"findings"`` — flattened reviewer findings, each with an ``advisory``
+        flag: the latest non-approved ``validate_plan`` attempt's findings,
+        forwarded into a successful whole-plan implement, are advisory (visible,
+        not an active release blocker). ``advisory`` isolates only that subset;
+        because findings are flattened across all attempts, ``advisory=False``
+        still includes historical/resolved entries and must NOT be read as
+        "active" (list of FindingRecord)
       - ``"commands"`` — pipeline shell-outs (list)
       - ``"artifacts"`` — files the run wrote (list)
       - ``"errors"`` — errors + halt reason (ErrorsHaltSliceRecord)
@@ -549,6 +734,29 @@ class EvidenceResult(BaseModel):
         summary (calls / applied_retries / resolved_retries / repeated /
         stopped / unknown / usage). Empty slice when the run has no advisor
         surface (HandoffAdviceSliceRecord)
+      - ``"scope_expansion"`` — ADR 0110 scope-expansion audit from
+        ``final_acceptance``: per-path items (path / classification
+        notice|risk|blocker / category / evidence) plus the aggregate
+        ``has_blocker`` decision-condition flag. A ``notice`` is informational
+        only and never forms an operator handoff. This is a SEPARATE axis from
+        the delivery ``scope_disclosure`` on ``DeliveryGateProjection`` (which
+        names strict-mono sibling files behind a shipping block). Empty slice
+        when the run recorded no scope-expansion audit (ScopeExpansionSliceRecord)
+      - ``"delivery"`` — post-release commit-delivery outcome as typed data:
+        ``release_verdict`` (approved / rejected / none), the raw
+        ``decision_status`` + ``action``, and the distinguishable
+        ``applied`` / ``committed`` / ``skipped`` / ``failed`` booleans (mapped
+        from the core CommitDeliveryStatus vocabulary), ``commit_sha`` /
+        ``halt_reason``, plus the same ``implement_delivery`` audit as the
+        ``errors`` slice. ``None`` when the run recorded no commit-delivery
+        decision. Inherited-vs-current receipts behind an approved gate-rerun
+        child live in the ``verification_timeline`` + ``receipts`` slices
+        (DeliverySummaryRecord)
+      - ``"correction"`` — ADR 0098 correction fixed-point / non-convergence:
+        ``non_converging`` (an operator-decision condition), ``repeated``
+        blockers, ``parent_run_id`` / ``child_run_id``, advisory
+        ``suggested_actions`` (never auto-applied), and ``reason``. ``None``
+        when core recorded no fixed-point block (CorrectionSliceRecord)
       - ``"all"`` — every slice in one response
     """
     run_id: str
@@ -564,6 +772,9 @@ class EvidenceResult(BaseModel):
     verification_timeline: VerificationTimelineRecord | None = None
     verification_cockpit: VerificationCockpit | None = None
     handoff_advice: HandoffAdviceSliceRecord | None = None
+    scope_expansion: ScopeExpansionSliceRecord | None = None
+    delivery: DeliverySummaryRecord | None = None
+    correction: CorrectionSliceRecord | None = None
 
 
 # ── orcho_run_diff ───────────────────────────────────────────────────────────
@@ -730,10 +941,12 @@ class DeliveryGateProjection(BaseModel):
 
 
 __all__ = [
+    "CorrectionSliceRecord",
     "CriterionReportRecord",
     "DeliveryActionRecord",
     "DeliveryGateDiffSummary",
     "DeliveryGateProjection",
+    "DeliverySummaryRecord",
     "ErrorsHaltSliceRecord",
     "EvidenceArtifactSliceRecord",
     "EvidenceCommandSliceRecord",
@@ -747,6 +960,8 @@ __all__ = [
     "PlanSliceRecord",
     "RunDiffFile",
     "RunDiffResult",
+    "ScopeExpansionItemRecord",
+    "ScopeExpansionSliceRecord",
     "SubRunLinkRecord",
     "SubtaskReceiptRecord",
     "VerificationCheckRecord",
