@@ -45,6 +45,40 @@ command -v orcho-mcp
 "$ORCHO_MCP_COMMAND" --version
 ```
 
+## Docker server command
+
+If you use the container image instead of a native install, the MCP command is
+`docker` and the server command becomes its argument list. Mount the workspace
+parent and bind the MCP server to the workspace inside the container:
+
+```bash
+docker run --rm -i \
+  -v "$HOME/www/my-workspace:/workspace" \
+  -v "$HOME/.orcho-auth:/agent-auth:ro" \
+  -e ORCHO_WORKSPACE=/workspace/workspace-orchestrator \
+  ghcr.io/symphos-ai/orcho \
+  orcho-mcp
+```
+
+For JSON-based clients, use the same shape:
+
+```json
+{
+  "command": "docker",
+  "args": [
+    "run", "--rm", "-i",
+    "-v", "/Users/me/www/my-workspace:/workspace",
+    "-v", "/Users/me/.orcho-auth:/agent-auth:ro",
+    "-e", "ORCHO_WORKSPACE=/workspace/workspace-orchestrator",
+    "ghcr.io/symphos-ai/orcho",
+    "orcho-mcp"
+  ]
+}
+```
+
+For terminal registration commands, put the `docker run ... orcho-mcp` command
+after the final `--` instead of `"$ORCHO_MCP_COMMAND"`.
+
 The workspace path used below is:
 
 ```text
