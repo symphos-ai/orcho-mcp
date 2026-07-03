@@ -593,6 +593,22 @@ class ScopeExpansionSliceRecord(BaseModel):
     has_blocker: bool = False
 
 
+class PrIntentRecord(BaseModel):
+    """Typed projection of a run's durable ``pr_intent`` (ADR 0119).
+
+    A pure wire model for the pull-request intent core emits alongside a
+    branch-policy delivery: the ``branch`` a PR would open from, its ``base``,
+    a proposed ``title``, and a ``suggested_command`` the operator can run to
+    open it. Every field is ``str | None`` and defaults to ``None`` — the whole
+    record is ``None`` (absent) when core did not emit a ``pr_intent`` block
+    (e.g. a stale core, or a delivery mode with no PR intent).
+    """
+    branch: str | None = None
+    base: str | None = None
+    title: str | None = None
+    suggested_command: str | None = None
+
+
 class DeliverySummaryRecord(BaseModel):
     """Typed projection of a run's post-release commit-delivery outcome.
 
@@ -633,6 +649,14 @@ class DeliverySummaryRecord(BaseModel):
     meta read) — single source for the implement-verdict
     (clean / repaired / waived / incomplete + incomplete_subtasks /
     missing_subtask_receipts).
+
+    ``commit_sha`` is present for a landed commit (``protect_default`` / ``named``
+    / ``bypass`` branch policies, or any ``committed`` status) and ABSENT for a
+    publish-only ``worktree_branch`` delivery that only published a branch
+    without writing a commit to the target. ``delivery_branch`` (the published /
+    publishable delivery branch) and ``pr_intent`` (the durable ADR 0119 PR
+    intent) are additive: both are ``None`` when core did not emit them (e.g. a
+    stale core, or a delivery mode that produced neither).
     """
     release_verdict: str = Field(
         description="Release outcome from meta ``release_verdict``: "
@@ -654,6 +678,22 @@ class DeliverySummaryRecord(BaseModel):
     skipped: bool = False
     failed: bool = False
     halt_reason: str | None = None
+    delivery_branch: str | None = Field(
+        default=None,
+        description=(
+            "The published / publishable delivery branch (ADR 0119). Present "
+            "for a branch-policy delivery (e.g. a publish-only "
+            "``worktree_branch``); ``None`` when core emitted no branch."
+        ),
+    )
+    pr_intent: PrIntentRecord | None = Field(
+        default=None,
+        description=(
+            "Durable ADR 0119 pull-request intent (branch / base / title / "
+            "suggested_command). ``None`` when core emitted no ``pr_intent`` "
+            "block (e.g. a stale core or a delivery mode with no PR intent)."
+        ),
+    )
     implement_delivery: ImplementDeliveryRecord | None = Field(
         default=None,
         description=(
@@ -936,6 +976,22 @@ class DeliveryGateProjection(BaseModel):
             "delivery-scope dimension."
         ),
     )
+    delivery_branch: str | None = Field(
+        default=None,
+        description=(
+            "The published / publishable delivery branch (ADR 0119). Present "
+            "for a branch-policy delivery (e.g. a publish-only "
+            "``worktree_branch``); ``None`` when core emitted no branch."
+        ),
+    )
+    pr_intent: PrIntentRecord | None = Field(
+        default=None,
+        description=(
+            "Durable ADR 0119 pull-request intent (branch / base / title / "
+            "suggested_command). ``None`` when core emitted no ``pr_intent`` "
+            "block (e.g. a stale core or a delivery mode with no PR intent)."
+        ),
+    )
     message: str | None = None
     next_actions: list[NextActionRecord] = Field(default_factory=list)
 
@@ -958,6 +1014,7 @@ __all__ = [
     "HandoffAdviceUsageRecord",
     "ImplementDeliveryRecord",
     "PlanSliceRecord",
+    "PrIntentRecord",
     "RunDiffFile",
     "RunDiffResult",
     "ScopeExpansionItemRecord",

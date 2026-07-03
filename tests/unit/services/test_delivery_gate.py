@@ -16,7 +16,12 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from orcho_mcp.services.delivery_gate import project_delivery_gate
+from orcho_mcp.schemas.inspection import PrIntentRecord
+from orcho_mcp.services.delivery_gate import (
+    _extract_delivery_branch,
+    _map_pr_intent,
+    project_delivery_gate,
+)
 from tests.fixtures.mcp_workspace import (
     commit_decision,
     commit_delivery,
@@ -500,3 +505,124 @@ def test_superseded_parent_is_direct_with_superseded_message(fake_workspace):
     assert proj.message
     assert "superseded" in proj.message
     assert "20260619_000999" in proj.message
+
+
+# (h) ADR 0119 delivery_branch / pr_intent mapping helpers --------------------
+#
+# ``_extract_delivery_branch`` / ``_map_pr_intent`` are the single defensive
+# mapping from core's ``meta['commit_delivery']`` shape onto the wire facts,
+# shared by the gate projection and the read-only delivery evidence slice.
+
+
+def test_extract_delivery_branch_defensive():
+    """None / non-dict / absent / empty → None; a present branch is returned."""
+    assert _extract_delivery_branch(None) is None
+    assert _extract_delivery_branch("not-a-dict") is None
+    assert _extract_delivery_branch({}) is None
+    assert _extract_delivery_branch({"delivery_branch": ""}) is None
+    assert (
+        _extract_delivery_branch({"delivery_branch": "orcho/deliver/x"})
+        == "orcho/deliver/x"
+    )
+
+
+def test_map_pr_intent_none_and_non_dict():
+    """None / non-dict cd, and a non-dict ``pr_intent`` value, all yield None."""
+    assert _map_pr_intent(None) is None
+    assert _map_pr_intent("not-a-dict") is None
+    assert _map_pr_intent({}) is None
+    assert _map_pr_intent({"pr_intent": "not-a-dict"}) is None
+    assert _map_pr_intent({"pr_intent": None}) is None
+
+
+def test_map_pr_intent_full_dict():
+    """A full ``pr_intent`` dict (core ``DeliveryPrIntent.to_dict`` shape) maps to
+    a typed, fully-populated :class:`PrIntentRecord`."""
+    r = _map_pr_intent(
+        {
+            "pr_intent": {
+                "branch": "orcho/deliver/x",
+                "base": "main",
+                "title": "t",
+                "suggested_command": "gh pr create",
+            },
+        },
+    )
+    assert isinstance(r, PrIntentRecord)
+    assert r.branch == "orcho/deliver/x"
+    assert r.base == "main"
+    assert r.title == "t"
+    assert r.suggested_command == "gh pr create"
+
+
+def test_map_pr_intent_partial_fields_default_none():
+    """A partial ``pr_intent`` block leaves the missing fields None (no fabrication)."""
+    r = _map_pr_intent({"pr_intent": {"branch": "orcho/deliver/x"}})
+    assert r is not None
+    assert r.branch == "orcho/deliver/x"
+    assert r.base is None
+    assert r.title is None
+    assert r.suggested_command is None
+
+
+def test_project_delivery_gate_surfaces_branch_policy_fields(fake_workspace):
+    """A decidable gate whose meta decision carries the ADR 0119 branch facts
+    surfaces both ``delivery_branch`` and the typed ``pr_intent`` on the gate
+    projection (decidable branch)."""
+    write_run(
+        fake_workspace, _RUN,
+        meta=meta(
+            status="halted",
+            project="/repo/checkout",
+            commit_delivery=commit_delivery(
+                status="pending",
+                action="approve",
+                release_verdict="APPROVED",
+                project_path="/repo/checkout",
+                source_path="/repo/worktree",
+                delivery_branch="orcho/deliver/20260619-slug",
+                pr_intent={
+                    "branch": "orcho/deliver/20260619-slug",
+                    "base": "main",
+                    "title": "Deliver X",
+                    "suggested_command": "gh pr create --fill",
+                },
+            ),
+        ),
+        commit_decision=commit_decision(),
+        diff_patch=diff_patch_text("src/a.py"),
+    )
+
+    proj = project_delivery_gate(_RUN)
+
+    assert proj.kind == "delivery_decision_required"
+    assert proj.delivery_branch == "orcho/deliver/20260619-slug"
+    assert proj.pr_intent is not None
+    assert proj.pr_intent.branch == "orcho/deliver/20260619-slug"
+    assert proj.pr_intent.base == "main"
+    assert proj.pr_intent.title == "Deliver X"
+    assert proj.pr_intent.suggested_command == "gh pr create --fill"
+
+
+def test_project_delivery_gate_stale_core_branch_fields_none(fake_workspace):
+    """Stale core defensiveness on the non-decidable branch: a terminal decision
+    with no ADR 0119 keys yields ``delivery_branch=None`` / ``pr_intent=None``
+    without raising."""
+    write_run(
+        fake_workspace, _RUN,
+        meta=meta(
+            status="done",
+            commit_delivery=commit_delivery(
+                status="committed",
+                action="approve",
+                release_verdict="APPROVED",
+                commit_sha="abc123",
+            ),
+        ),
+    )
+
+    proj = project_delivery_gate(_RUN)
+
+    assert proj.kind == "direct_checkout_or_running"
+    assert proj.delivery_branch is None
+    assert proj.pr_intent is None

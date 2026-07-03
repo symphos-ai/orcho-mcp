@@ -13,6 +13,7 @@ from __future__ import annotations
 from sdk import ErrorsAndHalt
 
 from orcho_mcp.inspection.evidence import inspect_run_evidence
+from tests.fixtures.mcp_workspace import meta, write_run
 
 _SEAM = "orcho_mcp.inspection.evidence._sdk_get_errors_halt"
 
@@ -97,3 +98,128 @@ def test_errors_slice_auto_waiver_decided_by(monkeypatch) -> None:
     assert d is not None
     assert d.decided_by == "auto:on_exhausted"
     assert d.missing_subtask_receipts == []
+
+
+# ── delivery slice: ADR 0119 delivery_branch / pr_intent ─────────────────────
+#
+# The projection reads the durable ``meta['commit_delivery']`` decision through
+# the SAME ``services.delivery_gate`` helpers the gate projection uses, so the
+# ``delivery_branch`` / ``pr_intent`` facts (ADR 0119) are surfaced without a
+# second meta read. A worktree_branch *publish* persists ``status='committed'``
+# with ``commit_sha=None`` (the commit lands on the run's own branch, not the
+# target checkout) plus the delivery branch + PR intent; a ``protect_default`` /
+# ``named`` commit persists a real ``commit_sha`` alongside the same branch
+# facts. A stale core that emits neither field must degrade to ``None`` — never
+# an exception — and keep ``slice='all'`` whole.
+
+
+def test_delivery_publish_branch_carries_branch_and_pr_intent(fake_workspace) -> None:
+    """Publish-only worktree_branch case (ADR 0119): a delivery_branch and a
+    typed pr_intent are surfaced, and no commit_sha is fabricated for the
+    publish-only branch (the commit landed on the run branch, not the checkout).
+
+    NOTE: core persists ``status='committed'`` for a worktree_branch publish, so
+    the implemented mapping (``committed = status == 'committed' or commit_sha``)
+    resolves ``committed=True`` here; the load-bearing publish invariant is that
+    ``commit_sha`` stays ``None`` (never fabricated)."""
+    write_run(
+        fake_workspace, "20260202_000010",
+        meta=meta(
+            status="done",
+            commit_delivery={
+                "status": "committed",
+                "action": "approve",
+                "release_verdict": "approved",
+                # Publish-only: no commit was written to the target checkout.
+                "delivery_branch": "orcho/deliver/20260202_000010-add-widget",
+                "pr_intent": {
+                    "branch": "orcho/deliver/20260202_000010-add-widget",
+                    "base": "main",
+                    "title": "Add widget",
+                    "suggested_command": "gh pr create --fill",
+                },
+            },
+        ),
+    )
+
+    d = inspect_run_evidence("20260202_000010", slice="delivery").delivery
+    assert d is not None
+    # ADR 0119 facts surface, typed.
+    assert d.delivery_branch == "orcho/deliver/20260202_000010-add-widget"
+    assert d.pr_intent is not None
+    assert d.pr_intent.branch == "orcho/deliver/20260202_000010-add-widget"
+    assert d.pr_intent.base == "main"
+    assert d.pr_intent.title == "Add widget"
+    assert d.pr_intent.suggested_command == "gh pr create --fill"
+    # No fabricated sha for a publish-only branch.
+    assert d.commit_sha is None
+    assert d.release_verdict == "approved"
+
+
+def test_delivery_commit_case_carries_branch_and_sha(fake_workspace) -> None:
+    """protect_default / named commit-on-branch case (ADR 0119): a real
+    commit_sha is present AND the delivery_branch / pr_intent facts are surfaced;
+    the rest of the projection is clean."""
+    write_run(
+        fake_workspace, "20260202_000011",
+        meta=meta(
+            status="done",
+            commit_delivery={
+                "status": "committed",
+                "action": "approve",
+                "release_verdict": "approved",
+                "commit_sha": "deadbee",
+                "delivery_branch": "orcho/deliver/20260202_000011-fix-bug",
+                "pr_intent": {
+                    "branch": "orcho/deliver/20260202_000011-fix-bug",
+                    "base": "main",
+                    "title": "Fix bug",
+                    "suggested_command": "gh pr create --fill",
+                },
+            },
+        ),
+    )
+
+    d = inspect_run_evidence("20260202_000011", slice="delivery").delivery
+    assert d is not None
+    assert d.commit_sha == "deadbee"
+    assert d.committed is True
+    assert d.applied is True
+    assert d.skipped is False
+    assert d.failed is False
+    # The new branch facts ride alongside the real commit.
+    assert d.delivery_branch == "orcho/deliver/20260202_000011-fix-bug"
+    assert d.pr_intent is not None
+    assert d.pr_intent.title == "Fix bug"
+
+
+def test_delivery_stale_core_new_fields_none(fake_workspace) -> None:
+    """Stale core defensiveness: a ``commit_delivery`` block with NO
+    ``delivery_branch`` / ``pr_intent`` keys yields ``None`` for both new fields
+    (never an exception), and ``slice='all'`` stays whole."""
+    write_run(
+        fake_workspace, "20260202_000012",
+        meta=meta(
+            status="done",
+            commit_delivery={
+                "status": "committed",
+                "action": "approve",
+                "release_verdict": "approved",
+                "commit_sha": "abc1234",
+            },
+        ),
+    )
+
+    d = inspect_run_evidence("20260202_000012", slice="delivery").delivery
+    assert d is not None
+    assert d.delivery_branch is None
+    assert d.pr_intent is None
+    # Existing fields still project correctly.
+    assert d.commit_sha == "abc1234"
+    assert d.committed is True
+
+    # slice='all' must not raise and must carry the same None-field delivery.
+    all_result = inspect_run_evidence("20260202_000012", slice="all")
+    assert all_result.delivery is not None
+    assert all_result.delivery.delivery_branch is None
+    assert all_result.delivery.pr_intent is None

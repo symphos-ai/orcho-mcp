@@ -32,6 +32,7 @@ from orcho_mcp.schemas import (
     DeliveryGateProjection,
     NextActionRecord,
 )
+from orcho_mcp.schemas.inspection import PrIntentRecord
 from orcho_mcp.services.errors import map_sdk_errors
 from orcho_mcp.services.run_artifacts import (
     get_run_commit_decision_raw,
@@ -128,6 +129,42 @@ def _map_release(cd: dict | None) -> str:
     if verdict == "REJECTED":
         return "rejected"
     return "none"
+
+
+def _extract_delivery_branch(cd: dict | None) -> str | None:
+    """Published / publishable delivery branch from the meta decision (ADR 0119).
+
+    Reads the authoritative ``meta['commit_delivery'].delivery_branch`` (core's
+    ``CommitDeliveryDecision.to_dict`` only emits the key for a branch-policy
+    delivery). Defensive to ``None`` / non-dict / absent key: never fabricated,
+    absent → ``None``.
+    """
+    if not isinstance(cd, dict):
+        return None
+    return _optional_str(cd.get("delivery_branch"))
+
+
+def _map_pr_intent(cd: dict | None) -> PrIntentRecord | None:
+    """Map the durable ``pr_intent`` block to a typed :class:`PrIntentRecord`.
+
+    Mirrors core's ``DeliveryPrIntent.to_dict`` shape (nested under the
+    ``pr_intent`` key of ``CommitDeliveryDecision.to_dict``): ``branch`` /
+    ``base`` / ``title`` / ``suggested_command``. Defensive to
+    ``None`` / non-dict at both levels — a missing or malformed block yields
+    ``None`` (never a fabricated record); each field is coerced via
+    ``_optional_str``.
+    """
+    if not isinstance(cd, dict):
+        return None
+    raw = cd.get("pr_intent")
+    if not isinstance(raw, dict):
+        return None
+    return PrIntentRecord(
+        branch=_optional_str(raw.get("branch")),
+        base=_optional_str(raw.get("base")),
+        title=_optional_str(raw.get("title")),
+        suggested_command=_optional_str(raw.get("suggested_command")),
+    )
 
 
 def _parse_patch_files(diff_text: str | None) -> list[str] | None:
@@ -442,6 +479,8 @@ def project_delivery_gate(run_id: str) -> DeliveryGateProjection:
     cd = _extract_commit_delivery(meta)
     status = _extract_status(cd)
     release = _map_release(cd)
+    delivery_branch = _extract_delivery_branch(cd)
+    pr_intent = _map_pr_intent(cd)
 
     if not state.decidable:
         return DeliveryGateProjection(
@@ -454,6 +493,8 @@ def project_delivery_gate(run_id: str) -> DeliveryGateProjection:
             default_action=None,
             available_actions=[],
             blocked_actions=[],
+            delivery_branch=delivery_branch,
+            pr_intent=pr_intent,
             message=_direct_message(cd, status, _superseded_child(meta)),
             next_actions=[],
         )
@@ -492,6 +533,8 @@ def project_delivery_gate(run_id: str) -> DeliveryGateProjection:
         blocked_actions=[str(a) for a in state.blocked_actions],
         scope_blocker=scope_blocker,
         scope_disclosure=scope_disclosure,
+        delivery_branch=delivery_branch,
+        pr_intent=pr_intent,
         message=_gate_message(kind, missing, state.reason),
         next_actions=next_actions,
     )
