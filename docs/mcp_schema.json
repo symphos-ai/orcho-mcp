@@ -842,6 +842,61 @@
             ],
             "title": "NextActionRecord",
             "type": "object"
+          },
+          "PrIntentRecord": {
+            "description": "Typed projection of a run's durable ``pr_intent`` (ADR 0119).\n\nA pure wire model for the pull-request intent core emits alongside a\nbranch-policy delivery: the ``branch`` a PR would open from, its ``base``,\na proposed ``title``, and a ``suggested_command`` the operator can run to\nopen it. Every field is ``str | None`` and defaults to ``None`` — the whole\nrecord is ``None`` (absent) when core did not emit a ``pr_intent`` block\n(e.g. a stale core, or a delivery mode with no PR intent).",
+            "properties": {
+              "base": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Base"
+              },
+              "branch": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Branch"
+              },
+              "suggested_command": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Suggested Command"
+              },
+              "title": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Title"
+              }
+            },
+            "title": "PrIntentRecord",
+            "type": "object"
           }
         },
         "description": "Typed projection of an Orcho-managed post-release delivery gate.\n\n``kind`` is the single classification signal and is derived ONLY from\nthe authoritative ``meta`` commit-delivery ``status`` (never from\nterminal log prose):\n\n  - ``delivery_decision_required`` — a ``pending`` delivery on an\n    APPROVED release; the operator chooses approve / apply / skip / halt.\n  - ``correction_decision_required`` — a rejected release or a\n    ``fix_requested`` state; the operator normally chooses fix / halt for a\n    current rejected release. This is an *available correction-flow state*,\n    NOT an executed delivery.\n  - ``direct_checkout_or_running`` — no pending commit-delivery gate in\n    meta (terminal delivery, or a direct checkout edit / still-running\n    run); no approve / apply / fix is offered.\n\n``available_actions`` comes from orcho-core's read-only\n``delivery_decision_state`` surface and lists only actions the SDK says are\ncurrently safe. ``blocked_actions`` names delivery actions currently\nrefused by hard guards such as a rejected release verdict or incomplete\nrequired verification. ``next_actions`` carries one ``ready_call`` to\n``orcho_delivery_decide`` per available action.",
@@ -874,6 +929,19 @@
             "description": "The resolved default action from meta (e.g. approve / fix).",
             "title": "Default Action"
           },
+          "delivery_branch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The published / publishable delivery branch (ADR 0119). Present for a branch-policy delivery (e.g. a publish-only ``worktree_branch``); ``None`` when core emitted no branch.",
+            "title": "Delivery Branch"
+          },
           "diff": {
             "$ref": "#/$defs/DeliveryGateDiffSummary"
           },
@@ -904,6 +972,18 @@
             },
             "title": "Next Actions",
             "type": "array"
+          },
+          "pr_intent": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PrIntentRecord"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Durable ADR 0119 pull-request intent (branch / base / title / suggested_command). ``None`` when core emitted no ``pr_intent`` block (e.g. a stale core or a delivery mode with no PR intent)."
           },
           "release": {
             "default": "none",
@@ -3708,7 +3788,7 @@
             "type": "object"
           },
           "DeliverySummaryRecord": {
-            "description": "Typed projection of a run's post-release commit-delivery outcome.\n\nRead-only evidence built from the authoritative ``meta['commit_delivery']``\ndecision (the persisted ``CommitDeliveryDecision`` from\n``pipeline.engine.commit_delivery``). This is NOT the interactive\n:class:`DeliveryGateProjection` — it never resolves available actions or\nmutates state; it only reads what already happened so a captain can tell an\napplied / committed / skipped / failed delivery apart without parsing prose.\n\nBooleans are mapped explicitly from the core ``CommitDeliveryStatus``\nvocabulary (``disabled`` / ``not_applicable`` / ``no_diff`` / ``pending`` /\n``fix_requested`` / ``committed`` / ``applied_uncommitted`` / ``skipped`` /\n``halted`` / ``commit_failed`` / ``apply_failed`` / ``target_dirty`` /\n``verification_blocked``):\n\n  - ``applied`` — the diff landed in the target checkout: status is\n    ``applied_uncommitted`` or ``committed``.\n  - ``committed`` — a new commit was written: status is ``committed`` OR a\n    ``commit_sha`` is present.\n  - ``skipped`` — status is ``skipped``.\n  - ``failed`` — status is one of ``commit_failed`` / ``apply_failed`` /\n    ``halted`` / ``verification_blocked`` / ``target_dirty``.\n\nAn unrecognized status leaves all four ``False`` while ``decision_status``\npreserves the raw value verbatim.\n\n``release_verdict`` mirrors ``services.delivery_gate._map_release`` (the\nsingle source), so an approved correction child re-run after a\n``gate_rerun`` reads ``approved`` from its OWN ``commit_delivery`` block.\nThe inherited-vs-current verification receipts behind that verdict are NOT\nduplicated here — read them from the ``verification_timeline`` slice\n(``inherited`` set + per-gate ``inherited`` / ``source_run_id``) and the\n``receipts`` slice.\n\n``implement_delivery`` is the SAME :class:`ImplementDeliveryRecord` the\n``errors`` slice surfaces, projected from the errors-rollup (not a second\nmeta read) — single source for the implement-verdict\n(clean / repaired / waived / incomplete + incomplete_subtasks /\nmissing_subtask_receipts).",
+            "description": "Typed projection of a run's post-release commit-delivery outcome.\n\nRead-only evidence built from the authoritative ``meta['commit_delivery']``\ndecision (the persisted ``CommitDeliveryDecision`` from\n``pipeline.engine.commit_delivery``). This is NOT the interactive\n:class:`DeliveryGateProjection` — it never resolves available actions or\nmutates state; it only reads what already happened so a captain can tell an\napplied / committed / skipped / failed delivery apart without parsing prose.\n\nBooleans are mapped explicitly from the core ``CommitDeliveryStatus``\nvocabulary (``disabled`` / ``not_applicable`` / ``no_diff`` / ``pending`` /\n``fix_requested`` / ``committed`` / ``applied_uncommitted`` / ``skipped`` /\n``halted`` / ``commit_failed`` / ``apply_failed`` / ``target_dirty`` /\n``verification_blocked``):\n\n  - ``applied`` — the diff landed in the target checkout: status is\n    ``applied_uncommitted`` or ``committed``.\n  - ``committed`` — a new commit was written: status is ``committed`` OR a\n    ``commit_sha`` is present.\n  - ``skipped`` — status is ``skipped``.\n  - ``failed`` — status is one of ``commit_failed`` / ``apply_failed`` /\n    ``halted`` / ``verification_blocked`` / ``target_dirty``.\n\nAn unrecognized status leaves all four ``False`` while ``decision_status``\npreserves the raw value verbatim.\n\n``release_verdict`` mirrors ``services.delivery_gate._map_release`` (the\nsingle source), so an approved correction child re-run after a\n``gate_rerun`` reads ``approved`` from its OWN ``commit_delivery`` block.\nThe inherited-vs-current verification receipts behind that verdict are NOT\nduplicated here — read them from the ``verification_timeline`` slice\n(``inherited`` set + per-gate ``inherited`` / ``source_run_id``) and the\n``receipts`` slice.\n\n``implement_delivery`` is the SAME :class:`ImplementDeliveryRecord` the\n``errors`` slice surfaces, projected from the errors-rollup (not a second\nmeta read) — single source for the implement-verdict\n(clean / repaired / waived / incomplete + incomplete_subtasks /\nmissing_subtask_receipts).\n\n``commit_sha`` is present for a landed commit (``protect_default`` / ``named``\n/ ``bypass`` branch policies, or any ``committed`` status) and ABSENT for a\npublish-only ``worktree_branch`` delivery that only published a branch\nwithout writing a commit to the target. ``delivery_branch`` (the published /\npublishable delivery branch) and ``pr_intent`` (the durable ADR 0119 PR\nintent) are additive: both are ``None`` when core did not emit them (e.g. a\nstale core, or a delivery mode that produced neither).",
             "properties": {
               "action": {
                 "anyOf": [
@@ -3758,6 +3838,19 @@
                 "description": "Raw ``meta['commit_delivery'].status`` (CommitDeliveryStatus), preserved verbatim.",
                 "title": "Decision Status"
               },
+              "delivery_branch": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "The published / publishable delivery branch (ADR 0119). Present for a branch-policy delivery (e.g. a publish-only ``worktree_branch``); ``None`` when core emitted no branch.",
+                "title": "Delivery Branch"
+              },
               "failed": {
                 "default": false,
                 "title": "Failed",
@@ -3786,6 +3879,18 @@
                 ],
                 "default": null,
                 "description": "The same typed implement delivery/waiver audit as the ``errors`` slice, projected from the errors-rollup (single source, not a second meta read). None for a clean implement delivery."
+              },
+              "pr_intent": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/PrIntentRecord"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Durable ADR 0119 pull-request intent (branch / base / title / suggested_command). ``None`` when core emitted no ``pr_intent`` block (e.g. a stale core or a delivery mode with no PR intent)."
               },
               "release_verdict": {
                 "description": "Release outcome from meta ``release_verdict``: 'approved' | 'rejected' | 'none'.",
@@ -4586,6 +4691,61 @@
               "has_contract"
             ],
             "title": "PlanSliceRecord",
+            "type": "object"
+          },
+          "PrIntentRecord": {
+            "description": "Typed projection of a run's durable ``pr_intent`` (ADR 0119).\n\nA pure wire model for the pull-request intent core emits alongside a\nbranch-policy delivery: the ``branch`` a PR would open from, its ``base``,\na proposed ``title``, and a ``suggested_command`` the operator can run to\nopen it. Every field is ``str | None`` and defaults to ``None`` — the whole\nrecord is ``None`` (absent) when core did not emit a ``pr_intent`` block\n(e.g. a stale core, or a delivery mode with no PR intent).",
+            "properties": {
+              "base": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Base"
+              },
+              "branch": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Branch"
+              },
+              "suggested_command": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Suggested Command"
+              },
+              "title": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Title"
+              }
+            },
+            "title": "PrIntentRecord",
             "type": "object"
           },
           "ProviderPressure": {
