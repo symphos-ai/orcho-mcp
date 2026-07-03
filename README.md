@@ -15,11 +15,12 @@ Exposes orcho's runtime to MCP-aware clients (Claude Code, Cursor, Zed, and othe
 
 📖 **Documentation:** [docs.orcho.dev](https://docs.orcho.dev)
 
-![One orcho run end to end, sped up: the opening envelope, the pipeline map, the plan contract, plan validation, implement subtasks with attestations, review, final acceptance, the delivery commit, and the closing rollup](https://raw.githubusercontent.com/symphos-ai/orcho-core/main/docs/assets/orcho-run-demo.gif)
+![An AI client driving Orcho over MCP: it starts a mock run with orcho_run_start, watches it to a terminal state with orcho_run_watch, pulls the record with orcho_run_evidence and orcho_run_diff, and returns a short verdict](https://raw.githubusercontent.com/symphos-ai/orcho-mcp/main/docs/assets/orcho-mcp-demo.gif)
 
-<sub>The engine this server controls: one `orcho run` end to end (mock
-pipeline, sped up). Interactive version with pause and scrub:
-[docs.orcho.dev](https://docs.orcho.dev).</sub>
+<sub>An AI client (here Claude Code) driving a run through this server —
+`orcho_run_start` → `orcho_run_watch` → `orcho_run_evidence` → verdict, all
+typed, no log scraping. Real session; the run is `mock=True`. Interactive
+version: [docs.orcho.dev](https://docs.orcho.dev/start/let-your-agent-drive/).</sub>
 
 > **Status:** ``v0.1.0`` public release line. Core control loop surfaces are available:
 >
