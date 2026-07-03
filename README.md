@@ -46,12 +46,13 @@ For Linux or Windows, use the
 
 ### Recommended CLI install
 
-Use the `orcho` distribution with the `mcp` extra when you want both the Orcho
-commands and the MCP server available from your shell. `pipx` keeps the command
-set isolated from the current project or Python environment.
+Use the `orcho` distribution when you want both the Orcho commands and the MCP
+server available from your shell. Since `orcho` 0.1.1 the server ships by
+default — no extra needed. `pipx` keeps the command set isolated from the
+current project or Python environment.
 
 ```bash
-pipx install "orcho[mcp]"
+pipx install orcho
 orcho-mcp --help
 ```
 
