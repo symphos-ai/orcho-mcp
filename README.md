@@ -33,6 +33,14 @@ version: [docs.orcho.dev](https://docs.orcho.dev/start/let-your-agent-drive/).</
 
 ## Install
 
+Choose an install path:
+
+| Path | Use when | Command |
+| --- | --- | --- |
+| Native CLI with `pipx` | You want `orcho` and `orcho-mcp` available from the shell. | `pipx install orcho` |
+| Docker | You want the MCP server and agent CLIs isolated inside a container. | `docker pull ghcr.io/symphos-ai/orcho` |
+| Direct MCP dependency | You intentionally want only this package in a virtualenv, CI image, devcontainer, or custom image. | `python -m pip install orcho-mcp` |
+
 If `pipx` is missing, install it first. On macOS with Homebrew:
 
 ```bash
@@ -55,6 +63,26 @@ current project or Python environment.
 pipx install orcho
 orcho-mcp --help
 ```
+
+Since `orcho` 0.1.1 this includes the MCP server by default. The `[mcp]` and
+`[all]` extras remain as no-op aliases.
+
+### Containerized MCP server
+
+Use Docker when an MCP client should start an isolated server over stdio:
+
+```bash
+docker run --rm -i \
+  -v /path/to/my-workspace:/workspace \
+  -v ~/.orcho-auth:/agent-auth:ro \
+  -e ORCHO_WORKSPACE=/workspace/workspace-orchestrator \
+  ghcr.io/symphos-ai/orcho \
+  orcho-mcp
+```
+
+Inside that server, projects live under `/workspace/<project-name>`. The
+[`orcho` Docker docs](https://github.com/symphos-ai/orcho/tree/main/docker)
+cover one-time credential bootstrap and custom project toolchains.
 
 ### Direct MCP package install
 
