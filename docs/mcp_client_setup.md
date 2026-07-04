@@ -5,6 +5,20 @@ Orcho MCP is a stdio server. A client must know two things:
 1. Which command starts the server.
 2. Which workspace that server owns.
 
+## Install first
+
+Any of the three install paths provides the `orcho-mcp` binary:
+
+```bash
+pipx install orcho          # recommended: CLI + MCP server together
+pip install orcho-mcp      # just the MCP server, managed environments
+docker pull ghcr.io/symphos-ai/orcho   # containerized CLI + server
+```
+
+The umbrella `orcho` package includes the MCP server by default. The
+user-facing documentation portal is <https://docs.orcho.dev/> — see its MCP
+section for the operating model around these tools.
+
 Start by creating or choosing a workspace:
 
 ```bash
@@ -124,6 +138,27 @@ claude mcp add orcho-my-workspace \
 
 Restart the Claude Code session after changing the server.
 
+## Cursor
+
+Cursor reads `~/.cursor/mcp.json` (global) or `.cursor/mcp.json` in the
+project. Add the same stdio entry:
+
+```json
+{
+  "mcpServers": {
+    "orcho-my-workspace": {
+      "command": "/abs/path/to/orcho-mcp",
+      "env": {
+        "ORCHO_WORKSPACE": "/abs/path/to/my-workspace/workspace-orchestrator"
+      }
+    }
+  }
+}
+```
+
+Reload the window (or toggle the server in Cursor's MCP settings) after
+changing the entry.
+
 ## Gemini CLI
 
 Gemini CLI can register the server from the shell:
@@ -191,7 +226,8 @@ Restart Antigravity after changing `mcp.json`.
 
 ## Verify from the client
 
-After restart, the client should expose these Orcho tools:
+After restart, the client should expose the Orcho tool catalog. At minimum
+check for this core set:
 
 ```text
 orcho_workspace_info
@@ -207,6 +243,13 @@ orcho_run_resume
 orcho_run_metrics
 orcho_run_history
 ```
+
+This is a subset. The full catalog also covers run cancel/diagnose/live
+status, the delivery gate (`orcho_delivery_gate` / `orcho_delivery_decide`),
+the handoff advisor, plan validation, profiles/skills/prompts/workflows
+listings, and the workspace decision inbox — see
+[run_lifecycle.md](run_lifecycle.md) for semantics and `docs/mcp_schema.json`
+for the authoritative wire schema.
 
 Call `orcho_workspace_info` first. It should report the workspace you
 configured. If it reports another workspace, the client is launching a
