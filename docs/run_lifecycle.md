@@ -11,7 +11,7 @@ name.
 
 ## Tool naming
 
-The seven run-lifecycle tools share a `orcho_run_` prefix:
+The seven process-control tools share a `orcho_run_` prefix:
 
 | Tool | Verb | Purpose |
 |---|---|---|
@@ -23,6 +23,15 @@ The seven run-lifecycle tools share a `orcho_run_` prefix:
 | `orcho_run_metrics` | metrics | Raw `metrics.json` for one run. |
 | `orcho_run_events_tail` | events_tail | Stream events with seq-based pagination. |
 
+Observation tools share the same prefix but never touch the process:
+
+| Tool | Purpose |
+|---|---|
+| `orcho_run_watch` | Long-poll a live run; emits `notifications/progress` when the request carries a `progressToken`. A watch timeout is observer loss, not run failure. |
+| `orcho_run_live_status` | Lightweight live-progress projection for a running pipeline. |
+| `orcho_run_events_summary` | Aggregated event-stream projection (counts per kind/phase). |
+| `orcho_run_diff` | The run's retained diff. |
+
 The phase-handoff decision is a separate concern — it's a state
 transition, not a process action — so it sits beside the run-lifecycle
 group with its own name:
@@ -30,6 +39,7 @@ group with its own name:
 | Tool | Purpose |
 |---|---|
 | `orcho_phase_handoff_decide` | Resolve a paused phase handoff (`awaiting_phase_handoff`). Writes a decision artifact under `<run_dir>/phase_handoff_decisions/{safe_handoff_id}.json`. `continue` / `retry_feedback` / `continue_with_waiver` leave `meta.status` paused for a follow-up `orcho_run_resume`; `halt` flips `meta.status` to `halted` synchronously. Pure state transition; never spawns. |
+| `orcho_handoff_advice` | LLM advisor for a paused handoff: recommends the smallest honest next action and writes a durable advice artifact. Advice, never a decision. |
 | `orcho_delivery_decide` | Resolve a parked post-release delivery / correction gate. Delegates to orcho-core's SDK decision entrypoint; the SDK owns all delivery guards and state mutation. Pure state transition; never spawns. |
 
 The inspection surface is also a separate concern — it reads
@@ -606,6 +616,23 @@ deterministic, collision-resistant (slug + short SHA-256 hash). Audit
 consumers read them to understand *why* each paused handoff was
 resolved.
 
+### Unattended runs never reach this tool
+
+The pause-for-decision model above assumes someone is there to decide. A
+CLI run started with `--no-interactive` sets the engine-level `unattended`
+signal (a CLI-only flag — MCP-started runs never set it): advisory
+handoffs auto-continue with a recorded decision, and authoritative or
+safety handoffs become terminal halts with
+`halt_reason="phase_handoff_unattended_halt"` plus a compact
+`phase_handoff_unattended` block in `meta.json`. When an MCP client
+inspects such a run, there is no pending decision to make — the halt
+record explains what an operator would have been asked.
+
+MCP-started runs are the opposite: they run with TTY prompts suppressed
+but are NOT unattended — they park on `awaiting_phase_handoff` and wait
+for this tool. Do not infer auto-decide behavior from the absence of a
+terminal.
+
 ### Idempotency and transition discipline
 
 - **Exact-payload idempotency.** Replaying the same
@@ -903,12 +930,23 @@ The projection's authority comes from
 
 | Field | Meaning |
 |---|---|
-| `kind` | `delivery_decision_required`, `correction_decision_required`, or `direct_checkout_or_running`. |
-| `available_actions` | Actions core currently allows. Each has `action`, `effect`, and `creates_commit`. |
+| `kind` | `delivery_decision_required` (approved release, diff retained and waiting to ship), `correction_decision_required` (rejected release, choose fix/skip/halt), or `direct_checkout_or_running` (nothing to decide — no retained worktree gate, or the run is still live). |
+| `available_actions` | Actions core currently allows. Each has `action`, `effect`, and `creates_commit` — only `approve` sets `creates_commit=true`. |
 | `blocked_actions` | Actions core currently refuses, such as `approve` / `apply` on a rejected release or blocked verification. |
 | `default_action` | Core's recommended default when one exists. |
 | `diff` | Retained change summary. Secondary artifact failures set `diff.degraded=true` but do not hide a decidable gate. |
+| `delivery_branch` | The published / publishable delivery branch. |
+| `pr_intent` | Durable pull-request intent — `branch` / `base` / `title` / `suggested_command` — for the client to turn into an actual PR. |
 | `next_actions` | One `ready_call` to `orcho_delivery_decide` per available action. |
+
+The branch mechanics behind those last two fields: `approve` never
+auto-commits onto the project's default branch. Under the default
+`worktree_branch` policy the commit lands on a local delivery branch
+(rebased onto the target; conflicts are non-fatal and reported), and
+`pr_intent` records how to publish it. Alternative policy modes
+(`protect_default`, `named`, `bypass`) change where that commit is
+allowed to land; the engine emits the intent, and pushing or opening the
+PR stays with the client or a git-provider plugin.
 
 `orcho_delivery_decide(run_id, action, note?)` resolves the gate through the
 SDK. It never spawns a process and MCP never applies a patch directly.
