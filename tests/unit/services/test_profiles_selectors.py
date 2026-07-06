@@ -42,9 +42,6 @@ def test_selectors_present_when_source_missing(monkeypatch, tmp_path):
     source still returns the ``auto-detect`` selector (profiles stay empty)."""
     nowhere = tmp_path / "does-not-exist.json"
     monkeypatch.setenv("ORCHO_PROFILES_V2_PATH", str(nowhere))
-    monkeypatch.setattr(
-        rq, "_PROFILES_V2_JSON_PATH", rq._resolve_profiles_v2_path(),
-    )
     r = get_profiles_list()
     assert r.source == "missing"
     assert r.profiles == []
