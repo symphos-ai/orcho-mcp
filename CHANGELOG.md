@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 0.3.0 - 2026-07-06
+
+### Changed
+
+- Requires `orcho-core>=0.3.0,<0.4`.
+
+### Documentation
+
+- Position Orcho as a production harness in the server-facing docs.
+
 ## 0.2.0 - 2026-07-05
 
 ### Added
