@@ -11,7 +11,10 @@
 
 [Model Context Protocol](https://modelcontextprotocol.io) server for Orcho.
 
-Exposes orcho's runtime to MCP-aware clients (Claude Code, Cursor, Zed, and other MCP-speaking tools) over stdio. Full async control loop — act, observe, decide, inspect — without raw log scraping.
+Exposes orcho's runtime to MCP-aware clients (Claude Code, Cursor, Zed, and
+other MCP-speaking tools) over stdio. It lets clients drive Orcho as a
+production harness and control plane for agentic software delivery: act,
+observe, decide, inspect, and resume without raw log scraping.
 
 📖 **Documentation:** [docs.orcho.dev](https://docs.orcho.dev)
 
