@@ -185,14 +185,14 @@ def test_profiles_v2_fields_populated_when_v2_source(tmp_path):
     r = orcho_profiles_list()
     if r.source != "json_v2":
         pytest.skip("v2 file not present")
-    # feature is the canonical full_cycle / fast semantic entry.
+    # feature is the canonical full_cycle / pro semantic entry.
     feature = next((p for p in r.profiles if p.name == "feature"), None)
     assert feature is not None, "v2 source but no 'feature' profile"
     assert feature.kind == "custom"
     assert feature.variant is None
     assert feature.description, "v2 entries must carry description"
     assert feature.semantic_profile == "feature"
-    assert feature.default_mode == "fast"
+    assert feature.default_mode == "pro"
     assert feature.recipe_kind == "full_cycle"
     assert feature.internal is False
 
