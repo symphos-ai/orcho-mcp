@@ -79,7 +79,7 @@ Pick by what your task is:
 
 - **`small_task`** — _default_mode `fast`_ — smallest end-to-end change;
   leanest full cycle.
-- **`feature`** — _default_mode `fast`_ — a normal feature, full plan →
+- **`feature`** — _default_mode `pro`_ — a normal feature, full plan →
   build → review → fix → final QA cycle. The default for most work.
 - **`complex_feature`** — _default_mode `pro`_ — larger feature needing
   the heavier review envelope.
