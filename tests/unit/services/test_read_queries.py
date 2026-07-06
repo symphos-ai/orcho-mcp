@@ -293,30 +293,24 @@ def test_profiles_cross_gates_surfaces_explicit_block(monkeypatch, tmp_path):
     # registry never declares, raising ProfileLoadError. Point
     # ORCHO_WORKSPACE at the overlay-free tmp dir so discovery finds none.
     monkeypatch.setenv("ORCHO_WORKSPACE", str(tmp_path))
-    # Reload the services read-queries module so the env override is
-    # picked up by ``_PROFILES_V2_JSON_PATH`` at module-import time.
-    import importlib
-
+    # The catalogue path is resolved per call from the environment (via
+    # ``sdk.profiles.catalogue_path``), so the override takes effect
+    # immediately — no module reload needed.
     from orcho_mcp.services import read_queries as rq_mod
-    importlib.reload(rq_mod)
-    try:
-        # Call the service directly — same code path as the @mcp.tool
-        # handler, no risk of importing a stale shim reference.
-        r = rq_mod.get_profiles_list()
-        assert r.source == "json_v2"
-        manual = next(
-            (p for p in r.profiles if p.name == "manual_demo"), None,
-        )
-        assert manual is not None
-        assert manual.cross_gates is not None
-        cc = manual.cross_gates["contract_check"]
-        assert cc["enabled"] is True
-        assert cc["run"] == "manual_confirm"
-        assert cc["on_skip"] == "allow_with_gap"
-        assert cc["mode"] == "artifact_bundle"
-    finally:
-        monkeypatch.delenv("ORCHO_PROFILES_V2_PATH", raising=False)
-        importlib.reload(rq_mod)
+
+    # Call the service directly — same code path as the @mcp.tool handler.
+    r = rq_mod.get_profiles_list()
+    assert r.source == "json_v2"
+    manual = next(
+        (p for p in r.profiles if p.name == "manual_demo"), None,
+    )
+    assert manual is not None
+    assert manual.cross_gates is not None
+    cc = manual.cross_gates["contract_check"]
+    assert cc["enabled"] is True
+    assert cc["run"] == "manual_confirm"
+    assert cc["on_skip"] == "allow_with_gap"
+    assert cc["mode"] == "artifact_bundle"
 
 
 def test_profiles_cross_gates_none_when_absent():
@@ -369,23 +363,34 @@ class TestProfilesListMissingFallback:
         self, monkeypatch, tmp_path,
     ):
         """ORCHO_PROFILES_V2_PATH override points at a non-existent
-        path → source='missing' + diagnostic."""
+        path → source='missing' + byte-identical diagnostic.
+
+        The contract pins the diagnostic verbatim: any change to the
+        wording, the required orcho-core version, the env-var hint, or the
+        resolved catalogue path is a wire regression. Build the expected
+        string from ``catalogue_path()`` (the same resolver the service
+        uses) and compare it in full — not by substrings.
+        """
+        from sdk.profiles import catalogue_path
+
         nowhere = tmp_path / "does-not-exist.json"
         monkeypatch.setenv("ORCHO_PROFILES_V2_PATH", str(nowhere))
-        # Reload the module-level constant so the env var takes effect
-        # for this call.
-        from orcho_mcp.services import read_queries as _rq
-        monkeypatch.setattr(
-            _rq,
-            "_PROFILES_V2_JSON_PATH",
-            _rq._resolve_profiles_v2_path(),
+        # The catalogue path is resolved per call from the environment, so
+        # the override takes effect immediately.
+        expected_diagnostic = (
+            f"v2 profile catalogue not found at {catalogue_path()}. "
+            "orcho-mcp expects orcho-core's "
+            "_config/pipeline_profiles_v2.json — make sure orcho-core "
+            "≥ 0.5d-5 is installed in the same Python environment, or "
+            "override the search path via the ORCHO_PROFILES_V2_PATH "
+            "env var."
         )
         r = orcho_profiles_list()
         assert r.profiles == []
         assert r.source == "missing"
-        assert r.diagnostic is not None
-        assert "v2 profile catalogue not found" in r.diagnostic
-        assert "orcho-core" in r.diagnostic.lower()
+        assert r.diagnostic == expected_diagnostic
+        # Selectors stay present in every branch, including missing.
+        assert [s.name for s in r.selectors] == ["auto-detect"]
 
     def test_diagnostic_mentions_env_var_override(
         self, monkeypatch, tmp_path,
@@ -394,12 +399,6 @@ class TestProfilesListMissingFallback:
         var override that lets them point at a custom file."""
         nowhere = tmp_path / "missing.json"
         monkeypatch.setenv("ORCHO_PROFILES_V2_PATH", str(nowhere))
-        from orcho_mcp.services import read_queries as _rq
-        monkeypatch.setattr(
-            _rq,
-            "_PROFILES_V2_JSON_PATH",
-            _rq._resolve_profiles_v2_path(),
-        )
         r = orcho_profiles_list()
         assert "ORCHO_PROFILES_V2_PATH" in (r.diagnostic or "")
 

@@ -1,0 +1,265 @@
+{
+  "profiles": [
+    {
+      "name": "small_task",
+      "phases": [
+        "plan",
+        "validate_plan",
+        "implement"
+      ],
+      "kind": "custom",
+      "variant": null,
+      "description": "Quick dev cycle for a small, well-scoped change — plan → implement, no QA loops. The cheapest work kind, intended for small direct edits. No cross_gates block → no terminal cross gates run; ship-readiness here is the operator's call.",
+      "semantic_profile": "small_task",
+      "default_mode": "fast",
+      "recipe_kind": "full_cycle",
+      "internal": false,
+      "cross_gates": null,
+      "hypothesis": null
+    },
+    {
+      "name": "feature",
+      "phases": [
+        "plan",
+        "validate_plan",
+        "implement",
+        "review_changes",
+        "repair_changes",
+        "final_acceptance"
+      ],
+      "kind": "custom",
+      "variant": null,
+      "description": "Production-grade dev cycle for a feature: plan ↔ validate_plan loop, subtask_dag implement, review_changes ↔ repair_changes loop, final_acceptance. The default work kind for shipped work. validate_plan uses the plan_reviewer persona; review_changes uses code_reviewer; implement↔repair_changes share the implementation_engineer role thread. Reviewer and implementation phases use per_role boundaries; plan and final_acceptance stay common. Opts into both terminal cross gates strictly: contract_check (cross-contract review) and cross_final_acceptance (system release gate), both run=always with on_skip=block.",
+      "semantic_profile": "feature",
+      "default_mode": "pro",
+      "recipe_kind": "full_cycle",
+      "internal": false,
+      "cross_gates": {
+        "contract_check": {
+          "enabled": true,
+          "run": "always",
+          "on_skip": "block",
+          "mode": "artifact_bundle"
+        },
+        "cross_final_acceptance": {
+          "enabled": true,
+          "run": "always",
+          "on_skip": "block",
+          "mode": null
+        }
+      },
+      "hypothesis": null
+    },
+    {
+      "name": "complex_feature",
+      "phases": [
+        "plan",
+        "validate_plan",
+        "implement",
+        "compliance_check",
+        "review_changes",
+        "repair_changes",
+        "final_acceptance"
+      ],
+      "kind": "custom",
+      "variant": null,
+      "description": "More comprehensive development cycle for complex work + extension-point compliance/audit gate (no-op stub in core; embedders register their own handler via the orcho.phases entry_points group). Opts into both terminal cross gates strictly (same policy as feature). validate_plan uses the plan_reviewer persona; review_changes uses code_reviewer; implement↔repair_changes share the implementation_engineer role thread. Reviewer and implementation phases use per_role boundaries; plan, final_acceptance, and the role-less compliance_check gate stay common. Runtime context lifecycle is runtime-owned per ADR 0030; contract recovery handles broken contracts from auto-compaction.",
+      "semantic_profile": "complex_feature",
+      "default_mode": "pro",
+      "recipe_kind": "full_cycle",
+      "internal": false,
+      "cross_gates": {
+        "contract_check": {
+          "enabled": true,
+          "run": "always",
+          "on_skip": "block",
+          "mode": "artifact_bundle"
+        },
+        "cross_final_acceptance": {
+          "enabled": true,
+          "run": "always",
+          "on_skip": "block",
+          "mode": null
+        }
+      },
+      "hypothesis": null
+    },
+    {
+      "name": "planning",
+      "phases": [
+        "plan",
+        "validate_plan"
+      ],
+      "kind": "custom",
+      "variant": null,
+      "description": "Produce a plan artifact and stop for human review. validate_plan carries handoff: human_feedback_always so every verdict (approved or rejected) pauses with status awaiting_phase_handoff; the human decides continue / retry_feedback / halt via the SDK. Useful for review-driven workflows — downstream implement / review_changes are the user's call (or a follow-up `task` profile after the decision lands). No cross_gates block → no terminal cross gates run (a planning-only run has nothing for them to review).",
+      "semantic_profile": "planning",
+      "default_mode": "pro",
+      "recipe_kind": "focused",
+      "internal": false,
+      "cross_gates": null,
+      "hypothesis": null
+    },
+    {
+      "name": "research",
+      "phases": [
+        "plan",
+        "validate_plan"
+      ],
+      "kind": "custom",
+      "variant": null,
+      "description": "Investigate and produce a plan artifact, then stop for human review — same plan-only recipe as planning, reused for exploratory research work with no delivery gates by default. validate_plan carries handoff: human_feedback_always so every verdict pauses for the human to decide continue / retry_feedback / halt via the SDK. No cross_gates block → no terminal cross gates run.",
+      "semantic_profile": "research",
+      "default_mode": "fast",
+      "recipe_kind": "focused",
+      "internal": false,
+      "cross_gates": null,
+      "hypothesis": null
+    },
+    {
+      "name": "delivery_audit",
+      "phases": [
+        "review_changes",
+        "final_acceptance"
+      ],
+      "kind": "custom",
+      "variant": null,
+      "description": "Audit uncommitted changes for delivery readiness — review_changes pass over the current working tree (skips on no-uncommitted) then a final_acceptance verdict. For pre-commit / pre-PR sanity checks.",
+      "semantic_profile": "delivery_audit",
+      "default_mode": "pro",
+      "recipe_kind": "focused",
+      "internal": false,
+      "cross_gates": null,
+      "hypothesis": null
+    },
+    {
+      "name": "code_review",
+      "phases": [
+        "review_changes",
+        "final_acceptance"
+      ],
+      "kind": "custom",
+      "variant": null,
+      "description": "Review uncommitted changes — same review_changes → final_acceptance recipe as delivery_audit, reused for a code-review focused pass over the operator's current working tree. For pre-commit / pre-PR review.",
+      "semantic_profile": "code_review",
+      "default_mode": "pro",
+      "recipe_kind": "focused",
+      "internal": false,
+      "cross_gates": null,
+      "hypothesis": null
+    },
+    {
+      "name": "refactor",
+      "phases": [
+        "plan",
+        "validate_plan",
+        "implement",
+        "review_changes",
+        "repair_changes",
+        "final_acceptance"
+      ],
+      "kind": "custom",
+      "variant": null,
+      "description": "Production-grade dev cycle for a refactor — same full_cycle recipe as feature (plan ↔ validate_plan loop, subtask_dag implement, review_changes ↔ repair_changes loop, final_acceptance), reused for restructuring work. Reviewer and implementation phases use per_role boundaries; plan and final_acceptance stay common. Opts into both terminal cross gates strictly: contract_check and cross_final_acceptance, both run=always with on_skip=block.",
+      "semantic_profile": "refactor",
+      "default_mode": "pro",
+      "recipe_kind": "full_cycle",
+      "internal": false,
+      "cross_gates": {
+        "contract_check": {
+          "enabled": true,
+          "run": "always",
+          "on_skip": "block",
+          "mode": "artifact_bundle"
+        },
+        "cross_final_acceptance": {
+          "enabled": true,
+          "run": "always",
+          "on_skip": "block",
+          "mode": null
+        }
+      },
+      "hypothesis": null
+    },
+    {
+      "name": "migration",
+      "phases": [
+        "plan",
+        "validate_plan",
+        "implement",
+        "compliance_check",
+        "review_changes",
+        "repair_changes",
+        "final_acceptance"
+      ],
+      "kind": "custom",
+      "variant": null,
+      "description": "More comprehensive development cycle for a migration — same recipe as complex_feature (full_cycle + extension-point compliance/audit gate; no-op stub in core, embedders register their own handler via orcho.phases). Opts into both terminal cross gates strictly. validate_plan uses the plan_reviewer persona; review_changes uses code_reviewer; implement↔repair_changes share the implementation_engineer role thread. Reviewer and implementation phases use per_role boundaries; plan, final_acceptance, and the role-less compliance_check gate stay common.",
+      "semantic_profile": "migration",
+      "default_mode": "pro",
+      "recipe_kind": "full_cycle",
+      "internal": false,
+      "cross_gates": {
+        "contract_check": {
+          "enabled": true,
+          "run": "always",
+          "on_skip": "block",
+          "mode": "artifact_bundle"
+        },
+        "cross_final_acceptance": {
+          "enabled": true,
+          "run": "always",
+          "on_skip": "block",
+          "mode": null
+        }
+      },
+      "hypothesis": null
+    },
+    {
+      "name": "task",
+      "phases": [
+        "implement",
+        "review_changes",
+        "repair_changes",
+        "final_acceptance"
+      ],
+      "kind": "scoped",
+      "variant": "task",
+      "description": "Internal profile (not a public work kind). Implement against an existing plan: skips planning, runs implement + review_changes/repair_changes loop + final_acceptance. The plan must already exist (e.g. produced by a prior `planning` run). Selective per_role on the implementation_engineer pair (implement ↔ repair_changes) so the engineer thread shards its context across the repair loop; solo-role steps (review_changes — only reviewer in this scoped profile, final_acceptance) stay common.",
+      "semantic_profile": null,
+      "default_mode": null,
+      "recipe_kind": "internal",
+      "internal": true,
+      "cross_gates": null,
+      "hypothesis": null
+    },
+    {
+      "name": "correction",
+      "phases": [
+        "correction_triage",
+        "implement",
+        "review_changes",
+        "repair_changes",
+        "final_acceptance"
+      ],
+      "kind": "custom",
+      "variant": "correction",
+      "description": "Internal/system profile (ADR 0085) for the correction follow-up after a rejected final_acceptance — NOT a first-run profile. The interactive fresh-run picker hides it; without correction context (no correction_context.md and no follow-up parent) the opening correction_triage phase fail-fast halts the run. Starts at correction_triage (read-only classification of the recorded release blockers), then implement → review_changes/repair_changes loop → final_acceptance. No plan / validate_plan: the change already has a plan from the parent run and the retained worktree is the subject of the correction. Never projected to cross — declares no cross annotations or cross_gates.",
+      "semantic_profile": null,
+      "default_mode": null,
+      "recipe_kind": "internal",
+      "internal": true,
+      "cross_gates": null,
+      "hypothesis": null
+    }
+  ],
+  "selectors": [
+    {
+      "name": "auto-detect",
+      "description": "Semantic selector (non-executable): core classifies the work kind and selects the matching semantic profile + mode. Pass as the ``profile`` argument to orcho_run_start.",
+      "is_selector": true
+    }
+  ],
+  "source": "json_v2",
+  "diagnostic": null
+}

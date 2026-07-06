@@ -11,11 +11,9 @@ the wire boundary.
 """
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 from core.infra import config as _core_config
-from core.infra.paths import PACKAGE_ROOT
 from pipeline.skills import discover_skills
 from sdk import (
     NoWorkspace as _SDKNoWorkspace,
@@ -23,6 +21,7 @@ from sdk import (
     list_history,
     load_meta,
 )
+from sdk.profiles import catalogue_path, list_profiles
 
 from orcho_mcp.schemas import (
     HistoryResult,
@@ -158,22 +157,6 @@ def get_project_skills(project_dir: str) -> SkillsListResult:
 
 # ── orcho_profiles_list backing ─────────────────────────────────────────────
 
-_DEFAULT_PROFILES_V2_PATH = PACKAGE_ROOT / "_config" / "pipeline_profiles_v2.json"
-
-
-def _resolve_profiles_v2_path() -> Path:
-    """Locate the v2 profile catalogue. ``ORCHO_PROFILES_V2_PATH`` env
-    override wins (lets standalone deployments point at a custom file
-    or staging fixture); default = orcho-core's ``_config/`` location."""
-    override = os.environ.get("ORCHO_PROFILES_V2_PATH", "").strip()
-    if override:
-        return Path(override).expanduser()
-    return _DEFAULT_PROFILES_V2_PATH
-
-
-_PROFILES_V2_JSON_PATH = _resolve_profiles_v2_path()
-
-
 def _profile_selectors() -> list[ProfileSelectorRecord]:
     """The catalogue's dynamic profile selectors.
 
@@ -197,14 +180,18 @@ def _profile_selectors() -> list[ProfileSelectorRecord]:
 def get_profiles_list() -> ProfilesListResult:
     """Return the catalogue of pipeline profiles (v2 only).
 
-    ``selectors`` (dynamic profile selectors like ``auto-detect``) are
-    surfaced in EVERY branch — including ``source='missing'`` — because a
-    selector is resolved by core before profile resolution and does not
-    depend on the v2 catalogue file being present.
+    The catalogue is read exclusively through ``sdk.profiles`` — the SDK
+    owns catalogue-path resolution (honouring the ``ORCHO_PROFILES_V2_PATH``
+    override) and the field projection. The ``source='missing'`` branch and
+    the ``selectors`` block stay here on the MCP side: a selector like
+    ``auto-detect`` is resolved by core before profile resolution and does
+    not depend on the v2 catalogue file being present, so it is surfaced in
+    EVERY branch — including ``source='missing'``.
     """
-    if not _PROFILES_V2_JSON_PATH.is_file():
+    path = catalogue_path()
+    if not path.is_file():
         diagnostic = (
-            f"v2 profile catalogue not found at {_PROFILES_V2_JSON_PATH}. "
+            f"v2 profile catalogue not found at {path}. "
             "orcho-mcp expects orcho-core's "
             "_config/pipeline_profiles_v2.json — make sure orcho-core "
             "≥ 0.5d-5 is installed in the same Python environment, or "
@@ -215,103 +202,30 @@ def get_profiles_list() -> ProfilesListResult:
             profiles=[], selectors=_profile_selectors(),
             source="missing", diagnostic=diagnostic,
         )
-    return _list_profiles_v2(_PROFILES_V2_JSON_PATH)
-
-
-def _list_profiles_v2(path) -> ProfilesListResult:
-    """Read v2 profile file.
-
-    v2 entries have ``kind`` / ``variant`` / ``description`` /
-    ``steps``. Flatten ``steps`` into the ``phases: list[str]`` view for
-    compatibility while exposing the v2 fields as well.
-    """
-    from pipeline.profiles.loader import load_profiles_v2
-
-    profiles_v2 = load_profiles_v2(path)
-    records: list[ProfileRecord] = []
-    for p in profiles_v2.values():
-        # Disjointness guard: a selector token is never an executable profile.
-        # The v2 registry holds recipes only, so this should not fire, but
-        # keep ``profiles`` and ``selectors`` provably disjoint regardless of
-        # what a custom catalogue ships.
-        if p.name == _AUTO_DETECT_PROFILE_TOKEN:
-            continue
-        # Flatten steps → phases list (best-effort phase-name extract for v1
-        # consumers; v2-aware clients should read ``kind``/``variant``).
-        phases: list[str] = []
-        for step in p.steps:
-            if hasattr(step, "phase"):
-                phases.append(step.phase)
-            elif hasattr(step, "steps"):  # LoopStep
-                phases.extend(s.phase for s in step.steps)
-        # cross_gates is the typed profile-level policy block for the
-        # runner-owned cross gates (contract_check /
-        # cross_final_acceptance). Surface only when the profile
-        # declares an explicit block — missing means "use documented
-        # defaults", not "no policy", and the latter is a separate
-        # client signal handled by leaving the field as None.
-        cross_gates_raw = getattr(p, "cross_gates", None)
-        cross_gates: dict[str, dict] | None = None
-        if cross_gates_raw:
-            cross_gates = {
-                name: {
-                    "enabled": policy.enabled,
-                    "run": (
-                        policy.run.value
-                        if hasattr(policy.run, "value")
-                        else str(policy.run)
-                    ),
-                    "on_skip": (
-                        policy.on_skip.value
-                        if hasattr(policy.on_skip, "value")
-                        else str(policy.on_skip)
-                    ),
-                    "mode": policy.mode,
-                }
-                for name, policy in cross_gates_raw.items()
-            }
-        hypothesis_raw = None
-        for step in p.steps:
-            if getattr(step, "phase", None) == "plan":
-                hypothesis_raw = getattr(step, "hypothesis", None)
-                break
-            for inner in getattr(step, "steps", ()):
-                if getattr(inner, "phase", None) == "plan":
-                    hypothesis_raw = getattr(inner, "hypothesis", None)
-                    break
-            if hypothesis_raw is not None:
-                break
-        hypothesis = None
-        if hypothesis_raw is not None:
-            attempts = int(getattr(hypothesis_raw, "attempts", 0) or 0)
-            if attempts > 0:
-                hypothesis = {
-                    "attempts": attempts,
-                    "format": getattr(hypothesis_raw, "format", None),
-                }
-        # Semantic identity (Stage C). enum→str conversion lives here at the
-        # service boundary so schemas/ stays SDK/pipeline-free; the catalogue
-        # still emits ALL profiles, with engine-internal ones (task /
-        # correction) flagged ``internal=True`` rather than dropped.
-        semantic_profile = (
-            p.semantic_profile.value if p.semantic_profile else None
+    # Field-for-field projection of the SDK summary onto the wire record.
+    # ``list_profiles`` already excludes the ``auto-detect`` selector token,
+    # keeping ``profiles`` and ``selectors`` disjoint. ``phases`` is a tuple
+    # from the SDK → materialise as list; ``description`` collapses the SDK's
+    # empty string back to ``None``; ``hypothesis`` is the SDK's
+    # ``{'attempts', 'format'}`` dict (or None), coerced to
+    # ``ProfileHypothesisRecord`` by Pydantic. ``summary.isolated`` has no
+    # ProfileRecord field and is intentionally ignored.
+    records = [
+        ProfileRecord(
+            name=summary.name,
+            phases=list(summary.phases),
+            kind=summary.kind,
+            variant=summary.variant,
+            description=summary.description or None,
+            cross_gates=summary.cross_gates,
+            hypothesis=summary.hypothesis,
+            semantic_profile=summary.semantic_profile,
+            default_mode=summary.default_mode,
+            recipe_kind=summary.recipe_kind,
+            internal=summary.internal,
         )
-        default_mode = p.default_mode.value if p.default_mode else None
-        recipe_kind = p.recipe_kind
-        internal = bool(getattr(p, "internal", False))
-        records.append(ProfileRecord(
-            name=p.name,
-            phases=phases,
-            kind=p.kind.value if hasattr(p.kind, "value") else str(p.kind),
-            variant=p.variant,
-            description=p.description or None,
-            cross_gates=cross_gates,
-            hypothesis=hypothesis,
-            semantic_profile=semantic_profile,
-            default_mode=default_mode,
-            recipe_kind=recipe_kind,
-            internal=internal,
-        ))
+        for summary in list_profiles()
+    ]
     return ProfilesListResult(
         profiles=records, selectors=_profile_selectors(), source="json_v2",
     )
