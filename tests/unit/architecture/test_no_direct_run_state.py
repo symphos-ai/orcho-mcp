@@ -432,6 +432,15 @@ SDK_ERROR_TYPE_ALLOWLIST: frozenset[str] = frozenset({
     "services/run_lookup.py",    # find_run_dir / runs_dir_or_raise
     "services/run_events.py",    # read_run_events tail
     "services/read_queries.py",  # get_workspace_info soft NoWorkspace fallback
+    # Supervisor operation modules now delegate the detached launch /
+    # respawn / signal mechanics to ``sdk.run_control.launch`` and
+    # translate its typed errors (NoWorkspace / RunNotFound) into the MCP
+    # hierarchy at their own delegation boundary — a run-control primitive
+    # that resolves the run and maps at the seam, exactly like the read
+    # sources above.
+    "supervisor/spawn.py",       # launch_run: NoWorkspace → WorkspaceNotResolved
+    "supervisor/resume.py",      # resume_run: RunNotFound → RunNotFoundError
+    "supervisor/cancel.py",      # cancel_run: RunNotFound → RunNotFoundError
 })
 
 

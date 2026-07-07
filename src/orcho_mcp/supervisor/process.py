@@ -1,26 +1,14 @@
 """orcho_mcp.supervisor.process — pid liveness probe.
 
-Single-helper module. Kept separate from state/path concerns so the
-"does this pid exist?" question has one canonical home; cancel and
-recovery both consult it.
+Single-helper module. Kept separate from state / path concerns so the
+"does this pid exist?" question has one canonical import home for cancel
+and recovery. The probe itself is delegated to
+``sdk.run_control.launch.is_pid_alive`` — the same framework-neutral
+implementation the SDK launch surface uses — so MCP and SDK agree on
+liveness semantics without duplicating the ``os.kill(pid, 0)`` dance.
 """
 from __future__ import annotations
 
-import os
-
-
-def is_pid_alive(pid: int) -> bool:
-    """Return True if ``pid`` is alive (or exists with different uid)."""
-    if pid <= 0:
-        return False
-    try:
-        os.kill(pid, 0)
-        return True
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        # PID exists but belongs to another user — treat as alive.
-        return True
-
+from sdk.run_control.launch import is_pid_alive
 
 __all__ = ["is_pid_alive"]

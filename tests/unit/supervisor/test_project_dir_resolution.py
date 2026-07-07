@@ -15,6 +15,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from sdk.run_control.launch import LaunchedRun, LaunchResult
 
 from orcho_mcp.errors import PipelineSpawnError
 from orcho_mcp.supervisor import RunsSupervisor
@@ -24,6 +25,40 @@ from orcho_mcp.supervisor.paths import resolve_project_dir, resolve_task_file
 @pytest.fixture
 def anyio_backend():
     return "asyncio"
+
+
+def _install_fake_launch(monkeypatch, fake_workspace, captured):
+    """Patch the spawn module's ``launch_run`` seam, recording the spec.
+
+    Spawn resolves project_dir / task_file at the MCP boundary and hands
+    the resolved absolute paths to the launch seam on the ``LaunchSpec``.
+    These tests assert on that spec rather than the internal ``Popen``.
+    """
+    runs_dir = fake_workspace / "runspace" / "runs"
+    real_popen = subprocess.Popen
+
+    def fake_launch_run(spec, *, run_id=None):
+        captured["spec"] = spec
+        captured["run_id"] = run_id
+        run_dir = runs_dir / run_id
+        run_dir.mkdir(parents=True, exist_ok=True)
+        popen = real_popen([sys.executable, "-c", "import sys; sys.exit(0)"])
+        run = LaunchedRun(
+            run_id=run_id,
+            pid=popen.pid,
+            pgid=popen.pid,
+            run_dir=run_dir,
+            project_dir=spec.project_dir,
+            command=[sys.executable, "-m", "pipeline.project_orchestrator"],
+            started_at="2026-07-07T00:00:00.000Z",
+            mock=spec.mock,
+            output_mode=spec.output_mode,
+        )
+        return LaunchResult(run=run, popen=popen)
+
+    monkeypatch.setattr(
+        "orcho_mcp.supervisor.spawn.launch_run", fake_launch_run
+    )
 
 
 # ── resolve_project_dir unit cases ─────────────────────────────────────────
@@ -128,25 +163,15 @@ async def test_spawn_resolves_relative_project_dir_into_absolute_paths(
     to set ``Popen(cwd="proj")`` AND ``--project proj`` simultaneously,
     causing the orchestrator to re-resolve ``--project`` against the
     already-changed subprocess cwd and double the segment (``proj/proj``).
-    Spawn must resolve once at entry and use the absolute path for both.
+    Spawn must resolve once at the MCP boundary and hand the absolute path
+    to the launch seam (which uses it for both ``cwd`` and ``--project``).
     """
     proj = tmp_path / "proj"
     proj.mkdir()
     monkeypatch.chdir(tmp_path)
 
     captured: dict[str, object] = {}
-    real_popen = subprocess.Popen
-
-    def capture_popen(cmd, **kwargs):
-        captured["cmd"] = list(cmd)
-        captured["cwd"] = kwargs.get("cwd")
-        return real_popen(
-            [sys.executable, "-c", "import sys; sys.exit(0)"],
-            **{k: v for k, v in kwargs.items() if k != "env"},
-            env=kwargs.get("env"),
-        )
-
-    monkeypatch.setattr(subprocess, "Popen", capture_popen)
+    _install_fake_launch(monkeypatch, fake_workspace, captured)
 
     sup = RunsSupervisor()
     handle = await sup.spawn(
@@ -157,13 +182,9 @@ async def test_spawn_resolves_relative_project_dir_into_absolute_paths(
     try:
         abs_proj = str(proj.resolve())
 
-        # cwd must be the absolute resolved path, not the raw "proj".
-        assert captured["cwd"] == abs_proj
-
-        # --project argv flag must carry the same absolute path.
-        cmd = captured["cmd"]
-        assert "--project" in cmd
-        assert cmd[cmd.index("--project") + 1] == abs_proj
+        # The resolved absolute path is handed to the launch seam once,
+        # not the raw "proj" — the seam uses it for both cwd and --project.
+        assert captured["spec"].project_dir == abs_proj
 
         # Handle and persisted state must record the absolute form too,
         # so resume can re-launch without re-applying cwd resolution.
@@ -201,17 +222,7 @@ async def test_spawn_resolves_short_task_file_before_building_argv(
     task_file.write_text("do it\n", encoding="utf-8")
 
     captured: dict[str, object] = {}
-    real_popen = subprocess.Popen
-
-    def capture_popen(cmd, **kwargs):
-        captured["cmd"] = list(cmd)
-        return real_popen(
-            [sys.executable, "-c", "import sys; sys.exit(0)"],
-            **{k: v for k, v in kwargs.items() if k != "env"},
-            env=kwargs.get("env"),
-        )
-
-    monkeypatch.setattr(subprocess, "Popen", capture_popen)
+    _install_fake_launch(monkeypatch, fake_workspace, captured)
 
     sup = RunsSupervisor()
     handle = await sup.spawn(
@@ -220,9 +231,9 @@ async def test_spawn_resolves_short_task_file_before_building_argv(
         mock=True,
     )
     try:
-        cmd = captured["cmd"]
-        assert "--task-file" in cmd
-        assert cmd[cmd.index("--task-file") + 1] == str(task_file.resolve())
+        # The short ``task.md`` name is resolved to its reserved-dir
+        # absolute path at the MCP boundary and handed to the launch seam.
+        assert captured["spec"].task_file == str(task_file.resolve())
     finally:
         if handle.popen and handle.popen.poll() is None:
             handle.popen.terminate()
