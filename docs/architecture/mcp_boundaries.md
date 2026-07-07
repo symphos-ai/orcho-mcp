@@ -38,7 +38,7 @@ domain's public surface — not reaching into its internals.
 | `src/orcho_mcp/run_control/` | Implementation for run start / resume / cancel / handoff-decision tools |
 | `src/orcho_mcp/inspection/` | Evidence and diff reads |
 | `src/orcho_mcp/authoring/` | Plan validation and prompt resolution |
-| `src/orcho_mcp/supervisor/` | Subprocess lifecycle: spawn, state IO, recovery, cancel, resume, reap |
+| `src/orcho_mcp/supervisor/` | Subprocess lifecycle: spawn, state IO, recovery, cancel, resume, reap. Detach / resume / cancel mechanics delegate to `sdk.run_control.launch`; the supervisor keeps policy (locks, capacity gate, reap, recovery) and its `mcp_supervisor.json` state |
 
 ## Import rules
 

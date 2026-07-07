@@ -38,10 +38,10 @@ def workspace_from_runs_dir(runs_dir: Path) -> str:
 def resolve_project_dir(project_dir: str) -> str:
     """Resolve the caller's ``project_dir`` to an absolute path once.
 
-    The supervisor passes project_dir to subprocess.Popen as both ``cwd=``
-    and (via ``--project``) to the orchestrator's argv. If we keep a
-    relative input, Popen interprets cwd relative to the MCP server's
-    cwd while orcho-core re-resolves ``--project`` relative to the
+    The supervisor passes project_dir to the delegated launch as both
+    ``cwd=`` and (via ``--project``) to the orchestrator's argv. If we keep a
+    relative input, the launched process interprets cwd relative to the MCP
+    server's cwd while orcho-core re-resolves ``--project`` relative to the
     ALREADY-CHANGED subprocess cwd, doubling the segment
     (e.g. ``orcho-web`` → ``orcho-web/orcho-web``). Resolve once here so
     cwd and ``--project`` agree on the same absolute path.

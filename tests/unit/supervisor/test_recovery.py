@@ -16,6 +16,8 @@ from __future__ import annotations
 import json
 import os
 
+import pytest
+
 from orcho_mcp.supervisor import RunsSupervisor
 
 
@@ -127,6 +129,54 @@ def test_recover_skips_runs_in_terminal_state(fake_workspace):
     sup = RunsSupervisor()
     orphaned = sup.recover()
     assert orphaned == []
+
+
+@pytest.fixture
+def anyio_backend():
+    return "asyncio"
+
+
+@pytest.mark.asyncio
+async def test_recover_consistent_after_delegated_cancel_of_orphan(
+    fake_workspace,
+):
+    """After a delegated cancel settles a re-attached orphan, ``recover()``
+    stays consistent — it must NOT re-open the run as ``running``.
+
+    ``cancel`` mirrors the SDK settle back into ``mcp_supervisor.json``
+    (status ``interrupted``); ``recover`` only orphans ``running`` dead-pid
+    runs, so the settled run is left alone rather than re-flagged.
+    """
+    runs_dir = fake_workspace / "runspace" / "runs"
+    run_dir = runs_dir / "20260506_test_orphan_settle"
+    run_dir.mkdir()
+    # Only the MCP delta on disk, status running, dead pid (orphan shape).
+    (run_dir / "mcp_supervisor.json").write_text(json.dumps({
+        "run_id":     "20260506_test_orphan_settle",
+        "pid":        99999999,
+        "pgid":       99999999,
+        "command":    ["x"],
+        "cwd":        "/p",
+        "project_dir": "/p",
+        "started_at": "2026-05-06T12:00:00.000Z",
+        "status":     "running",
+    }))
+
+    sup = RunsSupervisor()
+    result = await sup.cancel("20260506_test_orphan_settle", mode="graceful")
+    assert result["status"] == "already_dead"
+
+    # The delegated cancel settled the MCP state.
+    settled = json.loads((run_dir / "mcp_supervisor.json").read_text())
+    assert settled["status"] == "interrupted"
+
+    # recover() must not re-open it as running / orphan it again.
+    orphaned = sup.recover()
+    assert "20260506_test_orphan_settle" not in orphaned
+    after = json.loads((run_dir / "mcp_supervisor.json").read_text())
+    assert after["status"] == "interrupted", (
+        "recover() must not resurrect a settled orphan back to running"
+    )
 
 
 def test_recover_handles_missing_workspace(monkeypatch):
