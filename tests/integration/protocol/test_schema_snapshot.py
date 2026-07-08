@@ -110,3 +110,23 @@ def test_committed_snapshot_has_expected_shape():
     tool_names = {t["name"] for t in committed["tools"]}
     assert "orcho_delivery_gate" in tool_names
     assert "orcho_delivery_decide" in tool_names
+
+
+def test_run_inspection_tools_explain_their_operator_questions():
+    """The public MCP catalog tells clients which read tool to choose."""
+    committed = _load_committed_schema()
+    descriptions = {
+        tool["name"]: tool.get("description") or ""
+        for tool in committed["tools"]
+    }
+
+    assert (
+        "What is happening / what should I do next?"
+        in descriptions["orcho_run_status"]
+    )
+    assert (
+        "What happened / what proves it?"
+        in descriptions["orcho_run_evidence"]
+    )
+    assert "How much did it consume?" in descriptions["orcho_run_metrics"]
+    assert "What changed?" in descriptions["orcho_run_diff"]

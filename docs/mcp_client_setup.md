@@ -232,15 +232,15 @@ check for this core set:
 ```text
 orcho_workspace_info
 orcho_run_start
-orcho_run_status
+orcho_run_status           # what is happening / what should I do next?
 orcho_run_watch            # long-poll; until=next_event|phase_change|subtask|handoff_or_terminal|terminal
 orcho_run_events_tail
 orcho_run_events_summary
-orcho_run_evidence         # slices incl. "receipts" (per-subtask delivery + attestation)
-orcho_run_diff
+orcho_run_evidence         # what happened / what proves it?
+orcho_run_diff             # what changed?
 orcho_phase_handoff_decide
 orcho_run_resume
-orcho_run_metrics
+orcho_run_metrics          # how much did it consume?
 orcho_run_history
 ```
 

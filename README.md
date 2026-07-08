@@ -28,9 +28,10 @@ version: [docs.orcho.dev](https://docs.orcho.dev/start/let-your-agent-drive/).</
 > **Status:** ``v0.1.0`` public release line. Core control loop surfaces are available:
 >
 > - **Act**: ``orcho_run_start`` / ``orcho_run_resume`` / ``orcho_run_cancel`` with L4-test-pinned semantics (process-group signal handling, supervisor-owned restart-recovery, race-aware cancel).
-> - **Observe**: ``orcho_run_status`` / ``orcho_run_history`` / ``orcho_run_metrics`` / ``orcho_run_events_tail`` — read-only, polling-friendly.
+> - **Observe**: ``orcho_run_status`` answers "What is happening / what should I do next?"; ``orcho_run_history`` and ``orcho_run_events_tail`` are read-only, polling-friendly context.
 > - **Decide**: ``orcho_phase_handoff_decide`` — generic phase-handoff state transition for paused runs. The pipeline pauses with ``status=awaiting_phase_handoff`` when a phase's declared ``handoff`` policy fires; ``continue`` / ``retry_feedback`` / ``halt`` write a decision artifact (``halt`` flips ``meta.status`` to ``halted`` synchronously). Pure state transition; never spawns.
-> - **Inspect**: ``orcho_run_evidence`` — typed inspection slices (``plan`` / ``findings`` / ``commands`` / ``artifacts`` / ``errors`` / ``sub_runs`` / ``all``) with severity filter (P0..P3).
+> - **Inspect**: ``orcho_run_evidence`` answers "What happened / what proves it?"; ``orcho_run_diff`` answers "What changed?"
+> - **Measure**: ``orcho_run_metrics`` answers "How much did it consume?" with tokens, duration, phase breakdown, and cost-reference fields when available.
 >
 > Live progress: ``orcho_run_watch`` emits ordered ``notifications/progress`` when the MCP request carries a ``progressToken``. Clients that don't carry one poll ``orcho_run_status`` / ``orcho_run_events_tail`` against the same run state.
 
@@ -155,9 +156,19 @@ Tool naming is consistent: every run-lifecycle tool is `orcho_run_<verb>`. State
 | Group | Tools |
 |---|---|
 | **Act** | `orcho_run_start`, `orcho_run_resume`, `orcho_run_cancel` |
-| **Observe** | `orcho_run_status`, `orcho_run_history`, `orcho_run_metrics`, `orcho_run_events_tail` |
+| **Observe** | `orcho_run_status`, `orcho_run_history`, `orcho_run_events_tail` |
 | **Decide** | `orcho_phase_handoff_decide` |
 | **Inspect** | `orcho_run_evidence`, `orcho_run_diff` |
+| **Measure** | `orcho_run_metrics` |
+
+When choosing a read tool, start from the question:
+
+| Question | MCP tool |
+|---|---|
+| What is happening / what should I do next? | `orcho_run_status` |
+| What happened / what proves it? | `orcho_run_evidence` |
+| How much did it consume? | `orcho_run_metrics` |
+| What changed? | `orcho_run_diff` |
 
 For an end-to-end walkthrough of the full control loop with code, see [`docs/control_loop_walkthrough.md`](docs/control_loop_walkthrough.md).
 
