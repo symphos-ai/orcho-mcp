@@ -293,7 +293,13 @@ def orcho_run_status(
     run_id: str,
     include: list[str] | None = None,
 ) -> RunStatus:
-    """Summary snapshot for a single run — status, metrics, lineage, next steps.
+    """What is happening / what should I do next?
+
+    Summary snapshot for a single run: status, phase progress, metrics summary,
+    lineage, attention signals, available artifacts, and ready next actions. Use
+    this as the polling-friendly operator view; use ``orcho_run_evidence`` for
+    proof, ``orcho_run_metrics`` for consumption, and ``orcho_run_diff`` for
+    patch content.
 
     Raises RunNotFoundError if ``run_id`` doesn't exist on disk.
 
@@ -347,7 +353,13 @@ def orcho_run_status(
 
 @mcp.tool()
 def orcho_run_metrics(run_id: str) -> RunMetrics:
-    """Raw metrics.json for a single run (token counts, durations, per-phase breakdown)."""
+    """How much did it consume?
+
+    Raw ``metrics.json`` for one run: token counts, durations, per-phase
+    breakdown, attempts / retries, and cost-reference fields when the runtime
+    recorded or Orcho estimated them. Use ``orcho_run_status`` first when
+    metrics may not exist yet.
+    """
     return get_run_metrics(run_id)
 
 
@@ -1176,7 +1188,14 @@ def orcho_run_evidence(
     severity_min: str | None = None,
     phases: list[str] | None = None,
 ) -> EvidenceResult:
-    """Inspect a run via typed slices — no raw log scraping required.
+    """What happened / what proves it?
+
+    Typed evidence slices for reconstructing why the run reached its current
+    state: plan contract, findings, commands, artifacts, errors, receipts,
+    verification, delivery, correction, and cross-run children. Use this for
+    audit / post-mortem / proof; use ``orcho_run_status`` for the live operator
+    snapshot, ``orcho_run_metrics`` for consumption, and ``orcho_run_diff`` for
+    patch content.
 
     The full evidence bundle (``collect_evidence``) is exhaustive; this
     tool surfaces narrow projections control-loop clients actually
@@ -1302,7 +1321,12 @@ def orcho_run_diff(
     phase: str | None = None,
     max_bytes: int = 200_000,
 ) -> RunDiffResult:
-    """Read a captured ``diff.patch`` artifact for a run.
+    """What changed?
+
+    Read a captured ``diff.patch`` artifact for a run: file stats, bounded
+    preview, or full patch, optionally scoped to a path or phase. Use this for
+    the changed-file / patch-content question; use ``orcho_run_status`` for the
+    current run state and ``orcho_run_evidence`` for proof.
 
     The pipeline writes diff artifacts at run lifecycle time; this
     tool is the read side. Missing artifact is a typed

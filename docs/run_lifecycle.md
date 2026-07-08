@@ -18,9 +18,9 @@ The seven process-control tools share a `orcho_run_` prefix:
 | `orcho_run_start` | start | Spawn a new pipeline subprocess. Returns immediately. |
 | `orcho_run_resume` | resume | Re-spawn a subprocess against an existing run dir, loading checkpoint. |
 | `orcho_run_cancel` | cancel | Signal the run's process group (graceful or hard). |
-| `orcho_run_status` | status | Summary snapshot for one run (status / metrics / lineage / next steps). Phase bodies elided by default; `include` opts back in. |
+| `orcho_run_status` | status | What is happening / what should I do next? Summary snapshot for one run (status / phase progress / metrics summary / lineage / attention signals / next actions). Phase bodies elided by default; `include` opts back in. |
 | `orcho_run_history` | history | List recent runs, newest first. |
-| `orcho_run_metrics` | metrics | Raw `metrics.json` for one run. |
+| `orcho_run_metrics` | metrics | How much did it consume? Raw `metrics.json` for tokens, durations, phase breakdown, attempts / retries, and cost-reference fields when available. |
 | `orcho_run_events_tail` | events_tail | Stream events with seq-based pagination. |
 
 Observation tools share the same prefix but never touch the process:
@@ -30,7 +30,7 @@ Observation tools share the same prefix but never touch the process:
 | `orcho_run_watch` | Long-poll a live run; emits `notifications/progress` when the request carries a `progressToken`. A watch timeout is observer loss, not run failure. |
 | `orcho_run_live_status` | Lightweight live-progress projection for a running pipeline. |
 | `orcho_run_events_summary` | Aggregated event-stream projection (counts per kind/phase). |
-| `orcho_run_diff` | The run's retained diff. |
+| `orcho_run_diff` | What changed? File stats, bounded preview, or full patch from the run's retained diff, optionally scoped to a path or phase. |
 
 The phase-handoff decision is a separate concern — it's a state
 transition, not a process action — so it sits beside the run-lifecycle
@@ -48,7 +48,7 @@ involved:
 
 | Tool | Purpose |
 |---|---|
-| `orcho_run_evidence` | Inspect a run via typed slices: plan summary, findings (severity-filterable), commands, artifacts, errors+halt reason, cross-run sub-aliases, per-subtask delivery receipts (`subtask_dag`), and verification-environment receipts (interpreter / cwd / import checks / commands / clean-tree note). Replaces raw log/event-jsonl reads for control-loop clients. |
+| `orcho_run_evidence` | What happened / what proves it? Typed slices for plan summary, findings (severity-filterable), commands, artifacts, errors+halt reason, cross-run sub-aliases, per-subtask delivery receipts (`subtask_dag`), and verification-environment receipts (interpreter / cwd / import checks / commands / clean-tree note). Replaces raw log/event-jsonl reads for control-loop clients. |
 | `orcho_run_diagnose` | Read-only resume-situation verdict: a typed `condition`, a one-line `reason`, and call-readiness-typed `next_actions`. Call before any risky `orcho_run_resume`. See [Diagnosing a run](#diagnosing-a-run--orcho_run_diagnose). |
 | `orcho_delivery_gate` | Read-only projection of a post-release delivery / correction gate: SDK-derived kind, available actions, blocked actions, diff summary, and ready calls to `orcho_delivery_decide`. |
 
@@ -57,6 +57,22 @@ specific run:
 
 `orcho_workspace_info`, `orcho_plan_validate`, `orcho_skills_list`,
 `orcho_prompts_resolve`, `orcho_profiles_list`.
+
+## Inspection Questions
+
+The read tools deliberately answer different questions:
+
+| Question | MCP tool | Leads with |
+|---|---|---|
+| What is happening / what should I do next? | `orcho_run_status` | Current state, phase progress, attention signals, lineage, artifacts, and ready next actions. |
+| What happened / what proves it? | `orcho_run_evidence` | Typed proof slices: plan, findings, commands, artifacts, errors, receipts, verification, delivery, correction, and child runs. |
+| How much did it consume? | `orcho_run_metrics` | Tokens, duration, per-phase breakdown, attempts / retries, and cost-reference fields when available. |
+| What changed? | `orcho_run_diff` | File stats, bounded preview, or full patch from the retained diff. |
+
+Use `orcho_run_status` for the live operator loop. Use
+`orcho_run_evidence` when explaining or auditing a completed / halted run. Use
+`orcho_run_metrics` for consumption analysis. Use `orcho_run_diff` when the
+question is specifically about patch content.
 
 ---
 
@@ -178,7 +194,8 @@ particular [Resilient observation loop](architecture/observation_delivery.md#res
 
 ### `orcho_run_status(run_id, include=None)`
 
-Summary snapshot. Use as the primary "is this done yet?" check:
+Summary snapshot. Use as the primary "what is happening / what should I do
+next?" check:
 
 - `meta.status` walks through the pipeline-defined values
   (`running` → `done` / `failed` / `interrupted` / `halted` /
@@ -260,7 +277,9 @@ polling until the run state changes.
 
 ### `orcho_run_metrics(run_id)`
 
-Raw `metrics.json` for token / duration / per-phase breakdown.
+Raw `metrics.json` for the "how much did it consume?" question: tokens,
+duration, per-phase breakdown, attempts / retries, and cost-reference fields
+when available.
 Returns `RunNotFoundError` when the run dir doesn't exist *or* when
 metrics haven't been written yet. Use `orcho_run_status` first if you
 need a "metrics may not exist" branch.
@@ -676,8 +695,8 @@ Raising keeps this tool's success `outputSchema` unchanged.
 
 ## Inspection — `orcho_run_evidence`
 
-**Goal:** *Control-loop clients should understand a run without reading
-raw logs.* The full evidence bundle
+**Goal:** *Control-loop clients should answer "what happened / what proves it?"
+without reading raw logs.* The full evidence bundle
 (`collect_evidence`) is exhaustive and audit-grade; `orcho_run_evidence`
 exposes narrow typed slices over the same data so an LLM client can
 fit the answer in its context window.
