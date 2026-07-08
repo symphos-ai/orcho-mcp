@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+## 0.4.0 - 2026-07-08
+
+### Changed
+
+- Profile reads go through the public `orcho-core` SDK profile catalogue
+  surface instead of internal profile modules.
+- Detached-launch mechanics for supervised runs are delegated to the SDK
+  run-control launch surface.
+- Requires `orcho-core>=0.4.0,<0.5`.
+
+### Documentation
+
+- Run inspection tool roles are clarified so clients pick the right tool for
+  status, diff, evidence, and metrics reads.
+
 ## 0.3.0 - 2026-07-06
 
 ### Changed
