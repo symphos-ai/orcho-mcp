@@ -146,14 +146,15 @@ def test_live_monitoring_steps_prefer_summary_resource() -> None:
     }
 
 
-def test_inspect_delivery_gate_branches_on_all_three_kinds() -> None:
+def test_inspect_delivery_gate_branches_on_all_kinds() -> None:
     """The delivery-gate recipe forks on every orcho_delivery_gate kind.
 
     delivery_decision_required and correction_decision_required must lead to a
     read-only review (resolved through an orcho_delivery_decide ready call from
-    the gate), and direct_checkout_or_running to the direct-checkout path. The
-    recipe must call orcho_delivery_gate and must NOT suggest a manual diff
-    apply.
+    the gate); delivery_completed to a read-only inspection of the delivered
+    outcome (no decision); and direct_checkout_or_running to the direct-checkout
+    path. The recipe must call orcho_delivery_gate and must NOT suggest a manual
+    diff apply.
     """
     listing = list_workflow_recipes()
     recipe = next(
@@ -171,6 +172,7 @@ def test_inspect_delivery_gate_branches_on_all_three_kinds() -> None:
     assert branch_kinds == {
         "delivery_decision_required",
         "correction_decision_required",
+        "delivery_completed",
         "direct_checkout_or_running",
     }
 
@@ -179,6 +181,8 @@ def test_inspect_delivery_gate_branches_on_all_three_kinds() -> None:
     assert "orcho_delivery_decide" in desc
     assert "next_actions" in desc
     assert "direct" in desc
+    # The completed-delivery branch is described as terminal (no decision).
+    assert "delivery_completed" in desc
     # Hard prohibition on manual application of the retained diff.
     assert "never" in desc
     assert "git apply" in desc or "by hand" in desc or "manually" in desc

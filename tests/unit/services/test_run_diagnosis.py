@@ -864,6 +864,28 @@ def test_no_commit_delivery_keeps_existing_terminal_classification(fake_workspac
     assert d.delivery_gate_kind is None
 
 
+def test_delivery_completed_gate_kind_points_to_gate_never_a_decision():
+    # A ``delivery_completed`` gate is terminal — the Orcho-managed delivery
+    # already landed. Diagnose stays read-only: it points at the gate projection
+    # for the delivered outcome (pr_url / delivery notices) and NEVER offers an
+    # orcho_delivery_decide call. Exercises the T1 terminal branch directly (the
+    # wire only surfaces this kind defensively, never for a normal terminal).
+    from orcho_mcp.inspection.diagnosis import _delivery_gate_actions
+
+    actions = _delivery_gate_actions("20260101_000001", "delivery_completed", [])
+
+    assert len(actions) == 1
+    only = actions[0]
+    assert only.tool == "orcho_delivery_gate"
+    assert only.args == {"run_id": "20260101_000001"}
+    assert only.kind == "ready_call"
+    # Terminal: no delivery decision is advertised, and the intent names the
+    # delivered outcome (pr_url), not a choose-a-decision prompt.
+    assert all(a.tool != "orcho_delivery_decide" for a in actions)
+    assert "already landed" in only.intent
+    assert "pr_url" in only.intent
+
+
 # ── Correction-followup contract: correction_followup_required + superseded parent ───────────────
 
 

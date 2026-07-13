@@ -654,9 +654,13 @@ class DeliverySummaryRecord(BaseModel):
     / ``bypass`` branch policies, or any ``committed`` status) and ABSENT for a
     publish-only ``worktree_branch`` delivery that only published a branch
     without writing a commit to the target. ``delivery_branch`` (the published /
-    publishable delivery branch) and ``pr_intent`` (the durable ADR 0119 PR
-    intent) are additive: both are ``None`` when core did not emit them (e.g. a
-    stale core, or a delivery mode that produced neither).
+    publishable delivery branch), ``pr_url`` (the live pull-request URL),
+    ``delivery_notices`` (the human-readable delivery lines), and ``pr_intent``
+    (the durable ADR 0119 PR intent) are additive: each is ``None`` / ``[]`` when
+    core did not emit it (e.g. a stale core, or a delivery mode that produced
+    none). ``pr_url`` / ``delivery_notices`` are read through the SAME shared
+    ``services.delivery_gate`` helpers the interactive gate projection uses, so
+    the two surfaces never drift.
     """
     release_verdict: str = Field(
         description="Release outcome from meta ``release_verdict``: "
@@ -684,6 +688,24 @@ class DeliverySummaryRecord(BaseModel):
             "The published / publishable delivery branch (ADR 0119). Present "
             "for a branch-policy delivery (e.g. a publish-only "
             "``worktree_branch``); ``None`` when core emitted no branch."
+        ),
+    )
+    pr_url: str | None = Field(
+        default=None,
+        description=(
+            "The live pull-request URL from meta ``commit_delivery.pr_url`` "
+            "(ADR 0119). Present when the delivery opened a pull request; "
+            "``None`` when no PR was opened or on a stale core. The "
+            "authoritative link — prefer it over "
+            "``pr_intent.suggested_command``."
+        ),
+    )
+    delivery_notices: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Human-readable delivery notices from meta "
+            "``commit_delivery.delivery_notices`` (e.g. the 'PR opened' / "
+            "'branch ready' lines). Empty when core emitted no notices."
         ),
     )
     pr_intent: PrIntentRecord | None = Field(
@@ -915,9 +937,22 @@ class DeliveryGateProjection(BaseModel):
         ``fix_requested`` state; the operator normally chooses fix / halt for a
         current rejected release. This is an *available correction-flow state*,
         NOT an executed delivery.
+      - ``delivery_completed`` — an Orcho-managed delivery already landed in
+        the target checkout (``committed`` / ``applied_uncommitted``). Terminal:
+        no decision is offered. ``published`` is ``True`` and ``pr_url`` carries
+        the live link when a pull request was opened; ``delivery_notices``
+        carries the human-readable delivery lines. This is distinct from
+        ``direct_checkout_or_running`` — the delivery ran and completed, it is
+        not a direct edit or a still-running run.
       - ``direct_checkout_or_running`` — no pending commit-delivery gate in
-        meta (terminal delivery, or a direct checkout edit / still-running
-        run); no approve / apply / fix is offered.
+        meta and no completed Orcho delivery (a direct checkout edit, a
+        still-running run, or a skipped / halted / failed terminal); no
+        approve / apply / fix is offered.
+
+    On a ``delivery_completed`` gate whose delivery was published,
+    ``pr_intent.suggested_command`` is deliberately ``None``: the durable
+    "run this to open a PR" command is stale once the PR is open, so the live
+    link is read from ``pr_url`` instead.
 
     ``available_actions`` comes from orcho-core's read-only
     ``delivery_decision_state`` surface and lists only actions the SDK says are
@@ -930,6 +965,7 @@ class DeliveryGateProjection(BaseModel):
     kind: Literal[
         "delivery_decision_required",
         "correction_decision_required",
+        "delivery_completed",
         "direct_checkout_or_running",
     ]
     release: Literal["approved", "rejected", "none"] = Field(
@@ -976,6 +1012,33 @@ class DeliveryGateProjection(BaseModel):
             "delivery-scope dimension."
         ),
     )
+    published: bool = Field(
+        default=False,
+        description=(
+            "True on a ``delivery_completed`` gate whose delivery opened a pull "
+            "request (``pr_url`` is present). ``False`` for every other kind and "
+            "for a completed delivery that only wrote a commit without a PR."
+        ),
+    )
+    pr_url: str | None = Field(
+        default=None,
+        description=(
+            "The live pull-request URL for a published ``delivery_completed`` "
+            "gate, read from meta ``commit_delivery.pr_url`` (ADR 0119). "
+            "``None`` when no PR was opened or on any non-completed kind. This "
+            "is the authoritative link — prefer it over "
+            "``pr_intent.suggested_command`` on a published delivery."
+        ),
+    )
+    delivery_notices: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Human-readable delivery notices from meta "
+            "``commit_delivery.delivery_notices`` (e.g. the 'PR opened' / "
+            "'branch ready' lines) for a ``delivery_completed`` gate. Empty for "
+            "every other kind and when core emitted no notices."
+        ),
+    )
     delivery_branch: str | None = Field(
         default=None,
         description=(
@@ -989,7 +1052,9 @@ class DeliveryGateProjection(BaseModel):
         description=(
             "Durable ADR 0119 pull-request intent (branch / base / title / "
             "suggested_command). ``None`` when core emitted no ``pr_intent`` "
-            "block (e.g. a stale core or a delivery mode with no PR intent)."
+            "block (e.g. a stale core or a delivery mode with no PR intent). On "
+            "a published ``delivery_completed`` gate ``suggested_command`` is "
+            "``None`` — the live link is ``pr_url``, not a stale open-PR command."
         ),
     )
     message: str | None = None

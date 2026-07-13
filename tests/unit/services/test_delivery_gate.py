@@ -19,6 +19,8 @@ from types import SimpleNamespace
 from orcho_mcp.schemas.inspection import PrIntentRecord
 from orcho_mcp.services.delivery_gate import (
     _extract_delivery_branch,
+    _extract_delivery_notices,
+    _extract_pr_url,
     _map_pr_intent,
     project_delivery_gate,
 )
@@ -201,7 +203,9 @@ def test_fix_requested_status_is_correction(fake_workspace):
 # (c) terminal status / no commit_delivery -> direct --------------------------
 
 
-def test_committed_terminal_is_direct(fake_workspace):
+def test_committed_terminal_is_delivery_completed(fake_workspace):
+    # A committed delivery with no PR is a terminal, executed delivery — the
+    # distinct ``delivery_completed`` kind, NOT ``direct_checkout_or_running``.
     write_run(
         fake_workspace, _RUN,
         meta=meta(
@@ -217,10 +221,15 @@ def test_committed_terminal_is_direct(fake_workspace):
 
     proj = project_delivery_gate(_RUN)
 
-    assert proj.kind == "direct_checkout_or_running"
+    assert proj.kind == "delivery_completed"
+    assert proj.published is False
+    assert proj.pr_url is None
+    assert proj.delivery_notices == []
     assert proj.available_actions == []
     assert proj.next_actions == []
     assert proj.message
+    # Never advise a manual commit of the checkout — the delivery already ran.
+    assert "commit the checkout directly" not in proj.message
 
 
 def test_skipped_terminal_is_direct(fake_workspace):
@@ -605,9 +614,9 @@ def test_project_delivery_gate_surfaces_branch_policy_fields(fake_workspace):
 
 
 def test_project_delivery_gate_stale_core_branch_fields_none(fake_workspace):
-    """Stale core defensiveness on the non-decidable branch: a terminal decision
-    with no ADR 0119 keys yields ``delivery_branch=None`` / ``pr_intent=None``
-    without raising."""
+    """Stale core defensiveness on the completed branch: a terminal committed
+    decision with no ADR 0119 keys yields ``delivery_branch=None`` /
+    ``pr_intent=None`` / ``pr_url=None`` without raising."""
     write_run(
         fake_workspace, _RUN,
         meta=meta(
@@ -623,6 +632,164 @@ def test_project_delivery_gate_stale_core_branch_fields_none(fake_workspace):
 
     proj = project_delivery_gate(_RUN)
 
-    assert proj.kind == "direct_checkout_or_running"
+    assert proj.kind == "delivery_completed"
+    assert proj.published is False
+    assert proj.pr_url is None
     assert proj.delivery_branch is None
     assert proj.pr_intent is None
+
+
+# (i) delivery_completed — published committed delivery -----------------------
+#
+# A committed delivery that opened a pull request is the terminal
+# ``delivery_completed`` gate: published, carrying ``pr_url`` /
+# ``delivery_notices`` from meta, and NOT advertising a stale
+# ``pr_intent.suggested_command`` (the live link is ``pr_url``).
+
+
+def test_extract_pr_url_defensive():
+    """None / non-dict / absent / empty → None; a present url is returned."""
+    assert _extract_pr_url(None) is None
+    assert _extract_pr_url("not-a-dict") is None
+    assert _extract_pr_url({}) is None
+    assert _extract_pr_url({"pr_url": None}) is None
+    assert _extract_pr_url({"pr_url": ""}) is None
+    assert (
+        _extract_pr_url({"pr_url": "https://example.test/pr/1"})
+        == "https://example.test/pr/1"
+    )
+
+
+def test_extract_delivery_notices_defensive():
+    """None / non-dict / absent / non-list → []; a present list is coerced."""
+    assert _extract_delivery_notices(None) == []
+    assert _extract_delivery_notices("not-a-dict") == []
+    assert _extract_delivery_notices({}) == []
+    assert _extract_delivery_notices({"delivery_notices": None}) == []
+    assert _extract_delivery_notices({"delivery_notices": "x"}) == []
+    assert _extract_delivery_notices(
+        {"delivery_notices": ["PR opened: https://x/1", "branch ready"]},
+    ) == ["PR opened: https://x/1", "branch ready"]
+
+
+def test_committed_with_pr_is_published_delivery_completed(fake_workspace):
+    write_run(
+        fake_workspace, _RUN,
+        meta=meta(
+            status="done",
+            project="/repo/checkout",
+            commit_delivery=commit_delivery(
+                status="committed",
+                action="approve",
+                release_verdict="APPROVED",
+                commit_sha="abc123",
+                delivery_branch="orcho/deliver/20260619-slug",
+                pr_url="https://example.test/pr/42",
+                delivery_notices=["PR opened: https://example.test/pr/42"],
+                pr_intent={
+                    "branch": "orcho/deliver/20260619-slug",
+                    "base": "main",
+                    "title": "Deliver X",
+                    "suggested_command": "gh pr create --fill",
+                },
+            ),
+        ),
+    )
+
+    proj = project_delivery_gate(_RUN)
+
+    assert proj.kind == "delivery_completed"
+    assert proj.published is True
+    assert proj.pr_url == "https://example.test/pr/42"
+    assert proj.delivery_notices == ["PR opened: https://example.test/pr/42"]
+    assert proj.delivery_branch == "orcho/deliver/20260619-slug"
+    assert proj.available_actions == []
+    assert proj.next_actions == []
+    # The stale "open a PR" command is suppressed — the live link is pr_url.
+    assert proj.pr_intent is not None
+    assert proj.pr_intent.suggested_command is None
+    assert proj.pr_intent.branch == "orcho/deliver/20260619-slug"
+    assert proj.pr_intent.base == "main"
+    assert proj.pr_intent.title == "Deliver X"
+    # Message names the PR and never advises a manual commit.
+    assert "https://example.test/pr/42" in proj.message
+    assert "commit the checkout directly" not in proj.message
+
+
+def test_applied_uncommitted_is_delivery_completed(fake_workspace):
+    # ``applied_uncommitted`` is a landed delivery too (aligned with the
+    # evidence applied-status set) → delivery_completed, not direct.
+    write_run(
+        fake_workspace, _RUN,
+        meta=meta(
+            status="done",
+            commit_delivery=commit_delivery(
+                status="applied_uncommitted",
+                action="apply",
+                release_verdict="APPROVED",
+            ),
+        ),
+    )
+
+    proj = project_delivery_gate(_RUN)
+
+    assert proj.kind == "delivery_completed"
+    assert proj.published is False
+    assert proj.pr_url is None
+
+
+def test_completed_without_pr_keeps_pr_intent_suggested_command(fake_workspace):
+    # An unpublished completed delivery (no pr_url) keeps its pr_intent intact —
+    # suppression applies ONLY to the published case.
+    write_run(
+        fake_workspace, _RUN,
+        meta=meta(
+            status="done",
+            commit_delivery=commit_delivery(
+                status="committed",
+                action="approve",
+                release_verdict="APPROVED",
+                commit_sha="abc123",
+                pr_intent={
+                    "branch": "orcho/deliver/x",
+                    "suggested_command": "gh pr create --fill",
+                },
+            ),
+        ),
+    )
+
+    proj = project_delivery_gate(_RUN)
+
+    assert proj.kind == "delivery_completed"
+    assert proj.published is False
+    assert proj.pr_intent is not None
+    assert proj.pr_intent.suggested_command == "gh pr create --fill"
+
+
+def test_superseded_committed_parent_stays_direct(fake_workspace):
+    # A superseded parent keeps the direct/superseded message even if its stale
+    # commit_delivery still reads committed — the completed branch defers to the
+    # superseded-child handling.
+    write_run(
+        fake_workspace, _RUN,
+        meta=meta(
+            status="done",
+            project="/repo/checkout",
+            superseded_by_followup={
+                "child_run_id": "20260619_000999",
+                "child_status": "done",
+            },
+            commit_delivery=commit_delivery(
+                status="committed",
+                action="approve",
+                release_verdict="APPROVED",
+                commit_sha="abc123",
+            ),
+        ),
+    )
+
+    proj = project_delivery_gate(_RUN)
+
+    assert proj.kind == "direct_checkout_or_running"
+    assert "superseded" in proj.message
+    assert "20260619_000999" in proj.message

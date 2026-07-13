@@ -222,14 +222,33 @@ def test_mcp_delivery_surface_projects_core_produced_branch_policy(
     # protect_default commit-on-branch produces a real commit (no fabrication).
     assert d.commit_sha == cd["commit_sha"]
     assert d.committed is True
+    # ADR 0119 pr_url / delivery_notices ride the read-only evidence slice
+    # through the SAME shared services.delivery_gate helpers the interactive
+    # gate uses — VALUE-asserted against exactly what core produced (both may be
+    # absent on a hermetic in-place delivery with no remote / PR).
+    assert d.pr_url == (cd.get("pr_url") or None)
+    assert d.delivery_notices == list(cd.get("delivery_notices") or [])
 
     # ── MCP projection surface (orcho_delivery_gate) carries the same facts ──
     gate = orcho_delivery_gate(_RUN_ID)
     assert isinstance(gate, DeliveryGateProjection)
+    # A committed core-produced delivery is terminal: the distinct
+    # ``delivery_completed`` kind (ADR 0119 T1), never a decidable gate.
+    assert gate.kind == "delivery_completed"
+    assert gate.available_actions == []
+    assert gate.next_actions == []
     assert gate.delivery_branch == core_branch
+    # The gate reads the same published facts from the same helpers as evidence.
+    assert gate.published is bool(cd.get("pr_url"))
+    assert gate.pr_url == (cd.get("pr_url") or None)
+    assert gate.delivery_notices == list(cd.get("delivery_notices") or [])
     assert isinstance(gate.pr_intent, PrIntentRecord)
     assert gate.pr_intent.branch == d.pr_intent.branch
     assert gate.pr_intent.base == d.pr_intent.base
+    # On a published completed delivery the stale "open a PR" command is dropped
+    # (the live link is pr_url); on an unpublished one it is preserved.
+    if gate.published:
+        assert gate.pr_intent.suggested_command is None
 
     # ── slice='all' stays whole: the delivery sub-record is populated. ───────
     all_result = orcho_run_evidence(_RUN_ID, slice="all")

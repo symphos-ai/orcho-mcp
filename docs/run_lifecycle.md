@@ -949,7 +949,7 @@ The projection's authority comes from
 
 | Field | Meaning |
 |---|---|
-| `kind` | `delivery_decision_required` (approved release, diff retained and waiting to ship), `correction_decision_required` (rejected release, choose fix/skip/halt), or `direct_checkout_or_running` (nothing to decide — no retained worktree gate, or the run is still live). |
+| `kind` | `delivery_decision_required` (approved release, diff retained and waiting to ship), `correction_decision_required` (rejected release, choose fix/skip/halt), `delivery_completed` (an Orcho-managed delivery already landed — terminal, no decision; carries `published` / `pr_url` / `delivery_notices`), or `direct_checkout_or_running` (nothing was delivered — no retained worktree gate, a direct checkout edit, or the run is still live). |
 | `available_actions` | Actions core currently allows. Each has `action`, `effect`, and `creates_commit` — only `approve` sets `creates_commit=true`. |
 | `blocked_actions` | Actions core currently refuses, such as `approve` / `apply` on a rejected release or blocked verification. |
 | `default_action` | Core's recommended default when one exists. |

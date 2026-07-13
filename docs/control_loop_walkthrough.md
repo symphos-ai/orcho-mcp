@@ -380,7 +380,13 @@ if gate.kind == "delivery_decision_required":
 elif gate.kind == "correction_decision_required":
     # rejected release: choose fix (correction-ready) / skip / halt
     orcho_delivery_decide(run_id, action="fix")
-# gate.kind == "direct_checkout_or_running" → nothing to decide here
+elif gate.kind == "delivery_completed":
+    # an Orcho-managed delivery already landed — terminal, no decision.
+    # Follow gate.pr_url when gate.published; delivery notes in
+    # gate.delivery_notices. Do NOT re-run gate.pr_intent.suggested_command
+    # (it is None on a published delivery — the push already happened).
+    print(gate.pr_url or "delivered to checkout")
+# gate.kind == "direct_checkout_or_running" → nothing was delivered here
 ```
 
 What to know before wiring this loop:

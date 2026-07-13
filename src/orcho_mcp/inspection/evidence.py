@@ -98,6 +98,8 @@ from orcho_mcp.schemas import (
 from orcho_mcp.services.delivery_gate import (
     _extract_commit_delivery,
     _extract_delivery_branch,
+    _extract_delivery_notices,
+    _extract_pr_url,
     _map_pr_intent,
     _map_release,
 )
@@ -683,8 +685,10 @@ def _project_delivery(
         halt_reason=halt_reason,
         # ADR 0119 delivery-branch facts, mapped through the SAME shared
         # ``services.delivery_gate`` helpers the gate projection uses (single
-        # source, no second meta read). Absent → None, never fabricated.
+        # source, no second meta read). Absent → None / [], never fabricated.
         delivery_branch=_extract_delivery_branch(cd),
+        pr_url=_extract_pr_url(cd),
+        delivery_notices=_extract_delivery_notices(cd),
         pr_intent=_map_pr_intent(cd),
         # Single source: the same implement-verdict projection as the errors
         # slice, built from the already-fetched errors-rollup (no second meta
