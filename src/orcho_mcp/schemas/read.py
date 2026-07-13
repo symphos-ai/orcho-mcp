@@ -14,6 +14,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from orcho_mcp.schemas.observe import CurrentSubtaskRecord
 from orcho_mcp.schemas.shared import (
     ContinuationSubjectLiteral,
     NextActionRecord,
@@ -528,6 +529,19 @@ class RunStatus(BaseModel):
             "provider-pressure follow-ups live here in "
             "``provider_pressure.next_actions``; the legacy SDK-derived "
             "``next_actions`` field is unaffected."
+        ),
+    )
+    current_subtask: CurrentSubtaskRecord | None = Field(
+        default=None,
+        description=(
+            "Live progress coordinate for the in-flight ``subtask_dag`` "
+            "subtask (index / total / goal / state), derived from the SAME "
+            "observe walk (``build_latest_run_events_summary``) that backs "
+            "``orcho_run_live_status`` — so status and live_status report the "
+            "same subtask position for a run. ``None`` when no subtask is "
+            "currently in flight (terminal run, or a phase with no active "
+            "subtask); the absence is not an error. For continuous live "
+            "progress prefer ``orcho_run_live_status``."
         ),
     )
 

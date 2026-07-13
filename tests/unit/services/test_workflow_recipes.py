@@ -208,6 +208,12 @@ def test_observe_active_run_is_a_bounded_watch_summary_loop() -> None:
             "bounded-watch window"
         )
 
+    # A single-shot orcho_run_live_status progress read anchors the loop —
+    # the progress / where-is-the-run intent routes here, not to run_status.
+    assert any(
+        s.tool == "orcho_run_live_status" for s in tool_steps
+    ), "recipe must offer a single-shot orcho_run_live_status progress read"
+
     # An orcho_run_events_summary fallback step for reconnect.
     assert any(
         s.tool == "orcho_run_events_summary" for s in tool_steps

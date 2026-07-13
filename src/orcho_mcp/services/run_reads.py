@@ -23,6 +23,7 @@ from sdk import (
 
 from orcho_mcp.errors import RunNotFoundError, WorkspaceNotResolvedError
 from orcho_mcp.observe.observation import workspace_dir_or_none
+from orcho_mcp.observe.summary import build_latest_run_events_summary
 from orcho_mcp.schemas import (
     ArtefactRefRecord,
     AutoDetectProjection,
@@ -208,6 +209,17 @@ def get_run_status(
         project_provider_pressure(s.run_ref.run_id),
     )
 
+    # Live subtask coordinate: reuse the SAME bounded observe walk that backs
+    # ``orcho_run_live_status`` (``build_latest_run_events_summary`` → the
+    # latest ``subtask.start`` / ``subtask.end`` boundary) so status and
+    # live_status report an identical ``current_subtask`` for a run. No new
+    # subtask derivation and no core-SDK field; the summary read is the same
+    # bounded event walk live_status already performs on the hot poll.
+    # ``None`` for a terminal run or a phase with no in-flight subtask.
+    current_subtask = build_latest_run_events_summary(
+        s.run_ref.run_id,
+    ).current_subtask
+
     # Summary-only projection of meta for the wire. The lineage /
     # worktree projections above already consumed the small top-level
     # blocks they need from the full ``meta``; this trims the heavy phase
@@ -249,6 +261,7 @@ def get_run_status(
             for a in s.artefacts
         ],
         provider_pressure=provider_pressure,
+        current_subtask=current_subtask,
     )
 
 

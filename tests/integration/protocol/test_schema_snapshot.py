@@ -120,10 +120,13 @@ def test_run_inspection_tools_explain_their_operator_questions():
         for tool in committed["tools"]
     }
 
+    # run_status is the durable snapshot and routes live-progress questions to
+    # orcho_run_live_status rather than positioning itself as the progress view.
     assert (
-        "What is happening / what should I do next?"
+        "Durable status snapshot for one run"
         in descriptions["orcho_run_status"]
     )
+    assert "orcho_run_live_status" in descriptions["orcho_run_status"]
     assert (
         "What happened / what proves it?"
         in descriptions["orcho_run_evidence"]

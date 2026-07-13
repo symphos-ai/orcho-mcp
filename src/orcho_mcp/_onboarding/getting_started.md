@@ -135,13 +135,28 @@ plan; a lean profile like `small_task` keeps interruptions minimal.
 
 ## 5. Watch progress
 
-Poll periodically:
+To see where the run currently is, ask for the live progress map:
 
 ```text
-orcho_run_status(run_id="<run_id>")
+orcho_run_live_status(run_id="<run_id>")
 ```
 
-`meta.status` is the lifecycle field. Common values you will see:
+This is a single-shot progress snapshot: it reports the active
+`current_subtask` with its `index` / `total` position so you can tell how
+far along the run is. Poll it periodically to follow progress.
+
+For hands-off waiting, long-poll instead:
+
+```text
+orcho_run_watch(run_id="<run_id>")
+```
+
+`orcho_run_watch` blocks until the run advances or pauses, so you do not
+have to poll on a timer.
+
+`orcho_run_status` remains the general summary / lifecycle snapshot — use
+it to read `meta.status` and the overall run shape, not to check progress
+position. Common `meta.status` values you will see:
 
 - `running` — pipeline is working.
 - `awaiting_phase_handoff` — pipeline paused on a phase's declared
@@ -251,7 +266,7 @@ first few runs.
 | Where does Orcho live? | `orcho_workspace_info` |
 | Which profiles exist? | `orcho_profiles_list` |
 | Start a run | `orcho_run_start` |
-| Check progress | `orcho_run_status` |
+| Check progress | `orcho_run_live_status` |
 | See reviewer findings | `orcho_run_evidence(slice="findings")` |
 | Decide a paused handoff | `orcho_phase_handoff_decide` |
 | Continue after approve | `orcho_run_resume` |

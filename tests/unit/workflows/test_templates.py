@@ -65,6 +65,12 @@ class TestPlanThenImplement:
         ):
             assert tool in text
 
+    def test_template_routes_progress_to_live_status(self) -> None:
+        """Progress-tracking steps point at orcho_run_live_status (with
+        orcho_run_watch as the long-poll), not orcho_run_status."""
+        text = orcho_plan_then_implement(task="x", project_dir="/tmp/p")
+        assert "orcho_run_live_status" in text
+
     def test_template_references_from_run_plan_arg(self) -> None:
         """The second step of the workflow MUST use --from-run-plan
         to inherit the parent run's plan."""
@@ -199,6 +205,13 @@ class TestObserveActiveRun:
         text = orcho_observe_active_run(run_id="r-1")
         assert "orcho_run_watch" in text
         assert "orcho_run_events_summary" in text
+
+    def test_template_offers_single_shot_live_status(self) -> None:
+        """The progress / where-is-the-run intent routes to
+        orcho_run_live_status for a single-shot snapshot, distinct from
+        the continuous watch loop."""
+        text = orcho_observe_active_run(run_id="r-1")
+        assert "orcho_run_live_status" in text
 
     def test_template_recommends_bounded_timeout(self) -> None:
         """A short bounded watch is the whole point — the template must
