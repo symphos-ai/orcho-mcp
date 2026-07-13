@@ -78,9 +78,13 @@ Please drive the workflow:
    - profile = "planning"
 
 2. The planning profile produces a parsed plan and pauses on
-   awaiting_phase_handoff. Poll `orcho_run_status(run_id)` until that
-   status appears. The status payload's `next_actions` field will
-   surface the decide options + a from-run-plan suggestion.
+   awaiting_phase_handoff. Track progress with
+   `orcho_run_live_status(run_id)` (single-shot: `state_class` flips to
+   `awaiting_handoff` and `pending_handoff` carries the available decide
+   actions), or hold a blocking long-poll open with
+   `orcho_run_watch(run_id, until="handoff_or_terminal")`. Once it is
+   paused, `orcho_run_status(run_id)`'s `next_actions` field surfaces the
+   ready decide options + a from-run-plan suggestion.
 
 3. Read the parsed plan via the `orcho://runs/<run_id>/parsed_plan.json`
    resource (or via `orcho_run_evidence`). Show me the plan summary
@@ -95,8 +99,10 @@ Please drive the workflow:
      omitted, but supplying it keeps the child run self-describing)
    - project_dir = "{project_dir}" (same)
 
-5. Poll the child run's `orcho_run_status` until it reaches a
-   terminal state. Surface evidence + any handoff decisions to me.
+5. Track the child run's progress with `orcho_run_live_status`
+   (single-shot: `current_subtask` position and `state_class`), or
+   `orcho_run_watch(until="terminal")` for a blocking long-poll, until it
+   reaches a terminal state. Surface evidence + any handoff decisions to me.
 
 If the plan looks wrong before step 4, suggest one of the
 `orcho_phase_handoff_decide` actions from the parent run's
@@ -142,10 +148,11 @@ Workflow:
    - Omit `task` and `project_dir` unless you want to override
      them; both inherit from parent meta automatically.
 
-3. Poll the child run's `orcho_run_status` until terminal. The
-   child run skips the parent's planning block (plan + validate_plan
-   phases) and starts at implement with the parent's plan already
-   hydrated as state.parsed_plan.
+3. Track the child run's progress with `orcho_run_live_status`
+   (single-shot progress / subtask position), or `orcho_run_watch` for a
+   blocking long-poll, until it is terminal. The child run skips the
+   parent's planning block (plan + validate_plan phases) and starts at
+   implement with the parent's plan already hydrated as state.parsed_plan.
 
 If the profile is incompatible (e.g. planning, code_review), the
 orchestrator fails fast before any work runs — pick a profile that
@@ -332,9 +339,12 @@ Workflow:
    subprocess that loads the existing checkpoint and continues from
    the last successful phase boundary.
 
-3. Poll `orcho_run_status` after resume to confirm the run is
-   alive and progressing. If it pauses again on a handoff, that's
-   normal — switch to `orcho_review_paused_run`.
+3. After resume, follow progress with `orcho_run_live_status`
+   (single-shot: `state_class` / `current_subtask` position), or
+   `orcho_run_watch` for a blocking long-poll, to confirm the run is
+   alive and advancing. If it pauses again on a handoff (`state_class`
+   `awaiting_handoff`), that's normal — switch to
+   `orcho_review_paused_run`.
 
 Resume reuses the parent's provider session (Claude / Codex
 session id) when available. If the session has expired (long-paused
@@ -366,6 +376,12 @@ plan §6 "Reactive Session-Expiry Recovery" for the future fix.
 def orcho_observe_active_run(run_id: str) -> str:
     """Guide the LLM through the short-watch + summary-fallback loop."""
     return f"""Observe the in-flight Orcho run {run_id!r} with a resilient watch loop.
+
+**Single-shot "where is it now".** For a one-shot progress snapshot —
+current phase, subtask position (index/total), and whether the run is
+paused or terminal — call `orcho_run_live_status(run_id)`. That is the
+fastest answer to "where is the run right now"; the loop below is for
+continuously following the run.
 
 The pattern is a short bounded watch, a summary fallback on
 timeout/disconnect, and a reconnect from the cursor — repeated until the

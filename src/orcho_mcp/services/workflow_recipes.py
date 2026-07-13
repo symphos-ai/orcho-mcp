@@ -68,7 +68,9 @@ def _plan_then_implement() -> WorkflowRecipe:
                     "Preferred live state path after start_plan: subscribe "
                     "or refresh this compact summary to see validation "
                     "accept/reject, round changes, current_phase, and "
-                    "next_seq without reading the full event stream."
+                    "next_seq without reading the full event stream. For a "
+                    "single-shot 'where is the run now' snapshot call "
+                    "orcho_run_live_status instead."
                 ),
             ),
             RecipeToolStep(
@@ -97,7 +99,9 @@ def _plan_then_implement() -> WorkflowRecipe:
                 purpose=(
                     "Preferred live state path after start_implement: "
                     "subscribe or refresh the compact summary for phase "
-                    "progress, handoff, and terminal status."
+                    "progress, handoff, and terminal status. For a "
+                    "single-shot 'where is the run now' snapshot (subtask "
+                    "index/total) call orcho_run_live_status instead."
                 ),
             ),
             RecipeToolStep(
@@ -324,7 +328,10 @@ def _observe_active_run() -> WorkflowRecipe:
     return WorkflowRecipe(
         name="observe_active_run",
         description=(
-            "Follow an in-flight run with a resilient observation loop: a "
+            "Follow an in-flight run. Take a single-shot orcho_run_live_status "
+            "for the current position (phase / subtask index/total / pause / "
+            "terminal) — the fastest 'where is the run right now' answer — then "
+            "keep following with a resilient observation loop: a "
             "short bounded orcho_run_watch, then orcho_run_events_summary as "
             "the reconnect fallback, then watch again. Keep timeout_s short "
             "(120-240s) so each watch returns promptly with a fresh "
@@ -341,6 +348,14 @@ def _observe_active_run() -> WorkflowRecipe:
             RecipeInput(name="run_id", required=True),
         ],
         steps=[
+            RecipeToolStep(
+                # Single-shot progress read: where is the run right now
+                # (phase / subtask index/total / pause / terminal) before
+                # entering the continuous watch loop.
+                id="live_status",
+                tool="orcho_run_live_status",
+                args={"run_id": "${run_id}"},
+            ),
             RecipeToolStep(
                 id="watch_bounded",
                 tool="orcho_run_watch",

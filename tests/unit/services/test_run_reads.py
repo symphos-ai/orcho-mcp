@@ -14,12 +14,13 @@ from orcho_mcp.services.run_reads import project_run_economics
 from orcho_mcp.tools import (
     orcho_run_events_summary,
     orcho_run_events_tail,
+    orcho_run_live_status,
     orcho_run_metrics,
     orcho_run_status,
     orcho_workspace_state,
 )
 from orcho_mcp.workspace_state import state_path
-from tests.fixtures.mcp_workspace import meta, metrics, write_run
+from tests.fixtures.mcp_workspace import event, meta, metrics, write_run
 
 
 def _ev(seq: int, kind: str = "phase.start", phase: str = "plan", **payload):
@@ -41,6 +42,55 @@ def test_status_returns_meta_and_metrics(fake_workspace):
     assert s.meta["status"] == "done"
     assert s.metrics is not None and s.metrics["total_tokens"] == 42
     assert s.sub_runs == []
+
+
+def test_status_current_subtask_none_without_active_subtask(fake_workspace):
+    """A terminal run with no in-flight subtask returns
+    ``current_subtask is None`` — the absence is not an error."""
+    write_run(
+        fake_workspace, "20260101_000010",
+        meta=meta(status="done", project="/p/x", task="t"),
+        events=[
+            event(1, "run.start"),
+            event(2, "phase.start", phase="implement"),
+            event(3, "run.end", payload={"status": "done"}),
+        ],
+    )
+
+    s = orcho_run_status("20260101_000010")
+    assert s.current_subtask is None
+
+
+def test_status_current_subtask_matches_live_status(fake_workspace):
+    """An in-flight ``subtask_dag`` subtask surfaces on run_status with
+    index / total / goal, identical to what ``orcho_run_live_status``
+    reports for the same run (same observe derivation, no divergence)."""
+    write_run(
+        fake_workspace, "20260101_000011",
+        meta=meta(status="running", project="/p/x", task="t"),
+        events=[
+            event(1, "phase.start", phase="implement"),
+            event(2, "subtask.start", phase="implement", payload={
+                "subtask_id": "T3",
+                "index": 3,
+                "total": 12,
+                "goal": "Patch the target module",
+            }),
+        ],
+    )
+
+    s = orcho_run_status("20260101_000011")
+    sub = s.current_subtask
+    assert sub is not None
+    assert sub.subtask_id == "T3"
+    assert sub.index == 3
+    assert sub.total == 12
+    assert sub.goal == "Patch the target module"
+    assert sub.state == "running"
+
+    # Same run, same observe derivation → identical coordinate on live_status.
+    card = orcho_run_live_status("20260101_000011")
+    assert card.current_subtask == sub
 
 
 def test_status_summarises_phase_bodies_by_default(fake_workspace):

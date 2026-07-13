@@ -293,13 +293,15 @@ def orcho_run_status(
     run_id: str,
     include: list[str] | None = None,
 ) -> RunStatus:
-    """What is happening / what should I do next?
+    """Durable status snapshot for one run — not the live-progress view.
 
     Summary snapshot for a single run: status, phase progress, metrics summary,
-    lineage, attention signals, available artifacts, and ready next actions. Use
-    this as the polling-friendly operator view; use ``orcho_run_evidence`` for
-    proof, ``orcho_run_metrics`` for consumption, and ``orcho_run_diff`` for
-    patch content.
+    lineage, attention signals, available artifacts, and ready next actions. For
+    live progress — where the run is right now and the subtask position
+    (index/total) — use ``orcho_run_live_status``. Reach for this tool for the
+    durable meta + gate snapshot and pause/delivery checks; use
+    ``orcho_run_evidence`` for proof, ``orcho_run_metrics`` for consumption, and
+    ``orcho_run_diff`` for patch content.
 
     Raises RunNotFoundError if ``run_id`` doesn't exist on disk.
 
@@ -345,6 +347,12 @@ def orcho_run_status(
             implementation / repair receipts), ``"all"`` (identity — the
             pre-summary payload, for callers that relied on it).
             Unrecognised tokens are ignored. Default ``None`` = summary.
+
+    ``current_subtask`` is an optional typed projection on the response,
+    present only while a ``subtask_dag`` subtask is in flight (else
+    ``None``): it carries the active subtask ``index`` / ``total`` /
+    ``goal``, consistent with ``orcho_run_live_status``. For continuous
+    live progress prefer ``orcho_run_live_status``.
     """
     return get_run_status(run_id, include=include)
 
@@ -424,7 +432,11 @@ def orcho_run_events_summary(
     limit)`` window; ``current_phase`` is computed over the *full*
     event stream up to ``next_seq`` so polling-style callers don't
     lose phase context when the window misses the original
-    ``phase.start``. ``status`` mirrors what ``orcho_run_status``
+    ``phase.start``. Alongside those, the payload carries a typed
+    ``current_subtask`` (active-subtask ``index`` / ``total`` / ``goal``
+    / ``state``, or ``None`` when no ``subtask_dag`` subtask is in
+    flight) — the same subtask position surfaced by
+    ``orcho_run_live_status``. ``status`` mirrors what ``orcho_run_status``
     returns (meta + supervisor merge). ``next_actions`` are short
     imperative strings derived conservatively from status only.
 
@@ -457,12 +469,15 @@ def orcho_run_events_summary(
 
 @mcp.tool()
 def orcho_run_live_status(run_id: str) -> RunLiveStatusCard:
-    """Return a bounded operator-safe live status card for a mono run.
+    """Where is this run right now, and what do I do next? (subtask progress index/total)
 
     One typed snapshot that answers "where is this run right now, and
-    what should I do?" in a single bounded payload — built for
-    high-frequency polling, with every embedded preview truncated and no
-    full phase bodies, critiques, or raw logs ever riding along. It
+    what should I do?" — including live subtask position (index/total) —
+    in a single bounded payload. This is the go-to view for live
+    progress and where-is-the-run. It is a bounded operator-safe live
+    status card for a mono run: built for high-frequency polling, with
+    every embedded preview truncated and no full phase bodies, critiques,
+    or raw logs ever riding along. It
     unites the durable meta status (with supervisor terminal fallback),
     the live phase/subtask position, the last significant activity, any
     pending phase-handoff, and terminal consistency — without scraping
@@ -718,7 +733,12 @@ async def orcho_run_start(
     attach_binary: list[str] | None = None,
     from_run_plan: str | None = None,
 ) -> RunStartedResult:
-    """Spawn an orcho pipeline run in the background; return run_id immediately.
+    """Start a real run (mock or live) in a detached subprocess; return run_id now.
+
+    This is the production run entrypoint: real-provider or mock, spawned
+    as a detached subprocess with ``progressToken`` notifications,
+    ``orcho_run_watch``, and ``orcho_run_cancel``. (For in-process
+    mock-only smokes see the ``orcho_run_project_typed`` pair.)
 
     The run executes asynchronously in a detached subprocess. For live
     status, prefer ``orcho_run_watch`` — it holds the request open and
@@ -826,9 +846,10 @@ def orcho_run_project_typed(
     mock: bool = True,
     max_rounds: int = 1,
 ) -> TypedRunResult:
-    """Drive a single-project pipeline run as a foreground library call.
+    """Mock-only, in-process typed run (blocking); for real runs use orcho_run_start.
 
-    Pilot tool that calls orcho-core's typed silent boundary
+    Drives a single-project pipeline run as a foreground library call —
+    no subprocess. Pilot tool that calls orcho-core's typed silent boundary
     (``run_project_pipeline`` with
     ``presentation=PresentationPolicy.SILENT, no_interactive=True``)
     in-process instead of spawning a subprocess. **Blocks until the
@@ -898,8 +919,10 @@ async def orcho_run_project_typed_async(
     mock: bool = True,
     max_rounds: int = 1,
 ) -> TypedRunStartedResult:
-    """Spawn a typed silent run in the background; return run_id immediately.
+    """Mock-only, in-process typed run (non-blocking); for real runs use orcho_run_start.
 
+    Spawns a typed silent run in the background and returns run_id
+    immediately — in-process (no subprocess), mock provider only.
     Non-blocking sibling to ``orcho_run_project_typed``. The pipeline
     body executes inside ``asyncio.to_thread`` so the MCP server's
     event loop stays responsive while the run is in flight. Returns
@@ -1492,6 +1515,7 @@ __all__ = [
     "orcho_run_metrics",
     "orcho_run_events_tail",
     "orcho_run_events_summary",
+    "orcho_run_live_status",
     "orcho_run_watch",
     "orcho_plan_validate",
     "orcho_skills_list",
@@ -1499,9 +1523,12 @@ __all__ = [
     "orcho_profiles_list",
     "orcho_workflows_list",
     "orcho_run_start",
+    "orcho_run_project_typed",
+    "orcho_run_project_typed_async",
     "orcho_run_resume",
     "orcho_run_cancel",
     "orcho_phase_handoff_decide",
+    "orcho_handoff_advice",
     "orcho_delivery_decide",
     "orcho_run_evidence",
     "orcho_run_diff",
