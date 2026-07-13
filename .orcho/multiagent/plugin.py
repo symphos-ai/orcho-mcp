@@ -1,9 +1,12 @@
 """Project-local Orcho configuration for orcho-mcp development.
 
 The verification contract is intentionally a fine-tuning layer, not an
-onboarding requirement. It pins the recurring MCP/source-under-test invariant:
-MCP checks must run the current MCP checkout while importing the workspace
-orcho-core dependency, not a stale stable install.
+onboarding requirement. The MCP/source-under-test invariant — MCP checks run the
+current MCP checkout while importing the workspace orcho-core under review, not a
+stale install — is enforced by ``tests/_core_source.pin_core_source`` (a
+selective import finder loaded from conftest), NOT by an env assertion: a bare
+``import pipeline`` outside pytest legitimately resolves the installed copy, so
+asserting its path at the env level only false-fails a green run.
 """
 
 PLUGIN = {
@@ -36,10 +39,6 @@ PLUGIN = {
             "assertions": [
                 {"file_exists": "{project}/.venv/bin/python"},
                 {
-                    "import": "pipeline",
-                    "path_equals": "{dependency:orcho-core}/pipeline/__init__.py",
-                },
-                {
                     "import": "orcho_mcp",
                     "path_under": "{checkout}/src/orcho_mcp",
                 },
@@ -52,23 +51,9 @@ PLUGIN = {
         "default_env": "mcp-local-core",
         "delivery_policy": "warn",
         "required": [
-            "env-provenance",
             "lint",
         ],
         "commands": {
-            "env-provenance": {
-                "env": "mcp-local-core",
-                "cheap": True,
-                "run": [
-                    "python",
-                    "-c",
-                    (
-                        "import pipeline, orcho_mcp; "
-                        "print('pipeline', pipeline.__file__); "
-                        "print('orcho_mcp', orcho_mcp.__file__)"
-                    ),
-                ],
-            },
             "lint": {
                 "env": "mcp-local-core",
                 "cheap": True,
@@ -106,12 +91,12 @@ PLUGIN = {
         },
         "gate_sets": {
             "baseline": {
-                "commands": ["env-provenance", "lint"],
+                "commands": ["lint"],
                 "default_policy": "warn",
                 "default_cheap": True,
             },
             "mcp-runtime": {
-                "commands": ["env-provenance", "lint", "run-control-unit"],
+                "commands": ["lint", "run-control-unit"],
                 "default_policy": "warn",
                 "default_cheap": False,
             },
