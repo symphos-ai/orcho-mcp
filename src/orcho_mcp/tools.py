@@ -1469,9 +1469,18 @@ def orcho_delivery_gate(run_id: str) -> DeliveryGateProjection:
         rejected release and lists any refused actions in
         ``blocked_actions``. This is an available correction-flow state, NOT
         an executed delivery.
-      - ``direct_checkout_or_running`` — no pending commit-delivery gate
-        (terminal delivery, a direct checkout edit, or a still-running run);
-        no approve / apply / fix is offered.
+      - ``delivery_completed`` — an Orcho-managed delivery already ran and
+        landed (``committed`` / ``applied_uncommitted`` status); this is NOT
+        a ``direct_checkout_or_running`` state. There is no decision to make
+        and nothing to commit by hand. ``published`` is ``True`` when a pull
+        request is open, ``pr_url`` carries that PR's live link, and
+        ``delivery_notices`` carries the machine-readable delivery notes from
+        core. On a published delivery ``pr_intent.suggested_command`` is
+        omitted (``None``) — the push already happened, so ``pr_url`` is the
+        real link to follow instead of a stale ``git push`` hint.
+      - ``direct_checkout_or_running`` — no pending commit-delivery gate and
+        no completed delivery (a direct checkout edit, a still-running run, or
+        a superseded parent); no approve / apply / fix is offered.
 
     ``diff`` summarises the retained change (``files_changed`` +
     ``changed_paths`` + ``untracked_paths``). If a secondary artifact

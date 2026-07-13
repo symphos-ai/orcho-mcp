@@ -53,6 +53,7 @@ pytestmark = pytest.mark.mcp_integration
 _VALID_KINDS = {
     "delivery_decision_required",
     "correction_decision_required",
+    "delivery_completed",
     "direct_checkout_or_running",
 }
 
@@ -124,9 +125,11 @@ async def test_orcho_delivery_gate_typed_kind_after_mock_run(mock_project):
     assert proj.run_id == handle.run_id
     assert proj.kind in _VALID_KINDS, f"unexpected gate kind: {proj.kind!r}"
 
-    if proj.kind == "direct_checkout_or_running":
-        # Documented expected outcome for a hermetic mock run: no Orcho
-        # delivery gate, so no approve/apply/fix offered and no next actions.
+    if proj.kind in ("direct_checkout_or_running", "delivery_completed"):
+        # Both are terminal for a hermetic mock run: no approve/apply/fix is
+        # offered and there are no next actions. ``delivery_completed`` would
+        # additionally carry the landed-delivery facts, but a hermetic mock
+        # normally classifies as ``direct_checkout_or_running`` (no Orcho gate).
         assert proj.available_actions == []
         assert proj.next_actions == []
         assert proj.message
@@ -340,3 +343,84 @@ def test_correction_followup_then_supersede_scenario(fake_workspace):
     assert card2.terminal is not None
     assert card2.terminal.resume_meaningful is False
     assert "superseded" in card2.next_action
+
+
+def test_committed_published_delivery_projects_completed_end_to_end(fake_workspace):
+    """A committed, published Orcho delivery reads as ``delivery_completed``
+    consistently across the gate, evidence, and live-status surfaces.
+
+    Seeds a terminal run whose Orcho-managed delivery already landed
+    (``commit_delivery.status == 'committed'``) and opened a pull request
+    (``pr_url`` + ``delivery_notices``). Asserts all three read-only surfaces
+    agree on the terminal disposition without a second meta read or prose
+    scraping: the gate is the terminal ``delivery_completed`` kind carrying the
+    published PR facts (and suppressing the stale ``suggested_command``); the
+    evidence delivery record carries the same ``pr_url`` / ``delivery_notices``;
+    and the live terminal card routes ``terminal_success`` at the PR.
+    """
+    from orcho_mcp.inspection.evidence import inspect_run_evidence
+    from orcho_mcp.observe.live_status import build_run_live_status
+    from orcho_mcp.services.delivery_gate import project_delivery_gate
+    from tests.fixtures.mcp_workspace import commit_delivery, meta, write_run
+
+    run_id = "20260101_000042"
+    pr_url = "https://example.test/pr/42"
+    notices = ["PR opened: https://example.test/pr/42"]
+
+    write_run(
+        fake_workspace, run_id,
+        meta=meta(
+            status="done",
+            project="/repo/checkout",
+            commit_delivery=commit_delivery(
+                status="committed",
+                action="approve",
+                release_verdict="APPROVED",
+                project_path="/repo/checkout",
+                source_path="/repo/worktree",
+                commit_sha="abc123",
+                delivery_branch="orcho/deliver/20260101-slug",
+                pr_url=pr_url,
+                delivery_notices=notices,
+                pr_intent={
+                    "branch": "orcho/deliver/20260101-slug",
+                    "base": "main",
+                    "title": "Deliver widget",
+                    "suggested_command": "gh pr create --fill",
+                },
+            ),
+        ),
+    )
+
+    # ── gate surface — terminal completed kind with published PR facts ───────
+    gate = project_delivery_gate(run_id)
+    assert gate.kind == "delivery_completed"
+    assert gate.available_actions == []
+    assert gate.next_actions == []
+    assert gate.published is True
+    assert gate.pr_url == pr_url
+    assert gate.delivery_notices == notices
+    assert gate.delivery_branch == "orcho/deliver/20260101-slug"
+    # Stale "open a PR" command dropped once the PR is open; the live link is
+    # pr_url — the rest of the intent is preserved.
+    assert gate.pr_intent is not None
+    assert gate.pr_intent.suggested_command is None
+    assert gate.pr_intent.branch == "orcho/deliver/20260101-slug"
+    assert pr_url in gate.message
+
+    # ── evidence surface — same published facts via the shared helpers ───────
+    evidence = inspect_run_evidence(run_id, slice="delivery")
+    assert evidence.delivery is not None
+    assert evidence.delivery.committed is True
+    assert evidence.delivery.pr_url == pr_url
+    assert evidence.delivery.delivery_notices == notices
+
+    # ── live-status surface — terminal card carries the disposition ──────────
+    card = build_run_live_status(run_id)
+    assert card.state_class == "terminal_success"
+    assert card.terminal is not None
+    assert card.terminal.delivery_committed is True
+    assert card.terminal.delivery_published is True
+    assert card.terminal.delivery_pr_url == pr_url
+    # terminal_success routes a delivered run at its PR, not a manual commit.
+    assert pr_url in card.next_action

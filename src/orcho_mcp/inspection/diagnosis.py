@@ -214,7 +214,25 @@ def _delivery_gate_actions(
     ``orcho_run_diagnose`` stays read-only and points callers to the richer
     gate projection. ``orcho_delivery_gate`` then carries one ready
     ``orcho_delivery_decide`` call per SDK-available action.
+
+    A ``delivery_completed`` gate is terminal — the delivery already landed, so
+    there is nothing to decide. Point at the gate projection for the delivered
+    outcome (its ``pr_url`` / evidence), never at a delivery decision.
     """
+    if gate_kind == "delivery_completed":
+        return [
+            NextActionRecord(
+                intent=(
+                    "This Orcho-managed delivery already landed — inspect the "
+                    "delivered outcome (pr_url / delivery notices) on the gate "
+                    "projection; there is no delivery decision to make."
+                ),
+                tool="orcho_delivery_gate",
+                args={"run_id": run_id},
+                optional=False,
+                kind="ready_call",
+            ),
+        ]
     label = "correction" if gate_kind == "correction_decision_required" else "delivery"
     choices = f" Available actions now: {', '.join(available_actions)}." if (
         available_actions

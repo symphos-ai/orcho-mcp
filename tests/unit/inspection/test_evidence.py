@@ -223,3 +223,66 @@ def test_delivery_stale_core_new_fields_none(fake_workspace) -> None:
     assert all_result.delivery is not None
     assert all_result.delivery.delivery_branch is None
     assert all_result.delivery.pr_intent is None
+
+
+# ── delivery slice: ADR 0119 pr_url / delivery_notices ───────────────────────
+#
+# ``pr_url`` and ``delivery_notices`` are read through the SAME shared
+# ``services.delivery_gate`` helpers (``_extract_pr_url`` /
+# ``_extract_delivery_notices``) the gate projection uses, so the evidence slice
+# and the interactive gate never drift. Absent block → ``None`` / ``[]``.
+
+
+def test_delivery_committed_carries_pr_url_and_notices(fake_workspace) -> None:
+    """A committed delivery that opened a PR surfaces ``pr_url`` and the
+    human-readable ``delivery_notices`` on the read-only delivery slice."""
+    write_run(
+        fake_workspace, "20260202_000013",
+        meta=meta(
+            status="done",
+            commit_delivery={
+                "status": "committed",
+                "action": "approve",
+                "release_verdict": "approved",
+                "commit_sha": "cafef00",
+                "delivery_branch": "orcho/deliver/20260202_000013-ship",
+                "pr_url": "https://example.test/pr/77",
+                "delivery_notices": [
+                    "PR opened: https://example.test/pr/77",
+                    "branch orcho/deliver/20260202_000013-ship pushed",
+                ],
+            },
+        ),
+    )
+
+    d = inspect_run_evidence("20260202_000013", slice="delivery").delivery
+    assert d is not None
+    assert d.pr_url == "https://example.test/pr/77"
+    assert d.delivery_notices == [
+        "PR opened: https://example.test/pr/77",
+        "branch orcho/deliver/20260202_000013-ship pushed",
+    ]
+    assert d.committed is True
+    assert d.release_verdict == "approved"
+
+
+def test_delivery_no_pr_url_or_notices_defaults(fake_workspace) -> None:
+    """A commit_delivery block with no ``pr_url`` / ``delivery_notices`` keys
+    yields ``None`` / ``[]`` (never an exception)."""
+    write_run(
+        fake_workspace, "20260202_000014",
+        meta=meta(
+            status="done",
+            commit_delivery={
+                "status": "committed",
+                "action": "approve",
+                "release_verdict": "approved",
+                "commit_sha": "abc1234",
+            },
+        ),
+    )
+
+    d = inspect_run_evidence("20260202_000014", slice="delivery").delivery
+    assert d is not None
+    assert d.pr_url is None
+    assert d.delivery_notices == []

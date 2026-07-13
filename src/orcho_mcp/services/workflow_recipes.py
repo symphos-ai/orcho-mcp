@@ -409,6 +409,11 @@ def _inspect_delivery_gate() -> WorkflowRecipe:
             "diff yourself for an Orcho-managed run, and never resume to force "
             "delivery: the SDK-backed orcho_delivery_decide tool is the only "
             "MCP mutation path for this gate. "
+            "delivery_completed means the Orcho-managed delivery ALREADY landed "
+            "(committed / applied_uncommitted, possibly with an open pull "
+            "request): there is no decision to make — follow the gate's pr_url "
+            "when present, or inspect the delivered outcome via "
+            "orcho_run_evidence; do NOT re-apply the retained diff. "
             "direct_checkout_or_running means there is NO Orcho delivery gate "
             "(a direct checkout edit, or a terminal / still-running run): there "
             "is nothing to deliver through Orcho — test and commit directly in "
@@ -444,6 +449,11 @@ def _inspect_delivery_gate() -> WorkflowRecipe:
                 next="review_retained_change",
             ),
             RecipeBranchStep(
+                id="if_delivery_completed",
+                when={"kind": "delivery_completed"},
+                next="inspect_delivered_outcome",
+            ),
+            RecipeBranchStep(
                 id="if_direct_checkout",
                 when={"kind": "direct_checkout_or_running"},
                 next="review_direct_checkout",
@@ -456,6 +466,15 @@ def _inspect_delivery_gate() -> WorkflowRecipe:
                 id="review_retained_change",
                 tool="orcho_run_diff",
                 args={"run_id": "${run_id}", "mode": "preview"},
+            ),
+            RecipeToolStep(
+                # Completed-delivery path: the change already landed. There is
+                # no decision to make — read the delivered outcome (pr_url /
+                # delivery notices) from the evidence slice. Follow the gate's
+                # pr_url to the pull request; do NOT re-apply the retained diff.
+                id="inspect_delivered_outcome",
+                tool="orcho_run_evidence",
+                args={"run_id": "${run_id}"},
             ),
             RecipeToolStep(
                 # Direct checkout path: no Orcho delivery gate exists, so review

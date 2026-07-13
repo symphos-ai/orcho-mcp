@@ -677,7 +677,7 @@
       }
     },
     {
-      "description": "Inspect an Orcho-managed run's post-release delivery / correction gate.\n\n    Read-only typed projection that tells an agent, WITHOUT parsing terminal\n    prose, whether a run is sitting at an Orcho-managed delivery decision or\n    is just a direct checkout edit. The classification (``kind``), available\n    actions, blocked actions, and default action are derived from\n    orcho-core's SDK ``delivery_decision_state``:\n\n      - ``delivery_decision_required`` — a pending delivery on an APPROVED\n        release; core may allow approve / apply / skip / halt\n        (``approve`` is the only action that creates a commit).\n      - ``correction_decision_required`` — a rejected release or a\n        ``fix_requested`` state; core normally allows fix / halt for a current\n        rejected release and lists any refused actions in\n        ``blocked_actions``. This is an available correction-flow state, NOT\n        an executed delivery.\n      - ``direct_checkout_or_running`` — no pending commit-delivery gate\n        (terminal delivery, a direct checkout edit, or a still-running run);\n        no approve / apply / fix is offered.\n\n    ``diff`` summarises the retained change (``files_changed`` +\n    ``changed_paths`` + ``untracked_paths``). If a secondary artifact\n    (``commit_decisions`` / ``diff.patch``) is missing or unreadable on a\n    pending gate, ``diff.degraded`` is ``True`` and ``message`` names the\n    missing artifact — the gate ``kind`` is never hidden by that.\n\n    ``next_actions`` carries one ``ready_call`` to ``orcho_delivery_decide``\n    per available action. Each record contains the full required args for the\n    selected decision call. MCP itself never applies the retained diff; the\n    decision tool delegates to orcho-core's SDK.\n\n    Raises RunNotFoundError when ``run_id`` doesn't exist on disk; a missing\n    or corrupt ``meta.json`` yields a ``direct_checkout_or_running``\n    projection rather than an error.\n    ",
+      "description": "Inspect an Orcho-managed run's post-release delivery / correction gate.\n\n    Read-only typed projection that tells an agent, WITHOUT parsing terminal\n    prose, whether a run is sitting at an Orcho-managed delivery decision or\n    is just a direct checkout edit. The classification (``kind``), available\n    actions, blocked actions, and default action are derived from\n    orcho-core's SDK ``delivery_decision_state``:\n\n      - ``delivery_decision_required`` — a pending delivery on an APPROVED\n        release; core may allow approve / apply / skip / halt\n        (``approve`` is the only action that creates a commit).\n      - ``correction_decision_required`` — a rejected release or a\n        ``fix_requested`` state; core normally allows fix / halt for a current\n        rejected release and lists any refused actions in\n        ``blocked_actions``. This is an available correction-flow state, NOT\n        an executed delivery.\n      - ``delivery_completed`` — an Orcho-managed delivery already ran and\n        landed (``committed`` / ``applied_uncommitted`` status); this is NOT\n        a ``direct_checkout_or_running`` state. There is no decision to make\n        and nothing to commit by hand. ``published`` is ``True`` when a pull\n        request is open, ``pr_url`` carries that PR's live link, and\n        ``delivery_notices`` carries the machine-readable delivery notes from\n        core. On a published delivery ``pr_intent.suggested_command`` is\n        omitted (``None``) — the push already happened, so ``pr_url`` is the\n        real link to follow instead of a stale ``git push`` hint.\n      - ``direct_checkout_or_running`` — no pending commit-delivery gate and\n        no completed delivery (a direct checkout edit, a still-running run, or\n        a superseded parent); no approve / apply / fix is offered.\n\n    ``diff`` summarises the retained change (``files_changed`` +\n    ``changed_paths`` + ``untracked_paths``). If a secondary artifact\n    (``commit_decisions`` / ``diff.patch``) is missing or unreadable on a\n    pending gate, ``diff.degraded`` is ``True`` and ``message`` names the\n    missing artifact — the gate ``kind`` is never hidden by that.\n\n    ``next_actions`` carries one ``ready_call`` to ``orcho_delivery_decide``\n    per available action. Each record contains the full required args for the\n    selected decision call. MCP itself never applies the retained diff; the\n    decision tool delegates to orcho-core's SDK.\n\n    Raises RunNotFoundError when ``run_id`` doesn't exist on disk; a missing\n    or corrupt ``meta.json`` yields a ``direct_checkout_or_running``\n    projection rather than an error.\n    ",
       "inputSchema": {
         "properties": {
           "run_id": {
@@ -899,7 +899,7 @@
             "type": "object"
           }
         },
-        "description": "Typed projection of an Orcho-managed post-release delivery gate.\n\n``kind`` is the single classification signal and is derived ONLY from\nthe authoritative ``meta`` commit-delivery ``status`` (never from\nterminal log prose):\n\n  - ``delivery_decision_required`` — a ``pending`` delivery on an\n    APPROVED release; the operator chooses approve / apply / skip / halt.\n  - ``correction_decision_required`` — a rejected release or a\n    ``fix_requested`` state; the operator normally chooses fix / halt for a\n    current rejected release. This is an *available correction-flow state*,\n    NOT an executed delivery.\n  - ``direct_checkout_or_running`` — no pending commit-delivery gate in\n    meta (terminal delivery, or a direct checkout edit / still-running\n    run); no approve / apply / fix is offered.\n\n``available_actions`` comes from orcho-core's read-only\n``delivery_decision_state`` surface and lists only actions the SDK says are\ncurrently safe. ``blocked_actions`` names delivery actions currently\nrefused by hard guards such as a rejected release verdict or incomplete\nrequired verification. ``next_actions`` carries one ``ready_call`` to\n``orcho_delivery_decide`` per available action.",
+        "description": "Typed projection of an Orcho-managed post-release delivery gate.\n\n``kind`` is the single classification signal and is derived ONLY from\nthe authoritative ``meta`` commit-delivery ``status`` (never from\nterminal log prose):\n\n  - ``delivery_decision_required`` — a ``pending`` delivery on an\n    APPROVED release; the operator chooses approve / apply / skip / halt.\n  - ``correction_decision_required`` — a rejected release or a\n    ``fix_requested`` state; the operator normally chooses fix / halt for a\n    current rejected release. This is an *available correction-flow state*,\n    NOT an executed delivery.\n  - ``delivery_completed`` — an Orcho-managed delivery already landed in\n    the target checkout (``committed`` / ``applied_uncommitted``). Terminal:\n    no decision is offered. ``published`` is ``True`` and ``pr_url`` carries\n    the live link when a pull request was opened; ``delivery_notices``\n    carries the human-readable delivery lines. This is distinct from\n    ``direct_checkout_or_running`` — the delivery ran and completed, it is\n    not a direct edit or a still-running run.\n  - ``direct_checkout_or_running`` — no pending commit-delivery gate in\n    meta and no completed Orcho delivery (a direct checkout edit, a\n    still-running run, or a skipped / halted / failed terminal); no\n    approve / apply / fix is offered.\n\nOn a ``delivery_completed`` gate whose delivery was published,\n``pr_intent.suggested_command`` is deliberately ``None``: the durable\n\"run this to open a PR\" command is stale once the PR is open, so the live\nlink is read from ``pr_url`` instead.\n\n``available_actions`` comes from orcho-core's read-only\n``delivery_decision_state`` surface and lists only actions the SDK says are\ncurrently safe. ``blocked_actions`` names delivery actions currently\nrefused by hard guards such as a rejected release verdict or incomplete\nrequired verification. ``next_actions`` carries one ``ready_call`` to\n``orcho_delivery_decide`` per available action.",
         "properties": {
           "available_actions": {
             "items": {
@@ -942,6 +942,14 @@
             "description": "The published / publishable delivery branch (ADR 0119). Present for a branch-policy delivery (e.g. a publish-only ``worktree_branch``); ``None`` when core emitted no branch.",
             "title": "Delivery Branch"
           },
+          "delivery_notices": {
+            "description": "Human-readable delivery notices from meta ``commit_delivery.delivery_notices`` (e.g. the 'PR opened' / 'branch ready' lines) for a ``delivery_completed`` gate. Empty for every other kind and when core emitted no notices.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Delivery Notices",
+            "type": "array"
+          },
           "diff": {
             "$ref": "#/$defs/DeliveryGateDiffSummary"
           },
@@ -949,6 +957,7 @@
             "enum": [
               "delivery_decision_required",
               "correction_decision_required",
+              "delivery_completed",
               "direct_checkout_or_running"
             ],
             "title": "Kind",
@@ -983,7 +992,26 @@
               }
             ],
             "default": null,
-            "description": "Durable ADR 0119 pull-request intent (branch / base / title / suggested_command). ``None`` when core emitted no ``pr_intent`` block (e.g. a stale core or a delivery mode with no PR intent)."
+            "description": "Durable ADR 0119 pull-request intent (branch / base / title / suggested_command). ``None`` when core emitted no ``pr_intent`` block (e.g. a stale core or a delivery mode with no PR intent). On a published ``delivery_completed`` gate ``suggested_command`` is ``None`` — the live link is ``pr_url``, not a stale open-PR command."
+          },
+          "pr_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The live pull-request URL for a published ``delivery_completed`` gate, read from meta ``commit_delivery.pr_url`` (ADR 0119). ``None`` when no PR was opened or on any non-completed kind. This is the authoritative link — prefer it over ``pr_intent.suggested_command`` on a published delivery.",
+            "title": "Pr Url"
+          },
+          "published": {
+            "default": false,
+            "description": "True on a ``delivery_completed`` gate whose delivery opened a pull request (``pr_url`` is present). ``False`` for every other kind and for a completed delivery that only wrote a commit without a PR.",
+            "title": "Published",
+            "type": "boolean"
           },
           "release": {
             "default": "none",
@@ -3788,7 +3816,7 @@
             "type": "object"
           },
           "DeliverySummaryRecord": {
-            "description": "Typed projection of a run's post-release commit-delivery outcome.\n\nRead-only evidence built from the authoritative ``meta['commit_delivery']``\ndecision (the persisted ``CommitDeliveryDecision`` from\n``pipeline.engine.commit_delivery``). This is NOT the interactive\n:class:`DeliveryGateProjection` — it never resolves available actions or\nmutates state; it only reads what already happened so a captain can tell an\napplied / committed / skipped / failed delivery apart without parsing prose.\n\nBooleans are mapped explicitly from the core ``CommitDeliveryStatus``\nvocabulary (``disabled`` / ``not_applicable`` / ``no_diff`` / ``pending`` /\n``fix_requested`` / ``committed`` / ``applied_uncommitted`` / ``skipped`` /\n``halted`` / ``commit_failed`` / ``apply_failed`` / ``target_dirty`` /\n``verification_blocked``):\n\n  - ``applied`` — the diff landed in the target checkout: status is\n    ``applied_uncommitted`` or ``committed``.\n  - ``committed`` — a new commit was written: status is ``committed`` OR a\n    ``commit_sha`` is present.\n  - ``skipped`` — status is ``skipped``.\n  - ``failed`` — status is one of ``commit_failed`` / ``apply_failed`` /\n    ``halted`` / ``verification_blocked`` / ``target_dirty``.\n\nAn unrecognized status leaves all four ``False`` while ``decision_status``\npreserves the raw value verbatim.\n\n``release_verdict`` mirrors ``services.delivery_gate._map_release`` (the\nsingle source), so an approved correction child re-run after a\n``gate_rerun`` reads ``approved`` from its OWN ``commit_delivery`` block.\nThe inherited-vs-current verification receipts behind that verdict are NOT\nduplicated here — read them from the ``verification_timeline`` slice\n(``inherited`` set + per-gate ``inherited`` / ``source_run_id``) and the\n``receipts`` slice.\n\n``implement_delivery`` is the SAME :class:`ImplementDeliveryRecord` the\n``errors`` slice surfaces, projected from the errors-rollup (not a second\nmeta read) — single source for the implement-verdict\n(clean / repaired / waived / incomplete + incomplete_subtasks /\nmissing_subtask_receipts).\n\n``commit_sha`` is present for a landed commit (``protect_default`` / ``named``\n/ ``bypass`` branch policies, or any ``committed`` status) and ABSENT for a\npublish-only ``worktree_branch`` delivery that only published a branch\nwithout writing a commit to the target. ``delivery_branch`` (the published /\npublishable delivery branch) and ``pr_intent`` (the durable ADR 0119 PR\nintent) are additive: both are ``None`` when core did not emit them (e.g. a\nstale core, or a delivery mode that produced neither).",
+            "description": "Typed projection of a run's post-release commit-delivery outcome.\n\nRead-only evidence built from the authoritative ``meta['commit_delivery']``\ndecision (the persisted ``CommitDeliveryDecision`` from\n``pipeline.engine.commit_delivery``). This is NOT the interactive\n:class:`DeliveryGateProjection` — it never resolves available actions or\nmutates state; it only reads what already happened so a captain can tell an\napplied / committed / skipped / failed delivery apart without parsing prose.\n\nBooleans are mapped explicitly from the core ``CommitDeliveryStatus``\nvocabulary (``disabled`` / ``not_applicable`` / ``no_diff`` / ``pending`` /\n``fix_requested`` / ``committed`` / ``applied_uncommitted`` / ``skipped`` /\n``halted`` / ``commit_failed`` / ``apply_failed`` / ``target_dirty`` /\n``verification_blocked``):\n\n  - ``applied`` — the diff landed in the target checkout: status is\n    ``applied_uncommitted`` or ``committed``.\n  - ``committed`` — a new commit was written: status is ``committed`` OR a\n    ``commit_sha`` is present.\n  - ``skipped`` — status is ``skipped``.\n  - ``failed`` — status is one of ``commit_failed`` / ``apply_failed`` /\n    ``halted`` / ``verification_blocked`` / ``target_dirty``.\n\nAn unrecognized status leaves all four ``False`` while ``decision_status``\npreserves the raw value verbatim.\n\n``release_verdict`` mirrors ``services.delivery_gate._map_release`` (the\nsingle source), so an approved correction child re-run after a\n``gate_rerun`` reads ``approved`` from its OWN ``commit_delivery`` block.\nThe inherited-vs-current verification receipts behind that verdict are NOT\nduplicated here — read them from the ``verification_timeline`` slice\n(``inherited`` set + per-gate ``inherited`` / ``source_run_id``) and the\n``receipts`` slice.\n\n``implement_delivery`` is the SAME :class:`ImplementDeliveryRecord` the\n``errors`` slice surfaces, projected from the errors-rollup (not a second\nmeta read) — single source for the implement-verdict\n(clean / repaired / waived / incomplete + incomplete_subtasks /\nmissing_subtask_receipts).\n\n``commit_sha`` is present for a landed commit (``protect_default`` / ``named``\n/ ``bypass`` branch policies, or any ``committed`` status) and ABSENT for a\npublish-only ``worktree_branch`` delivery that only published a branch\nwithout writing a commit to the target. ``delivery_branch`` (the published /\npublishable delivery branch), ``pr_url`` (the live pull-request URL),\n``delivery_notices`` (the human-readable delivery lines), and ``pr_intent``\n(the durable ADR 0119 PR intent) are additive: each is ``None`` / ``[]`` when\ncore did not emit it (e.g. a stale core, or a delivery mode that produced\nnone). ``pr_url`` / ``delivery_notices`` are read through the SAME shared\n``services.delivery_gate`` helpers the interactive gate projection uses, so\nthe two surfaces never drift.",
             "properties": {
               "action": {
                 "anyOf": [
@@ -3851,6 +3879,14 @@
                 "description": "The published / publishable delivery branch (ADR 0119). Present for a branch-policy delivery (e.g. a publish-only ``worktree_branch``); ``None`` when core emitted no branch.",
                 "title": "Delivery Branch"
               },
+              "delivery_notices": {
+                "description": "Human-readable delivery notices from meta ``commit_delivery.delivery_notices`` (e.g. the 'PR opened' / 'branch ready' lines). Empty when core emitted no notices.",
+                "items": {
+                  "type": "string"
+                },
+                "title": "Delivery Notices",
+                "type": "array"
+              },
               "failed": {
                 "default": false,
                 "title": "Failed",
@@ -3891,6 +3927,19 @@
                 ],
                 "default": null,
                 "description": "Durable ADR 0119 pull-request intent (branch / base / title / suggested_command). ``None`` when core emitted no ``pr_intent`` block (e.g. a stale core or a delivery mode with no PR intent)."
+              },
+              "pr_url": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "The live pull-request URL from meta ``commit_delivery.pr_url`` (ADR 0119). Present when the delivery opened a pull request; ``None`` when no PR was opened or on a stale core. The authoritative link — prefer it over ``pr_intent.suggested_command``.",
+                "title": "Pr Url"
               },
               "release_verdict": {
                 "description": "Release outcome from meta ``release_verdict``: 'approved' | 'rejected' | 'none'.",
@@ -6527,8 +6576,33 @@
             "type": "object"
           },
           "RunLiveTerminal": {
-            "description": "Terminal-state slice for the live status card.\n\nPresent only for a terminal ``state_class`` (``terminal_success`` /\n``terminal_halted`` / ``terminal_inconsistent``). Carries the resolved\n``halt_reason``, the ``final_acceptance`` verdict, whether a resume is\nmeaningful, and any detected consistency violations — so a caller can\nrender a coherent terminal card without scraping logs.",
+            "description": "Terminal-state slice for the live status card.\n\nPresent only for a terminal ``state_class`` (``terminal_success`` /\n``terminal_halted`` / ``terminal_inconsistent``). Carries the resolved\n``halt_reason``, the ``final_acceptance`` verdict, whether a resume is\nmeaningful, any detected consistency violations, and — for a run whose\nOrcho-managed delivery already landed — the delivery disposition\n(``delivery_committed`` / ``delivery_published`` / ``delivery_pr_url``), so\na caller can render a coherent terminal card without scraping logs.",
             "properties": {
+              "delivery_committed": {
+                "default": false,
+                "description": "True when the run's Orcho-managed delivery already landed in the target checkout (a ``committed`` / ``applied_uncommitted`` delivery). ``False`` when no delivery landed or the run carries no delivery block.",
+                "title": "Delivery Committed",
+                "type": "boolean"
+              },
+              "delivery_pr_url": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "The live pull-request URL from the run's delivery block when the delivery was published; ``None`` when no pull request was opened.",
+                "title": "Delivery Pr Url"
+              },
+              "delivery_published": {
+                "default": false,
+                "description": "True when the landed delivery opened a pull request (``delivery_pr_url`` is present). ``False`` otherwise.",
+                "title": "Delivery Published",
+                "type": "boolean"
+              },
               "final_acceptance": {
                 "anyOf": [
                   {
@@ -8679,7 +8753,7 @@
             "type": "object"
           }
         },
-        "description": "Summary state snapshot for a single run.\n\n``meta`` is the default summary projection of ``meta.json`` (phase bodies\nelided unless the caller opts back in via ``include``), while ``metrics`` is\nsurfaced as a plain dict. The runtime shape of meta.json/metrics.json\nevolves and over-tightening here would force schema changes for every\nobservability tweak.",
+        "description": "Summary state snapshot for a single run.\n\n``meta`` is the default summary projection of ``meta.json`` (phase bodies\nelided unless the caller opts back in via ``include``), while ``metrics`` is\nsurfaced as a plain dict. The runtime shape of meta.json/metrics.json\nevolves and over-tightening here would force schema changes for every\nobservability tweak.\n\nDelivery disposition is deliberately NOT projected as a dedicated typed axis\nhere. The interactive delivery surfaces already own it without a second meta\nread: ``orcho_run_live_status`` carries the typed terminal disposition\n(``RunLiveTerminal.delivery_committed`` / ``delivery_published`` /\n``delivery_pr_url``), ``orcho_delivery_gate`` projects the terminal\n``delivery_completed`` kind with ``published`` / ``pr_url`` /\n``delivery_notices``, and ``orcho_run_evidence`` (slice ``delivery``) carries\nthe read-only ``DeliverySummaryRecord``. A caller that needs the raw facts\nfrom a status snapshot still reads them off the untyped ``meta`` dict\n(``meta['commit_delivery']``). Adding a fourth, parallel delivery axis to\n``run_status`` would duplicate the source and risk drift, so it is left out\nunless a status-parity requirement is explicitly raised (aligned with the\nT1 gate kind and the T3 live-status disposition).",
         "properties": {
           "artefacts": {
             "description": "Readable artefacts available for this run, with MCP resource URIs. Agent reads this to discover what it can fetch without scanning the run directory or remembering filename conventions.",

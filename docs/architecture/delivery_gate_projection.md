@@ -48,7 +48,19 @@ artifact in `message`.
 |---|---|
 | `kind="delivery", decidable=true` | `delivery_decision_required` |
 | `kind="correction", decidable=true` | `correction_decision_required` |
-| `decidable=false` | `direct_checkout_or_running` |
+| `decidable=false`, `commit_delivery.status` in `committed` / `applied_uncommitted` (not a superseded parent) | `delivery_completed` |
+| `decidable=false`, any other status | `direct_checkout_or_running` |
+
+A `delivery_completed` gate is terminal: the Orcho-managed delivery already
+landed, so `available_actions` is empty and there is no decision to make. Its
+payload carries the delivery facts read from `commit_delivery`: `published`
+(true when a pull request is open), `pr_url` (that PR's live link), and
+`delivery_notices` (the human-readable delivery lines). On a published
+`delivery_completed` gate `pr_intent.suggested_command` is `None` — the durable
+"run this to open a PR" command is stale once the push happened, so `pr_url` is
+the authoritative link. This kind is distinct from
+`direct_checkout_or_running`, which means nothing was delivered (a direct
+checkout edit, a still-running run, or a skipped / halted / failed terminal).
 
 `available_actions` contains only SDK-available actions. `blocked_actions`
 contains actions core currently refuses, commonly `approve` / `apply` on a

@@ -458,6 +458,20 @@ class RunStatus(BaseModel):
     surfaced as a plain dict. The runtime shape of meta.json/metrics.json
     evolves and over-tightening here would force schema changes for every
     observability tweak.
+
+    Delivery disposition is deliberately NOT projected as a dedicated typed axis
+    here. The interactive delivery surfaces already own it without a second meta
+    read: ``orcho_run_live_status`` carries the typed terminal disposition
+    (``RunLiveTerminal.delivery_committed`` / ``delivery_published`` /
+    ``delivery_pr_url``), ``orcho_delivery_gate`` projects the terminal
+    ``delivery_completed`` kind with ``published`` / ``pr_url`` /
+    ``delivery_notices``, and ``orcho_run_evidence`` (slice ``delivery``) carries
+    the read-only ``DeliverySummaryRecord``. A caller that needs the raw facts
+    from a status snapshot still reads them off the untyped ``meta`` dict
+    (``meta['commit_delivery']``). Adding a fourth, parallel delivery axis to
+    ``run_status`` would duplicate the source and risk drift, so it is left out
+    unless a status-parity requirement is explicitly raised (aligned with the
+    T1 gate kind and the T3 live-status disposition).
     """
     run_id: str
     run_dir: str

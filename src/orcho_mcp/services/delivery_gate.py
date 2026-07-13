@@ -22,7 +22,7 @@ Authority contract (see ``docs/architecture/delivery_gate_projection.md``):
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, NamedTuple
 
 from sdk import delivery_decision_state as _sdk_delivery_decision_state
 
@@ -43,6 +43,18 @@ from orcho_mcp.services.run_artifacts import (
 _KIND_DELIVERY = "delivery_decision_required"
 _KIND_CORRECTION = "correction_decision_required"
 _KIND_DIRECT = "direct_checkout_or_running"
+# A terminal, already-executed Orcho-managed delivery (the diff landed in the
+# target checkout). NOT ``direct_checkout_or_running`` — that reads as "no Orcho
+# delivery happened / still running"; this reads as "the delivery ran and
+# completed". No delivery decision is offered; the real PR link (when any) rides
+# in ``pr_url``.
+_KIND_COMPLETED = "delivery_completed"
+
+# Statuses on which an Orcho-managed delivery is considered to have landed in the
+# target checkout. Kept aligned with the evidence slice's
+# ``inspection.evidence._DELIVERY_APPLIED_STATUSES`` (single vocabulary): a new
+# commit (``committed``) or an uncommitted apply (``applied_uncommitted``).
+_DELIVERY_COMPLETED_STATUSES = frozenset({"committed", "applied_uncommitted"})
 
 # Typed delivery-scope violation reason (mirrors core ``delivery_scope`` /
 # ``sdk.run_control.delivery``). When the SDK delivery-decision state reports
@@ -165,6 +177,50 @@ def _map_pr_intent(cd: dict | None) -> PrIntentRecord | None:
         title=_optional_str(raw.get("title")),
         suggested_command=_optional_str(raw.get("suggested_command")),
     )
+
+
+def _extract_pr_url(cd: dict | None) -> str | None:
+    """Published pull-request URL from the meta decision (ADR 0119).
+
+    Reads the authoritative ``meta['commit_delivery'].pr_url`` (core's
+    ``CommitDeliveryDecision.to_dict`` always keys ``pr_url`` — the value when a
+    PR was opened, ``None`` otherwise — so a projection reads it without
+    re-parsing ``delivery_notices``). Defensive to ``None`` / non-dict / absent
+    key: never fabricated, absent → ``None``. A stale core with no ``pr_url``
+    key reads as absence.
+    """
+    if not isinstance(cd, dict):
+        return None
+    return _optional_str(cd.get("pr_url"))
+
+
+def _extract_delivery_notices(cd: dict | None) -> list[str]:
+    """Human-readable delivery notices from the meta decision (ADR 0119).
+
+    Reads ``meta['commit_delivery'].delivery_notices`` (core only emits the key
+    when non-empty). Defensive to ``None`` / non-dict / absent / non-list:
+    coerced through :func:`_coerce_str_list`, so absence → ``[]`` (never
+    fabricated).
+    """
+    if not isinstance(cd, dict):
+        return []
+    return _coerce_str_list(cd.get("delivery_notices"))
+
+
+def _published_pr_intent(
+    pr_intent: PrIntentRecord | None, published: bool,
+) -> PrIntentRecord | None:
+    """Project the PR intent for a completed delivery.
+
+    On a published delivery (a PR is already open — its live link is
+    ``pr_url``) the durable ``suggested_command`` is a stale, misleading "run
+    this to open a PR" instruction, so it is dropped (``None``). The rest of the
+    intent (branch / base / title) is preserved. On an unpublished delivery the
+    intent passes through unchanged.
+    """
+    if pr_intent is None or not published:
+        return pr_intent
+    return pr_intent.model_copy(update={"suggested_command": None})
 
 
 def _parse_patch_files(diff_text: str | None) -> list[str] | None:
@@ -461,6 +517,29 @@ def _direct_message(
     )
 
 
+def _completed_message(status: str | None, pr_url: str | None) -> str:
+    """Message for a run whose Orcho-managed delivery already landed.
+
+    Announces that the delivery ran and completed (naming the open PR when
+    there is one) so a client never mistakes this terminal state for a direct
+    checkout edit. It never advises testing / committing the checkout by hand —
+    the delivery already happened.
+    """
+    if pr_url:
+        return (
+            f"Orcho-managed delivery already landed (status={status!r}) and a "
+            f"pull request is open: {pr_url}. The delivery gate is closed — "
+            "there is no decision to make and nothing to commit by hand. Follow "
+            "the pull request to review or merge the published change."
+        )
+    return (
+        f"Orcho-managed delivery already landed (status={status!r}); the change "
+        "was delivered to the target checkout. The delivery gate is closed — "
+        "there is no decision to make. Inspect the delivered commit or the run "
+        "evidence; do not re-apply the retained diff by hand."
+    )
+
+
 def project_delivery_gate(run_id: str) -> DeliveryGateProjection:
     """Project a run's post-release delivery / correction gate.
 
@@ -483,6 +562,34 @@ def project_delivery_gate(run_id: str) -> DeliveryGateProjection:
     pr_intent = _map_pr_intent(cd)
 
     if not state.decidable:
+        superseded_child = _superseded_child(meta)
+        # A terminal, already-executed delivery (``committed`` /
+        # ``applied_uncommitted``) is NOT "nothing happened / still running":
+        # the diff landed. Surface the distinct ``delivery_completed`` kind with
+        # the published PR facts, so a client reads the real outcome instead of
+        # a misleading ``direct_checkout_or_running``. A superseded parent keeps
+        # the direct/superseded message (its own decision was evicted).
+        if superseded_child is None and status in _DELIVERY_COMPLETED_STATUSES:
+            pr_url = _extract_pr_url(cd)
+            published = bool(pr_url)
+            return DeliveryGateProjection(
+                run_id=run_id,
+                kind=_KIND_COMPLETED,
+                release=release,
+                target_checkout=_target_checkout(meta, cd),
+                retained_worktree=_retained_worktree(meta, cd),
+                diff=DeliveryGateDiffSummary(),
+                default_action=None,
+                available_actions=[],
+                blocked_actions=[],
+                published=published,
+                pr_url=pr_url,
+                delivery_notices=_extract_delivery_notices(cd),
+                delivery_branch=delivery_branch,
+                pr_intent=_published_pr_intent(pr_intent, published),
+                message=_completed_message(status, pr_url),
+                next_actions=[],
+            )
         return DeliveryGateProjection(
             run_id=run_id,
             kind=_KIND_DIRECT,
@@ -495,7 +602,7 @@ def project_delivery_gate(run_id: str) -> DeliveryGateProjection:
             blocked_actions=[],
             delivery_branch=delivery_branch,
             pr_intent=pr_intent,
-            message=_direct_message(cd, status, _superseded_child(meta)),
+            message=_direct_message(cd, status, superseded_child),
             next_actions=[],
         )
 
@@ -584,8 +691,52 @@ def _retained_worktree(meta: dict, cd: dict | None) -> str | None:
     return None
 
 
+class DeliveryDisposition(NamedTuple):
+    """Cheap terminal delivery disposition (committed / published / pr_url).
+
+    The light read behind a live terminal card: whether an Orcho-managed
+    delivery landed (``committed`` — a ``committed`` / ``applied_uncommitted``
+    status, the SAME set that classifies a ``delivery_completed`` gate),
+    whether it opened a pull request (``published``), and that PR's live
+    ``pr_url``. All defaults are the empty disposition so a run with no
+    delivery reads ``(False, False, None)``.
+    """
+    committed: bool = False
+    published: bool = False
+    pr_url: str | None = None
+
+
+def delivery_disposition(run_id: str) -> DeliveryDisposition:
+    """Read a run's terminal delivery disposition cheaply and single-source.
+
+    A light-weight sibling of :func:`project_delivery_gate` for the live
+    terminal card: it reads ONLY the durable ``meta['commit_delivery']`` block
+    through the same ``_extract_*`` helpers (no SDK ``delivery_decision_state``
+    probe, no diff / commit-decision artifact reads), so the terminal poll never
+    pays for the full gate projection.
+
+    Defensive: a missing / unreadable meta, a non-dict meta, or an absent
+    commit-delivery block all yield the empty disposition
+    ``(False, False, None)`` — never an exception, never a fabricated fact.
+    """
+    try:
+        meta = get_run_meta_raw(run_id)
+    except Exception:
+        return DeliveryDisposition()
+    if not isinstance(meta, dict):
+        return DeliveryDisposition()
+    cd = _extract_commit_delivery(meta)
+    committed = _extract_status(cd) in _DELIVERY_COMPLETED_STATUSES
+    pr_url = _extract_pr_url(cd)
+    return DeliveryDisposition(
+        committed=committed, published=bool(pr_url), pr_url=pr_url,
+    )
+
+
 __all__ = [
+    "DeliveryDisposition",
     "build_followup_next_action",
+    "delivery_disposition",
     "held_diff_path",
     "is_correction_followup_state",
     "project_delivery_gate",

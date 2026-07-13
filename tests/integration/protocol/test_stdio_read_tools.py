@@ -458,6 +458,81 @@ async def test_stdio_delivery_gate_correction_call_tool(fake_workspace):
 
 
 @pytest.mark.anyio
+async def test_stdio_delivery_gate_completed_call_tool(fake_workspace):
+    """``orcho_delivery_gate`` round-trips a terminal ``delivery_completed``
+    projection over stdio, carrying the published PR facts.
+
+    Seeds a run whose Orcho-managed delivery already landed
+    (``commit_delivery.status == 'committed'``) and opened a pull request
+    (``pr_url`` + ``delivery_notices``). Calls the tool through a real
+    ``python -m orcho_mcp`` subprocess and asserts the structured response
+    parses as ``DeliveryGateProjection``, classifies as the terminal
+    ``delivery_completed`` kind (no decision offered), surfaces
+    ``published`` / ``pr_url`` / ``delivery_notices``, and suppresses the
+    stale ``pr_intent.suggested_command`` — the live link is ``pr_url``.
+    """
+    write_run(
+        fake_workspace, "20260101_000001",
+        meta={
+            "project": "/repo/checkout",
+            "status": "done",
+            "task": "delivery completed stdio smoke",
+            "commit_delivery": {
+                "status": "committed",
+                "action": "approve",
+                "release_verdict": "APPROVED",
+                "project_path": "/repo/checkout",
+                "source_path": "/repo/worktree",
+                "commit_sha": "abc123",
+                "changed_paths": ["src/a.py"],
+                "untracked_paths": [],
+                "delivery_branch": "orcho/deliver/20260101-slug",
+                "pr_url": "https://example.test/pr/7",
+                "delivery_notices": ["PR opened: https://example.test/pr/7"],
+                "pr_intent": {
+                    "branch": "orcho/deliver/20260101-slug",
+                    "base": "main",
+                    "title": "Deliver widget",
+                    "suggested_command": "gh pr create --fill",
+                },
+            },
+        },
+    )
+
+    async with initialized_stdio_session(fake_workspace) as (session, _):
+        result = await session.call_tool(
+            "orcho_delivery_gate",
+            {"run_id": "20260101_000001"},
+        )
+
+    assert result.isError is False
+    payload = result.structuredContent
+    assert payload is not None, "tool result must carry structuredContent"
+
+    from orcho_mcp.schemas import DeliveryGateProjection
+
+    proj = DeliveryGateProjection.model_validate(payload)
+    assert proj.run_id == "20260101_000001"
+    assert proj.kind == "delivery_completed"
+    # Terminal: the delivery already landed, so no decision is offered.
+    assert proj.available_actions == []
+    assert proj.next_actions == []
+    # Published PR facts ride the typed wire, not only terminal prose.
+    assert proj.published is True
+    assert proj.pr_url == "https://example.test/pr/7"
+    assert proj.delivery_notices == ["PR opened: https://example.test/pr/7"]
+    assert proj.delivery_branch == "orcho/deliver/20260101-slug"
+    # The durable "open a PR" command is stale once the PR is open; the live
+    # link is pr_url, so suggested_command is suppressed while the rest of the
+    # intent is preserved.
+    assert proj.pr_intent is not None
+    assert proj.pr_intent.suggested_command is None
+    assert proj.pr_intent.branch == "orcho/deliver/20260101-slug"
+    assert proj.pr_intent.base == "main"
+    assert "https://example.test/pr/7" in proj.message
+
+
+@pytest.mark.anyio
 async def test_stdio_workspace_state_after_summary(fake_workspace):
     """``orcho_run_events_summary`` updates the advisory MCP
     workspace state, and ``orcho_workspace_state`` exposes the same
