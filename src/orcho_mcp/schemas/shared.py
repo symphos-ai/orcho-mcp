@@ -117,12 +117,10 @@ class NextActionRecord(BaseModel):
         description=(
             "Structured, machine-readable recovery context for this action "
             "that is NOT a parameter of the target tool (so it must not ride "
-            "in ``args``), yet a typed client needs to branch on it. The "
-            "from_run_plan follow-up after a rejected final acceptance "
-            "carries here the parent's retained ``diff_path`` and its "
-            "``project_dir`` / ``retained_worktree`` checkout context, plus "
-            "the ``from_run_plan`` parent id. Read these typed keys — never "
-            "the ``intent`` prose — for the diff/worktree pointers. ``None`` "
+            "in ``args``), yet a typed client needs to branch on it. A "
+            "retained-change correction records its durable continuation "
+            "facts here (subject, blocked state, diff source, and reason). "
+            "Read these typed keys — never the ``intent`` prose. ``None`` "
             "(default) when the action carries no extra context."
         ),
     )
@@ -138,10 +136,12 @@ class NextActionRecord(BaseModel):
 # ``services.run_lineage.RecommendedNextAction`` one-for-one.
 
 ContinuationSubjectLiteral = Literal[
+    "checkpoint",
     "source_run_checkpoint",
     "active_child_run",
     "delivery_gate",
     "plan_artifact",
+    "retained_change",
     "none",
     "unknown",
 ]

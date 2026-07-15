@@ -450,7 +450,7 @@ def test_resume_meaningful_matches_diagnosis_delivery_gate(fake_workspace):
     )
 
     diag = project_run_diagnosis("run_correction_gate")
-    assert diag.condition == "correction_followup_required"
+    assert diag.condition == "blocked_worktree"
     assert _resume_meaningful_from_diagnosis(diag) is False
 
 

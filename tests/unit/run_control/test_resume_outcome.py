@@ -81,7 +81,6 @@ async def test_terminal_run_rejected_without_spawn(
 
     result = await resume_run("20260101_000001")
 
-    assert isinstance(result, ResumeBlockedResult)
     assert result.resume_outcome == "rejected_terminal"
     assert result.run_id == "20260101_000001"
     assert result.recommended_run_id is None
@@ -118,7 +117,6 @@ async def test_supervisor_terminal_stale_meta_rejected_without_spawn(
 
     result = await resume_run("20260101_000001")
 
-    assert isinstance(result, ResumeBlockedResult)
     assert result.resume_outcome == "rejected_terminal"
     assert not hasattr(result, "pid")
     assert all(na.tool != "orcho_run_resume" for na in result.next_actions)
@@ -286,14 +284,14 @@ async def test_final_acceptance_rejected_terminal_without_spawn(
 
     result = await resume_run("20260101_000005")
 
-    assert isinstance(result, ResumeBlockedResult)
-    assert result.resume_outcome == "rejected_terminal"
+    assert result.resume_outcome == "blocked"
+    assert result.blocked is True
     assert result.run_id == "20260101_000005"
     # No spawn fields on this shape.
     assert not hasattr(result, "pid")
-    # Inspection-only follow-ups; never a ready resume action.
-    assert result.next_actions
-    assert all(na.tool != "orcho_run_resume" for na in result.next_actions)
+    # A blocked retained-change correction intentionally offers no impossible
+    # follow-up action.
+    assert not hasattr(result, "next_actions")
     # The supervisor was never asked to resume the rejected terminal run.
     assert fake.resume_calls == []
 

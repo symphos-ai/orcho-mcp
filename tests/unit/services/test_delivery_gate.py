@@ -24,10 +24,12 @@ from orcho_mcp.services.delivery_gate import (
     _map_pr_intent,
     project_delivery_gate,
 )
+from orcho_mcp.tools import orcho_run_diagnose
 from tests.fixtures.mcp_workspace import (
     commit_decision,
     commit_delivery,
     diff_patch_text,
+    init_git_repo,
     meta,
     write_run,
 )
@@ -181,23 +183,52 @@ def test_fix_requested_status_is_correction(fake_workspace):
     # repeat joins the blocked shipping/skip set and is never offered.
     assert _action_names(proj) == ["halt"]
     assert proj.blocked_actions == ["fix", "approve", "apply", "skip"]
-    # The gate surfaces a typed from_run_plan follow-up action (ready_call),
-    # ahead of the residual halt decide call.
-    starts = [na for na in proj.next_actions if na.tool == "orcho_run_start"]
-    assert len(starts) == 1
-    assert starts[0].kind == "ready_call"
-    assert starts[0].args["from_run_plan"] == _RUN
-    # The retained diff path rides as typed, machine-readable ``context`` — never
-    # as a tool arg and never only in the (non-contractual) intent prose.
-    assert "action" not in starts[0].args
-    ctx = starts[0].context or {}
-    assert ctx.get("from_run_plan") == _RUN
-    assert str(ctx.get("diff_path", "")).endswith("diff.patch")
+    # A retained-change decision is core-owned. This fixture has no isolated
+    # retained worktree, so correction is typed as blocked rather than being
+    # promoted into a fresh from_run_plan child.
+    assert proj.continuation_subject == "retained_change"
+    assert proj.continuation_blocked is True
+    assert not [na for na in proj.next_actions if na.tool == "orcho_run_start"]
     # The residual halt decide call is still present.
     assert any(
         na.tool == "orcho_delivery_decide" and na.args.get("action") == "halt"
         for na in proj.next_actions
     )
+
+
+def test_retained_worktree_correction_uses_one_resume_input_action(fake_workspace):
+    """A real core decision, not a mocked resolver, drives both read surfaces."""
+    worktree = fake_workspace / "retained"
+    init_git_repo(worktree)
+    (worktree / "retained.py").write_text("changed = True\n", encoding="utf-8")
+    write_run(
+        fake_workspace, _RUN,
+        meta=meta(
+            status="halted",
+            halt_reason="commit_decision_fix",
+            worktree={"isolation": "worktree", "path": str(worktree)},
+            commit_delivery=commit_delivery(
+                status="fix_requested", action="fix", release_verdict="REJECTED",
+                changed_paths=["retained.py"],
+            ),
+        ),
+        commit_decision=commit_decision(action="fix", commit_status="fix_requested"),
+        diff_patch=diff_patch_text("retained.py"),
+    )
+
+    gate = project_delivery_gate(_RUN)
+    diagnosis = orcho_run_diagnose(_RUN)
+
+    assert gate.continuation_subject == "retained_change"
+    assert gate.continuation_blocked is False
+    for actions in (gate.next_actions, diagnosis.next_actions):
+        assert len(actions) == 1
+        action = actions[0]
+        assert action.tool == "orcho_run_resume"
+        assert action.kind == "operator_input_required"
+        assert action.args == {"run_id": _RUN}
+        assert action.choices == ["followup", "exit"]
+        assert "from_run_plan" not in action.model_dump_json()
 
 
 # (c) terminal status / no commit_delivery -> direct --------------------------

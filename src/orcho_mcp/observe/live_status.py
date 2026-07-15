@@ -105,7 +105,7 @@ _EMPTY_DISPOSITION = DeliveryDisposition()
 _NON_RESUMABLE_CONDITIONS = frozenset({
     "needs_decision",            # resolved via decision_artifact_exists below
     "needs_delivery_decision",
-    "correction_followup_required",  # next step is a from_run_plan follow-up
+    "correction_followup_required",  # correction is handled by core continuation
     "closed_by_followup",            # parent closed by a successful follow-up
     "superseded_by_child",
     "blocked_worktree",
@@ -296,7 +296,7 @@ def _live_next_action(
     if state_class == "terminal_success":
         if superseded_child:
             return (
-                "this run was superseded by a successful from_run_plan "
+                "this run was superseded by a successful correction "
                 f"follow-up ({superseded_child}); it is closed — inspect the "
                 "follow-up child, do not resume this parent"
             )

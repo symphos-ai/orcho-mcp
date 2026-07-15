@@ -1115,7 +1115,7 @@ class TerminalConsistencyProjection:
     resume_meaningful: bool
     inconsistencies: list[str] = field(default_factory=list)
     # Correction-followup contract: child run id when this run was superseded by a successful
-    # from_run_plan follow-up (durable ``superseded_by_followup`` marker). When
+    # correction follow-up (durable ``superseded_by_followup`` marker). When
     # set, a ``done`` + historically-REJECTED final acceptance is NOT a live
     # contradiction — the rejection was resolved by the follow-up — so the
     # done-but-rejected inconsistency is suppressed and the run reads as closed.
@@ -1212,10 +1212,10 @@ _CONDITION_NEEDS_DECISION = "needs_decision"
 _CONDITION_NEEDS_DELIVERY_DECISION = "needs_delivery_decision"
 # Correction-followup contract: a correction whose ``fix`` was already requested (or a rejected
 # dead-end). Resuming THIS run is inert and a repeated ``fix`` is a no-op; the
-# actionable next step is a from_run_plan follow-up carrying the retained diff.
+# actionable next step is a correction follow-up over the retained worktree.
 _CONDITION_CORRECTION_FOLLOWUP_REQUIRED = "correction_followup_required"
 _CONDITION_SUPERSEDED_BY_CHILD = "superseded_by_child"
-# Correction-followup contract: a rejected-FA / correction parent that a successful from_run_plan
+# Correction-followup contract: a rejected-FA / correction parent that a successful correction
 # follow-up child has CLOSED (core finalization stamps ``superseded_by_followup``
 # and settles the parent to ``done``). It is terminal and resume is inert, but —
 # unlike a plain ``resume_inert_terminal`` dead-end — it is explicitly a settled
@@ -1294,10 +1294,8 @@ class RunDiagnosisProjection:
     missing_facts: list[str] = field(default_factory=list)
     recovery_lineage: RecoveryLineageProjection | None = None
     # ``correction_followup_required`` enrichment: the target checkout
-    # and the parent's retained ``diff.patch`` path that a from_run_plan follow-up
-    # carries forward. The wire layer builds the typed ``orcho_run_start`` action
-    # from these (``from_run_plan`` is always this run's id). ``None`` for every
-    # other condition.
+    # retained-worktree facts. The wire layer emits the core-owned typed
+    # ``orcho_run_resume`` input requirement. ``None`` for every other condition.
     followup_project_dir: str | None = None
     followup_diff_path: str | None = None
     followup_retained_worktree: str | None = None
@@ -1398,7 +1396,7 @@ def _wire_delivery_gate_kind(gate: object, core_kind: str | None) -> str | None:
 def _held_diff_path(run_dir: Path) -> str | None:
     """Absolute path to ``run_dir/diff.patch`` when present, else ``None``.
 
-    The retained diff is recovery *context* for a from_run_plan follow-up; a
+    The retained diff is recovery context for a correction follow-up; a
     missing patch (or any stat failure) degrades to ``None`` rather than raising.
     """
     try:
@@ -1412,7 +1410,7 @@ def _superseded_followup_child(meta: object) -> str | None:
     """Child run id from a durable ``superseded_by_followup`` marker, else None.
 
     orcho-core's finalization stamps ``superseded_by_followup`` on a
-    rejected-FA / correction parent once a from_run_plan follow-up child has
+    rejected-FA / correction parent once a correction follow-up child has
     delivered, settling the parent to ``done``. Its presence means the parent is
     closed/superseded — never an active correction candidate.
     """
@@ -1660,6 +1658,8 @@ def _project_run_diagnosis(
             parent_run_id=parent_run_id,
             blocked=diagnosis.blocked,
             block_message=diagnosis.block_message,
+            continuation_subject=diagnosis.continuation_subject,
+            recommended_next_action=diagnosis.recommended_next_action,
             recovery_lineage=recovery_lineage,
         )
 

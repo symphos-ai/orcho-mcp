@@ -43,6 +43,15 @@ def _build_server_params(workspace_dir: Path | None = None) -> StdioServerParame
     env = {**os.environ}
     _repo_root = Path(__file__).resolve().parents[2]
     _checkout_paths = [str(_repo_root / "src"), str(_repo_root)]
+    # Match the in-process test finder with an importable core checkout for
+    # the server subprocess.  A subprocess cannot inherit its parent's
+    # MetaPathFinder, so both the explicit provenance variable and the paired
+    # source root must be present on PYTHONPATH before site-packages.
+    from tests._core_source import pin_core_source
+
+    if core_root := pin_core_source():
+        env["ORCHO_CORE_SRC"] = str(core_root)
+        _checkout_paths.append(str(core_root))
     _prior_pythonpath = env.get("PYTHONPATH", "")
     if _prior_pythonpath:
         _checkout_paths.append(_prior_pythonpath)

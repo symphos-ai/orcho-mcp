@@ -105,6 +105,10 @@ from orcho_mcp.schemas.read import (
 )
 from orcho_mcp.schemas.run_control import (
     CancelResult,
+    CorrectionBlockedResult,
+    CorrectionExitResult,
+    CorrectionFollowupStartedResult,
+    CorrectionOperatorInputRequiredResult,
     DeliveryDecideResult,
     HandoffAdviceResult,
     HandoffAdviceSafetyRecord,
@@ -145,6 +149,10 @@ from orcho_mcp.schemas.workspace import (
 __all__ = [
     # shared
     "ContinuationSubjectLiteral",
+    "CorrectionExitResult",
+    "CorrectionBlockedResult",
+    "CorrectionFollowupStartedResult",
+    "CorrectionOperatorInputRequiredResult",
     "NextActionRecord",
     "ProviderPressure",
     "RecommendedNextActionLiteral",

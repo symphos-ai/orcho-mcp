@@ -36,6 +36,9 @@ Source precedence (first match wins):
    editable cross-repo layout for normal local runs, preferred over a stale
    promoted stable install so a bare ``python -m pytest`` still exercises the
    development core.
+4. The paired ``wt_core/checkout`` when this MCP checkout itself is running
+   from an Orcho worktree. This keeps the provenance gate valid for a
+   cross-repo run even when ``ORCHO_RUN_ID`` is not exported to its verifier.
 
 If none resolves to a real checkout the module is inert and imports fall
 through to whatever is installed.
@@ -112,9 +115,17 @@ def _candidate_roots() -> list[Path]:
     run_worktree = _orcho_run_worktree()
     if run_worktree is not None:
         roots.append(run_worktree)
+    # A cross-repo Orcho worktree is laid out as
+    # ``.../worktrees/wt_mcp/checkout`` beside ``wt_core/checkout``.  The
+    # verification process may not inherit ORCHO_RUN_ID, so derive this
+    # co-located companion from this file rather than falling through to an
+    # installed package.  The candidate is still accepted only after the same
+    # checkout-shape validation below.
+    checkout = Path(__file__).resolve().parents[1]
+    if checkout.name == "checkout" and checkout.parent.name.startswith("wt_"):
+        roots.append(checkout.parent.parent / "wt_core" / "checkout")
     # Sibling dev checkout: ``.../orcho-mcp`` → ``.../orcho-core``.
-    repo_root = Path(__file__).resolve().parents[1]
-    roots.append(repo_root.parent / "orcho-core")
+    roots.append(checkout.parent / "orcho-core")
     return roots
 
 

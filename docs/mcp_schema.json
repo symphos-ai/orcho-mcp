@@ -786,7 +786,7 @@
                   }
                 ],
                 "default": null,
-                "description": "Structured, machine-readable recovery context for this action that is NOT a parameter of the target tool (so it must not ride in ``args``), yet a typed client needs to branch on it. The from_run_plan follow-up after a rejected final acceptance carries here the parent's retained ``diff_path`` and its ``project_dir`` / ``retained_worktree`` checkout context, plus the ``from_run_plan`` parent id. Read these typed keys — never the ``intent`` prose — for the diff/worktree pointers. ``None`` (default) when the action carries no extra context.",
+                "description": "Structured, machine-readable recovery context for this action that is NOT a parameter of the target tool (so it must not ride in ``args``), yet a typed client needs to branch on it. A retained-change correction records its durable continuation facts here (subject, blocked state, diff source, and reason). Read these typed keys — never the ``intent`` prose. ``None`` (default) when the action carries no extra context.",
                 "title": "Context"
               },
               "input_schema": {
@@ -916,6 +916,42 @@
             "title": "Blocked Actions",
             "type": "array"
           },
+          "continuation_blocked": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Continuation Blocked"
+          },
+          "continuation_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Continuation Reason"
+          },
+          "continuation_subject": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Continuation Subject"
+          },
           "default_action": {
             "anyOf": [
               {
@@ -952,6 +988,23 @@
           },
           "diff": {
             "$ref": "#/$defs/DeliveryGateDiffSummary"
+          },
+          "diff_source": {
+            "anyOf": [
+              {
+                "enum": [
+                  "worktree",
+                  "artifact",
+                  "none"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Diff Source"
           },
           "kind": {
             "enum": [
@@ -1012,6 +1065,18 @@
             "description": "True on a ``delivery_completed`` gate whose delivery opened a pull request (``pr_url`` is present). ``False`` for every other kind and for a completed delivery that only wrote a commit without a PR.",
             "title": "Published",
             "type": "boolean"
+          },
+          "recommended_next_action": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Recommended Next Action"
           },
           "release": {
             "default": "none",
@@ -1177,7 +1242,7 @@
                   }
                 ],
                 "default": null,
-                "description": "Structured, machine-readable recovery context for this action that is NOT a parameter of the target tool (so it must not ride in ``args``), yet a typed client needs to branch on it. The from_run_plan follow-up after a rejected final acceptance carries here the parent's retained ``diff_path`` and its ``project_dir`` / ``retained_worktree`` checkout context, plus the ``from_run_plan`` parent id. Read these typed keys — never the ``intent`` prose — for the diff/worktree pointers. ``None`` (default) when the action carries no extra context.",
+                "description": "Structured, machine-readable recovery context for this action that is NOT a parameter of the target tool (so it must not ride in ``args``), yet a typed client needs to branch on it. A retained-change correction records its durable continuation facts here (subject, blocked state, diff source, and reason). Read these typed keys — never the ``intent`` prose. ``None`` (default) when the action carries no extra context.",
                 "title": "Context"
               },
               "input_schema": {
@@ -1430,7 +1495,7 @@
                   }
                 ],
                 "default": null,
-                "description": "Structured, machine-readable recovery context for this action that is NOT a parameter of the target tool (so it must not ride in ``args``), yet a typed client needs to branch on it. The from_run_plan follow-up after a rejected final acceptance carries here the parent's retained ``diff_path`` and its ``project_dir`` / ``retained_worktree`` checkout context, plus the ``from_run_plan`` parent id. Read these typed keys — never the ``intent`` prose — for the diff/worktree pointers. ``None`` (default) when the action carries no extra context.",
+                "description": "Structured, machine-readable recovery context for this action that is NOT a parameter of the target tool (so it must not ride in ``args``), yet a typed client needs to branch on it. A retained-change correction records its durable continuation facts here (subject, blocked state, diff source, and reason). Read these typed keys — never the ``intent`` prose. ``None`` (default) when the action carries no extra context.",
                 "title": "Context"
               },
               "input_schema": {
@@ -2170,7 +2235,7 @@
                   }
                 ],
                 "default": null,
-                "description": "Structured, machine-readable recovery context for this action that is NOT a parameter of the target tool (so it must not ride in ``args``), yet a typed client needs to branch on it. The from_run_plan follow-up after a rejected final acceptance carries here the parent's retained ``diff_path`` and its ``project_dir`` / ``retained_worktree`` checkout context, plus the ``from_run_plan`` parent id. Read these typed keys — never the ``intent`` prose — for the diff/worktree pointers. ``None`` (default) when the action carries no extra context.",
+                "description": "Structured, machine-readable recovery context for this action that is NOT a parameter of the target tool (so it must not ride in ``args``), yet a typed client needs to branch on it. A retained-change correction records its durable continuation facts here (subject, blocked state, diff source, and reason). Read these typed keys — never the ``intent`` prose. ``None`` (default) when the action carries no extra context.",
                 "title": "Context"
               },
               "input_schema": {
@@ -2426,7 +2491,7 @@
             "type": "object"
           }
         },
-        "description": "Returned by ``orcho_run_diagnose`` — a typed, read-only verdict on a\nrun's resume situation plus unambiguously typed next steps.\n\n``condition`` is the deterministic classification (first-match priority,\ncomputed by ``services.run_projection.project_run_diagnosis``):\n\n- ``active`` — the run is executing; watch / poll it.\n- ``needs_decision`` — paused on ``awaiting_phase_handoff``; an operator\n  must record a phase-handoff decision before it can resume.\n- ``needs_delivery_decision`` — paused at an Orcho-managed post-release\n  delivery / correction gate; inspect the gate via\n  ``orcho_delivery_gate`` and choose one of its ready\n  ``orcho_delivery_decide`` calls.\n- ``correction_followup_required`` — the release was rejected and a\n  correction was already requested (only ``halt`` remains on the gate);\n  resuming this run is inert and a repeated ``fix`` is a no-op, so the typed\n  next step is an ``orcho_run_start`` from_run_plan follow-up carrying the\n  parent's plan + retained ``diff.patch`` (``recommended_next_action=\n  'start_followup'``).\n- ``closed_by_followup`` — this run is a rejected-FA / correction parent\n  that a successful ``from_run_plan`` follow-up CLOSED (orcho-core\n  finalization stamped ``superseded_by_followup`` and settled it to\n  ``done``). It is terminal/settled, never an active correction: its old\n  release_blockers are NOT authoritative, resume is inert, and the\n  superseding child rides in ``recommended_run_id``.\n- ``recover_via_source_run`` — this run is a terminal / rejected recovery\n  run, but durable lineage points at a *resumable source* run; resume the\n  source (``recommended_run_id``), NOT a fresh ``from_run_plan`` against\n  this inert run.\n- ``resume_inert_terminal`` — terminal (terminal success or a terminal\n  halt reason); resuming is inert, so only inspection is offered. The\n  typed ``continuation_subject`` / ``recommended_next_action`` still\n  distinguish a plan-only continuation, a clean start-followup, and a\n  ``stop_unknown`` dead-end.\n- ``superseded_by_child`` — a newer unfinished follow-up child is\n  continuing this run; resume the child (``recommended_run_id``).\n- ``blocked_worktree`` — a follow-up blocked because the parent's\n  undelivered diff is not replayable here; resume the parent when known.\n- ``provider_pressure`` — a residual ``halted`` / ``failed`` /\n  ``interrupted`` stop that core typed as a provider runtime/access failure\n  (rate-limit, transient runtime fault, access loss) in its errors/halt\n  rollup, rather than a generic code/test/review failure. The typed\n  ``provider_pressure`` field carries the core-typed facts and the\n  conservative resume/retry (or wait-for-reset) next steps; this is NOT a\n  rejected review / failed acceptance / operator halt.\n- ``halted`` / ``failed`` / ``interrupted`` — a resumable non-terminal\n  stop; resume this run or inspect its errors.\n\nThe typed ``continuation_subject`` / ``recommended_next_action`` (projected\nfrom the same ``services.run_lineage`` resolver that backs\n``orcho_run_status.recovery_recommendation``) let an agent pick the next\nMCP call without reading output logs, and ``recovery_lineage`` carries the\ndurable facts behind that choice. ``from_run_plan`` is recommended ONLY for\na durable plan artifact (``recommended_next_action='plan_artifact_continuation'``),\nnever as a generic way to finish a retained diff or checkpoint.\n\n``next_actions`` carry the typed call-readiness contract: a\n``ready_call`` record's ``args`` already hold every required parameter of\nthe target tool (safe to forward verbatim), while an\n``operator_input_required`` record intentionally omits a final decision\nargument and surfaces ``choices`` / ``input_schema`` for the operator to\nfill. Clients MUST branch on the typed ``kind`` field, never on\n``intent`` prose.",
+        "description": "Returned by ``orcho_run_diagnose`` — a typed, read-only verdict on a\nrun's resume situation plus unambiguously typed next steps.\n\n``condition`` is the deterministic classification (first-match priority,\ncomputed by ``services.run_projection.project_run_diagnosis``):\n\n- ``active`` — the run is executing; watch / poll it.\n- ``needs_decision`` — paused on ``awaiting_phase_handoff``; an operator\n  must record a phase-handoff decision before it can resume.\n- ``needs_delivery_decision`` — paused at an Orcho-managed post-release\n  delivery / correction gate; inspect the gate via\n  ``orcho_delivery_gate`` and choose one of its ready\n  ``orcho_delivery_decide`` calls.\n- ``correction_followup_required`` — the release was rejected and a\n  correction was already requested (only ``halt`` remains on the gate);\n  resuming this run is inert and a repeated ``fix`` is a no-op, so the typed\n  next step is the ``orcho_run_resume`` operator-input requirement for a\n  retained-change correction (``recommended_next_action='start_followup'``).\n- ``closed_by_followup`` — this run is a rejected-FA / correction parent\n  that a successful correction follow-up CLOSED (orcho-core\n  finalization stamped ``superseded_by_followup`` and settled it to\n  ``done``). It is terminal/settled, never an active correction: its old\n  release_blockers are NOT authoritative, resume is inert, and the\n  superseding child rides in ``recommended_run_id``.\n- ``recover_via_source_run`` — this run is a terminal / rejected recovery\n  run, but durable lineage points at a *resumable source* run; resume the\n  source (``recommended_run_id``), NOT a fresh ``from_run_plan`` against\n  this inert run.\n- ``resume_inert_terminal`` — terminal (terminal success or a terminal\n  halt reason); resuming is inert, so only inspection is offered. The\n  typed ``continuation_subject`` / ``recommended_next_action`` still\n  distinguish a plan-only continuation, a clean start-followup, and a\n  ``stop_unknown`` dead-end.\n- ``superseded_by_child`` — a newer unfinished follow-up child is\n  continuing this run; resume the child (``recommended_run_id``).\n- ``blocked_worktree`` — a follow-up blocked because the parent's\n  undelivered diff is not replayable here; resume the parent when known.\n- ``provider_pressure`` — a residual ``halted`` / ``failed`` /\n  ``interrupted`` stop that core typed as a provider runtime/access failure\n  (rate-limit, transient runtime fault, access loss) in its errors/halt\n  rollup, rather than a generic code/test/review failure. The typed\n  ``provider_pressure`` field carries the core-typed facts and the\n  conservative resume/retry (or wait-for-reset) next steps; this is NOT a\n  rejected review / failed acceptance / operator halt.\n- ``halted`` / ``failed`` / ``interrupted`` — a resumable non-terminal\n  stop; resume this run or inspect its errors.\n\nThe typed ``continuation_subject`` / ``recommended_next_action`` (projected\nfrom the same ``services.run_lineage`` resolver that backs\n``orcho_run_status.recovery_recommendation``) let an agent pick the next\nMCP call without reading output logs, and ``recovery_lineage`` carries the\ndurable facts behind that choice. ``from_run_plan`` is recommended ONLY for\na durable plan artifact (``recommended_next_action='plan_artifact_continuation'``),\nnever as a generic way to finish a retained diff or checkpoint.\n\n``next_actions`` carry the typed call-readiness contract: a\n``ready_call`` record's ``args`` already hold every required parameter of\nthe target tool (safe to forward verbatim), while an\n``operator_input_required`` record intentionally omits a final decision\nargument and surfaces ``choices`` / ``input_schema`` for the operator to\nfill. Clients MUST branch on the typed ``kind`` field, never on\n``intent`` prose.",
         "properties": {
           "available_actions": {
             "description": "For ``needs_decision``, the phase-handoff decision verbs the runtime published (``continue`` / ``retry_feedback`` / ``halt`` / ``continue_with_waiver``). Empty otherwise.",
@@ -2460,10 +2525,12 @@
             "anyOf": [
               {
                 "enum": [
+                  "checkpoint",
                   "source_run_checkpoint",
                   "active_child_run",
                   "delivery_gate",
                   "plan_artifact",
+                  "retained_change",
                   "none",
                   "unknown"
                 ],
@@ -2987,7 +3054,7 @@
                   }
                 ],
                 "default": null,
-                "description": "Structured, machine-readable recovery context for this action that is NOT a parameter of the target tool (so it must not ride in ``args``), yet a typed client needs to branch on it. The from_run_plan follow-up after a rejected final acceptance carries here the parent's retained ``diff_path`` and its ``project_dir`` / ``retained_worktree`` checkout context, plus the ``from_run_plan`` parent id. Read these typed keys — never the ``intent`` prose — for the diff/worktree pointers. ``None`` (default) when the action carries no extra context.",
+                "description": "Structured, machine-readable recovery context for this action that is NOT a parameter of the target tool (so it must not ride in ``args``), yet a typed client needs to branch on it. A retained-change correction records its durable continuation facts here (subject, blocked state, diff source, and reason). Read these typed keys — never the ``intent`` prose. ``None`` (default) when the action carries no extra context.",
                 "title": "Context"
               },
               "input_schema": {
@@ -4596,7 +4663,7 @@
                   }
                 ],
                 "default": null,
-                "description": "Structured, machine-readable recovery context for this action that is NOT a parameter of the target tool (so it must not ride in ``args``), yet a typed client needs to branch on it. The from_run_plan follow-up after a rejected final acceptance carries here the parent's retained ``diff_path`` and its ``project_dir`` / ``retained_worktree`` checkout context, plus the ``from_run_plan`` parent id. Read these typed keys — never the ``intent`` prose — for the diff/worktree pointers. ``None`` (default) when the action carries no extra context.",
+                "description": "Structured, machine-readable recovery context for this action that is NOT a parameter of the target tool (so it must not ride in ``args``), yet a typed client needs to branch on it. A retained-change correction records its durable continuation facts here (subject, blocked state, diff source, and reason). Read these typed keys — never the ``intent`` prose. ``None`` (default) when the action carries no extra context.",
                 "title": "Context"
               },
               "input_schema": {
@@ -6239,7 +6306,7 @@
                   }
                 ],
                 "default": null,
-                "description": "Structured, machine-readable recovery context for this action that is NOT a parameter of the target tool (so it must not ride in ``args``), yet a typed client needs to branch on it. The from_run_plan follow-up after a rejected final acceptance carries here the parent's retained ``diff_path`` and its ``project_dir`` / ``retained_worktree`` checkout context, plus the ``from_run_plan`` parent id. Read these typed keys — never the ``intent`` prose — for the diff/worktree pointers. ``None`` (default) when the action carries no extra context.",
+                "description": "Structured, machine-readable recovery context for this action that is NOT a parameter of the target tool (so it must not ride in ``args``), yet a typed client needs to branch on it. A retained-change correction records its durable continuation facts here (subject, blocked state, diff source, and reason). Read these typed keys — never the ``intent`` prose. ``None`` (default) when the action carries no extra context.",
                 "title": "Context"
               },
               "input_schema": {
@@ -7000,7 +7067,7 @@
       }
     },
     {
-      "description": "Continue an interrupted run by spawning a new pipeline subprocess\n    that loads the existing checkpoint via ``--resume``.\n\n    ``runtime_override=None`` (default): a plain checkpoint resume — the run\n    continues under its original per-phase runtimes/models. This is the\n    overwhelmingly common case.\n\n    ``runtime_override={phase, runtime, model}``: deliver an operator\n    *replace* decision after a terminal provider-access failure.\n    Before the resume subprocess spawns, the chosen pair is validated against\n    the phase's configured replacement candidates and persisted into the run's\n    durable ``meta.json``; the resumed pipeline re-reads that record and applies\n    the override to exactly the named phase. A non-candidate pair aborts the\n    resume (no silent fallback). Pass the value verbatim from the *replace*\n    ``next_actions`` Action surfaced by ``orcho_run_status`` /\n    ``orcho_run_evidence`` on a provider-access failure.\n\n    ``profile=None`` (default): inherit the original run's profile from\n    ``meta.profile``. This is the right default for most callers —\n    review and final-acceptance prompt envelopes depend on the active\n    profile (``feature`` carries the full plan/validate envelope;\n    leaner scoped profiles do not), and resuming under a different\n    profile silently changes which prompt parts the reviewer agent\n    sees. Runs without a recorded profile fall back to the semantic\n    default ``\"feature\"``.\n\n    ``profile=\"<name>\"`` is a deliberate profile switch — e.g. pass\n    ``\"small_task\"`` for a lean scoped continuation, or ``\"planning\"``\n    to refine the plan only.\n\n    A pre-flight guard classifies the run before spawning, so the typed\n    ``resume_outcome`` carries one of these outcomes (the success\n    ``outputSchema`` is unchanged — an inspect-only run is signalled via a\n    typed error, see below, never as a success member):\n\n    - ``applied`` (:class:`RunResumeResult`) — a resumable run (running\n      restart / ``failed`` / ``interrupted`` / non-terminal ``halted``)\n      spawned a fresh subprocess; ``pid`` / ``run_dir`` / ``started_at`` /\n      ``command`` are populated. ``suggested_next_action`` is a ready\n      ``ready_call`` to ``orcho_run_watch`` (pre-filled with ``run_id``) so\n      the client can re-enter the watch loop on the resumed subprocess.\n    - ``pending_decision`` (:class:`ResumePendingDecisionResult`) — paused\n      on ``awaiting_phase_handoff`` with no recorded decision; resolve it\n      with ``orcho_phase_handoff_decide`` first, then resume.\n    - ``superseded_by_child`` (:class:`ResumeBlockedResult`) — a newer\n      unfinished follow-up child is continuing this run; resume that child\n      (``recommended_run_id``) instead of this parent. No subprocess spawns.\n    - ``rejected_terminal`` (:class:`ResumeBlockedResult`) — the run is\n      terminal; resuming is inert, so this is **not** success-shaped (no\n      ``pid``). Inspect via ``orcho_run_status`` / ``orcho_run_evidence``\n      instead. No subprocess spawns.\n\n    A run that was NOT started by this MCP server (no durable\n    ``mcp_supervisor.json`` with a resolvable ``project_dir`` —\n    ``control='inspect_only'`` on ``orcho_run_diagnose``) is refused BEFORE the\n    supervisor is touched: it raises ``InspectOnlyControlError`` rather than\n    returning, so the success ``outputSchema`` above is unchanged. MCP cannot\n    resume such a foreign / CLI-started run; manage it through the CLI that\n    started it and, from MCP, inspect it via ``orcho_run_status`` /\n    ``orcho_run_evidence``. Read the typed ``control`` / ``control_reason``\n    classification first with ``orcho_run_diagnose``.\n\n    Errors:\n      - InspectOnlyControlError — the run is ``inspect_only`` (not started by\n        this MCP server); resume is refused before any spawn. The carried\n        ``result`` holds the typed read-only next actions.\n      - RunNotFoundError — only when ``run_id`` is genuinely unresolvable /\n        corrupt (a foreign run dir is classified ``inspect_only`` above, not\n        raised).\n    ",
+      "description": "Continue an interrupted run by spawning a new pipeline subprocess\n    that loads the existing checkpoint via ``--resume``.\n\n    ``runtime_override=None`` (default): a plain checkpoint resume — the run\n    continues under its original per-phase runtimes/models. This is the\n    overwhelmingly common case.\n\n    ``runtime_override={phase, runtime, model}``: deliver an operator\n    *replace* decision after a terminal provider-access failure.\n    Before the resume subprocess spawns, the chosen pair is validated against\n    the phase's configured replacement candidates and persisted into the run's\n    durable ``meta.json``; the resumed pipeline re-reads that record and applies\n    the override to exactly the named phase. A non-candidate pair aborts the\n    resume (no silent fallback). Pass the value verbatim from the *replace*\n    ``next_actions`` Action surfaced by ``orcho_run_status`` /\n    ``orcho_run_evidence`` on a provider-access failure.\n\n    ``profile=None`` (default): inherit the original run's profile from\n    ``meta.profile``. This is the right default for most callers —\n    review and final-acceptance prompt envelopes depend on the active\n    profile (``feature`` carries the full plan/validate envelope;\n    leaner scoped profiles do not), and resuming under a different\n    profile silently changes which prompt parts the reviewer agent\n    sees. Runs without a recorded profile fall back to the semantic\n    default ``\"feature\"``.\n\n    ``profile=\"<name>\"`` is a deliberate profile switch — e.g. pass\n    ``\"small_task\"`` for a lean scoped continuation, or ``\"planning\"``\n    to refine the plan only.\n\n    For a retained-change correction, use ``operator_intent='followup'`` with\n    a non-empty ``operator_comment`` to launch the correction child, or\n    ``operator_intent='exit'`` to decline without mutating the parent. A bare\n    correction request returns (or elicits) this same typed input. Its distinct\n    outcomes are ``operator_input_required``, ``followup_started``, ``exit``,\n    and ``blocked``; profile and runtime overrides do not alter that child.\n\n    A pre-flight guard classifies the run before spawning, so the typed\n    ``resume_outcome`` carries one of these outcomes (the success\n    ``outputSchema`` is unchanged — an inspect-only run is signalled via a\n    typed error, see below, never as a success member):\n\n    - ``applied`` (:class:`RunResumeResult`) — a resumable run (running\n      restart / ``failed`` / ``interrupted`` / non-terminal ``halted``)\n      spawned a fresh subprocess; ``pid`` / ``run_dir`` / ``started_at`` /\n      ``command`` are populated. ``suggested_next_action`` is a ready\n      ``ready_call`` to ``orcho_run_watch`` (pre-filled with ``run_id``) so\n      the client can re-enter the watch loop on the resumed subprocess.\n    - ``pending_decision`` (:class:`ResumePendingDecisionResult`) — paused\n      on ``awaiting_phase_handoff`` with no recorded decision; resolve it\n      with ``orcho_phase_handoff_decide`` first, then resume.\n    - ``superseded_by_child`` (:class:`ResumeBlockedResult`) — a newer\n      unfinished follow-up child is continuing this run; resume that child\n      (``recommended_run_id``) instead of this parent. No subprocess spawns.\n    - ``rejected_terminal`` (:class:`ResumeBlockedResult`) — the run is\n      terminal; resuming is inert, so this is **not** success-shaped (no\n      ``pid``). Inspect via ``orcho_run_status`` / ``orcho_run_evidence``\n      instead. No subprocess spawns.\n\n    A run that was NOT started by this MCP server (no durable\n    ``mcp_supervisor.json`` with a resolvable ``project_dir`` —\n    ``control='inspect_only'`` on ``orcho_run_diagnose``) is refused BEFORE the\n    supervisor is touched: it raises ``InspectOnlyControlError`` rather than\n    returning, so the success ``outputSchema`` above is unchanged. MCP cannot\n    resume such a foreign / CLI-started run; manage it through the CLI that\n    started it and, from MCP, inspect it via ``orcho_run_status`` /\n    ``orcho_run_evidence``. Read the typed ``control`` / ``control_reason``\n    classification first with ``orcho_run_diagnose``.\n\n    Errors:\n      - InspectOnlyControlError — the run is ``inspect_only`` (not started by\n        this MCP server); resume is refused before any spawn. The carried\n        ``result`` holds the typed read-only next actions.\n      - RunNotFoundError — only when ``run_id`` is genuinely unresolvable /\n        corrupt (a foreign run dir is classified ``inspect_only`` above, not\n        raised).\n    ",
       "inputSchema": {
         "$defs": {
           "RuntimeOverrideArg": {
@@ -7033,6 +7100,34 @@
           }
         },
         "properties": {
+          "operator_comment": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Operator Comment"
+          },
+          "operator_intent": {
+            "anyOf": [
+              {
+                "enum": [
+                  "followup",
+                  "exit"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Operator Intent"
+          },
           "profile": {
             "anyOf": [
               {
@@ -7070,6 +7165,190 @@
       "name": "orcho_run_resume",
       "outputSchema": {
         "$defs": {
+          "CorrectionBlockedResult": {
+            "description": "A retained-change correction cannot launch because continuity failed.",
+            "properties": {
+              "blocked": {
+                "const": true,
+                "default": true,
+                "title": "Blocked",
+                "type": "boolean"
+              },
+              "diff_source": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "worktree",
+                      "artifact",
+                      "none"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Diff Source"
+              },
+              "kind": {
+                "const": "correction_blocked",
+                "default": "correction_blocked",
+                "title": "Kind",
+                "type": "string"
+              },
+              "reason": {
+                "title": "Reason",
+                "type": "string"
+              },
+              "resume_outcome": {
+                "const": "blocked",
+                "default": "blocked",
+                "title": "Resume Outcome",
+                "type": "string"
+              },
+              "run_id": {
+                "title": "Run Id",
+                "type": "string"
+              }
+            },
+            "required": [
+              "run_id",
+              "reason"
+            ],
+            "title": "CorrectionBlockedResult",
+            "type": "object"
+          },
+          "CorrectionExitResult": {
+            "description": "The operator deliberately declined a retained-change follow-up.",
+            "properties": {
+              "message": {
+                "title": "Message",
+                "type": "string"
+              },
+              "resume_outcome": {
+                "const": "exit",
+                "default": "exit",
+                "title": "Resume Outcome",
+                "type": "string"
+              },
+              "run_id": {
+                "title": "Run Id",
+                "type": "string"
+              }
+            },
+            "required": [
+              "run_id",
+              "message"
+            ],
+            "title": "CorrectionExitResult",
+            "type": "object"
+          },
+          "CorrectionFollowupStartedResult": {
+            "description": "A retained-change correction child launched through MCP.",
+            "properties": {
+              "command": {
+                "description": "Subprocess argv (for diagnostics — clients should not need to inspect).",
+                "items": {
+                  "type": "string"
+                },
+                "title": "Command",
+                "type": "array"
+              },
+              "next_actions": {
+                "description": "Suggested follow-up tool calls. After a successful ``orcho_run_start`` spawn this carries a single ready ``ready_call`` to ``orcho_run_watch`` (``args`` pre-filled with ``run_id``), so the client can enter the watch loop immediately and be woken on the next event / phase change / handoff / terminal. The applied ``orcho_run_resume`` shape (:class:`RunResumeResult`) carries its ready watch pointer on ``suggested_next_action`` instead and leaves this list empty.",
+                "items": {
+                  "$ref": "#/$defs/NextActionRecord"
+                },
+                "title": "Next Actions",
+                "type": "array"
+              },
+              "parent_run_id": {
+                "title": "Parent Run Id",
+                "type": "string"
+              },
+              "pid": {
+                "title": "Pid",
+                "type": "integer"
+              },
+              "project_dir": {
+                "title": "Project Dir",
+                "type": "string"
+              },
+              "resume_outcome": {
+                "const": "followup_started",
+                "default": "followup_started",
+                "title": "Resume Outcome",
+                "type": "string"
+              },
+              "run_dir": {
+                "title": "Run Dir",
+                "type": "string"
+              },
+              "run_id": {
+                "title": "Run Id",
+                "type": "string"
+              },
+              "started_at": {
+                "title": "Started At",
+                "type": "string"
+              },
+              "suggested_next_action": {
+                "$ref": "#/$defs/NextActionRecord"
+              }
+            },
+            "required": [
+              "run_id",
+              "run_dir",
+              "pid",
+              "started_at",
+              "project_dir",
+              "command",
+              "parent_run_id",
+              "suggested_next_action"
+            ],
+            "title": "CorrectionFollowupStartedResult",
+            "type": "object"
+          },
+          "CorrectionOperatorInputRequiredResult": {
+            "description": "A correction resume needs an explicit operator decision before spawn.",
+            "properties": {
+              "kind": {
+                "const": "operator_input_required",
+                "default": "operator_input_required",
+                "title": "Kind",
+                "type": "string"
+              },
+              "next_actions": {
+                "items": {
+                  "$ref": "#/$defs/NextActionRecord"
+                },
+                "title": "Next Actions",
+                "type": "array"
+              },
+              "reason": {
+                "title": "Reason",
+                "type": "string"
+              },
+              "resume_outcome": {
+                "const": "operator_input_required",
+                "default": "operator_input_required",
+                "title": "Resume Outcome",
+                "type": "string"
+              },
+              "run_id": {
+                "title": "Run Id",
+                "type": "string"
+              }
+            },
+            "required": [
+              "run_id",
+              "reason",
+              "next_actions"
+            ],
+            "title": "CorrectionOperatorInputRequiredResult",
+            "type": "object"
+          },
           "NextActionRecord": {
             "description": "One suggested follow-up tool call surfaced in tool responses.\n\nWorkflow-decision responses carry these records so the LLM does not\nhave to remember workflow patterns from documentation; the suggested\nnext steps ride in the payload.\n\nMirrors :class:`sdk.actions.Action` on the orcho-core side. The base\npass-through (``intent``/``tool``/``args``/``optional``) stays\nstate-derived and drift-free; the ``kind`` family below is MCP-wire\nenrichment computed entirely on the MCP side from state the server\nalready has, so it requires no new data from the core and the\ndefaults reproduce the historical pass-through record exactly.\n\nCall-readiness invariant (checked via the typed ``kind`` field, never\nby parsing ``intent``):\n\n- ``kind='ready_call'`` ⇒ ``args`` already contains every required\n  parameter of the target tool's actual signature (e.g.\n  ``orcho_run_resume`` ⇒ ``args`` has ``run_id``;\n  ``orcho_phase_handoff_decide`` ⇒ ``args`` has ``action`` and, where\n  the chosen verb mandates it, ``feedback``). The record is safe to\n  forward verbatim.\n- ``kind='operator_input_required'`` ⇒ the final decision args MAY be\n  omitted, but ONLY when ``choices`` and/or ``input_schema`` are\n  present to tell the operator what input is still needed.\n\n``intent`` stays human-readable and is NOT a contractual signal.",
             "properties": {
@@ -7106,7 +7385,7 @@
                   }
                 ],
                 "default": null,
-                "description": "Structured, machine-readable recovery context for this action that is NOT a parameter of the target tool (so it must not ride in ``args``), yet a typed client needs to branch on it. The from_run_plan follow-up after a rejected final acceptance carries here the parent's retained ``diff_path`` and its ``project_dir`` / ``retained_worktree`` checkout context, plus the ``from_run_plan`` parent id. Read these typed keys — never the ``intent`` prose — for the diff/worktree pointers. ``None`` (default) when the action carries no extra context.",
+                "description": "Structured, machine-readable recovery context for this action that is NOT a parameter of the target tool (so it must not ride in ``args``), yet a typed client needs to branch on it. A retained-change correction records its durable continuation facts here (subject, blocked state, diff source, and reason). Read these typed keys — never the ``intent`` prose. ``None`` (default) when the action carries no extra context.",
                 "title": "Context"
               },
               "input_schema": {
@@ -7413,6 +7692,18 @@
               },
               {
                 "$ref": "#/$defs/ResumePendingDecisionResult"
+              },
+              {
+                "$ref": "#/$defs/CorrectionFollowupStartedResult"
+              },
+              {
+                "$ref": "#/$defs/CorrectionOperatorInputRequiredResult"
+              },
+              {
+                "$ref": "#/$defs/CorrectionExitResult"
+              },
+              {
+                "$ref": "#/$defs/CorrectionBlockedResult"
               }
             ],
             "title": "Result"
@@ -7621,7 +7912,7 @@
                   }
                 ],
                 "default": null,
-                "description": "Structured, machine-readable recovery context for this action that is NOT a parameter of the target tool (so it must not ride in ``args``), yet a typed client needs to branch on it. The from_run_plan follow-up after a rejected final acceptance carries here the parent's retained ``diff_path`` and its ``project_dir`` / ``retained_worktree`` checkout context, plus the ``from_run_plan`` parent id. Read these typed keys — never the ``intent`` prose — for the diff/worktree pointers. ``None`` (default) when the action carries no extra context.",
+                "description": "Structured, machine-readable recovery context for this action that is NOT a parameter of the target tool (so it must not ride in ``args``), yet a typed client needs to branch on it. A retained-change correction records its durable continuation facts here (subject, blocked state, diff source, and reason). Read these typed keys — never the ``intent`` prose. ``None`` (default) when the action carries no extra context.",
                 "title": "Context"
               },
               "input_schema": {
@@ -8301,7 +8592,7 @@
                   }
                 ],
                 "default": null,
-                "description": "Structured, machine-readable recovery context for this action that is NOT a parameter of the target tool (so it must not ride in ``args``), yet a typed client needs to branch on it. The from_run_plan follow-up after a rejected final acceptance carries here the parent's retained ``diff_path`` and its ``project_dir`` / ``retained_worktree`` checkout context, plus the ``from_run_plan`` parent id. Read these typed keys — never the ``intent`` prose — for the diff/worktree pointers. ``None`` (default) when the action carries no extra context.",
+                "description": "Structured, machine-readable recovery context for this action that is NOT a parameter of the target tool (so it must not ride in ``args``), yet a typed client needs to branch on it. A retained-change correction records its durable continuation facts here (subject, blocked state, diff source, and reason). Read these typed keys — never the ``intent`` prose. ``None`` (default) when the action carries no extra context.",
                 "title": "Context"
               },
               "input_schema": {
@@ -8562,10 +8853,12 @@
               "continuation_subject": {
                 "description": "The typed durable subject this run's continuation should act on.",
                 "enum": [
+                  "checkpoint",
                   "source_run_checkpoint",
                   "active_child_run",
                   "delivery_gate",
                   "plan_artifact",
+                  "retained_change",
                   "none",
                   "unknown"
                 ],
@@ -9536,7 +9829,7 @@
                   }
                 ],
                 "default": null,
-                "description": "Structured, machine-readable recovery context for this action that is NOT a parameter of the target tool (so it must not ride in ``args``), yet a typed client needs to branch on it. The from_run_plan follow-up after a rejected final acceptance carries here the parent's retained ``diff_path`` and its ``project_dir`` / ``retained_worktree`` checkout context, plus the ``from_run_plan`` parent id. Read these typed keys — never the ``intent`` prose — for the diff/worktree pointers. ``None`` (default) when the action carries no extra context.",
+                "description": "Structured, machine-readable recovery context for this action that is NOT a parameter of the target tool (so it must not ride in ``args``), yet a typed client needs to branch on it. A retained-change correction records its durable continuation facts here (subject, blocked state, diff source, and reason). Read these typed keys — never the ``intent`` prose. ``None`` (default) when the action carries no extra context.",
                 "title": "Context"
               },
               "input_schema": {
@@ -10648,7 +10941,7 @@
                   }
                 ],
                 "default": null,
-                "description": "Structured, machine-readable recovery context for this action that is NOT a parameter of the target tool (so it must not ride in ``args``), yet a typed client needs to branch on it. The from_run_plan follow-up after a rejected final acceptance carries here the parent's retained ``diff_path`` and its ``project_dir`` / ``retained_worktree`` checkout context, plus the ``from_run_plan`` parent id. Read these typed keys — never the ``intent`` prose — for the diff/worktree pointers. ``None`` (default) when the action carries no extra context.",
+                "description": "Structured, machine-readable recovery context for this action that is NOT a parameter of the target tool (so it must not ride in ``args``), yet a typed client needs to branch on it. A retained-change correction records its durable continuation facts here (subject, blocked state, diff source, and reason). Read these typed keys — never the ``intent`` prose. ``None`` (default) when the action carries no extra context.",
                 "title": "Context"
               },
               "input_schema": {

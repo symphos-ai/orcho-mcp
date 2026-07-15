@@ -67,6 +67,10 @@ from orcho_mcp.run_control.typed_pilot import (
 )
 from orcho_mcp.schemas import (
     CancelResult,
+    CorrectionBlockedResult,
+    CorrectionExitResult,
+    CorrectionFollowupStartedResult,
+    CorrectionOperatorInputRequiredResult,
     DeliveryDecideResult,
     DeliveryGateProjection,
     EventsTailResult,
@@ -975,7 +979,10 @@ async def orcho_run_resume(
     run_id: str,
     profile: str | None = None,
     runtime_override: RuntimeOverrideArg | None = None,
-) -> RunResumeResult | ResumeBlockedResult | ResumePendingDecisionResult:
+    operator_intent: Literal["followup", "exit"] | None = None,
+    operator_comment: str | None = None,
+    ctx: Context | None = None,
+) -> RunResumeResult | ResumeBlockedResult | ResumePendingDecisionResult | CorrectionFollowupStartedResult | CorrectionOperatorInputRequiredResult | CorrectionExitResult | CorrectionBlockedResult:
     """Continue an interrupted run by spawning a new pipeline subprocess
     that loads the existing checkpoint via ``--resume``.
 
@@ -1005,6 +1012,13 @@ async def orcho_run_resume(
     ``profile="<name>"`` is a deliberate profile switch — e.g. pass
     ``"small_task"`` for a lean scoped continuation, or ``"planning"``
     to refine the plan only.
+
+    For a retained-change correction, use ``operator_intent='followup'`` with
+    a non-empty ``operator_comment`` to launch the correction child, or
+    ``operator_intent='exit'`` to decline without mutating the parent. A bare
+    correction request returns (or elicits) this same typed input. Its distinct
+    outcomes are ``operator_input_required``, ``followup_started``, ``exit``,
+    and ``blocked``; profile and runtime overrides do not alter that child.
 
     A pre-flight guard classifies the run before spawning, so the typed
     ``resume_outcome`` carries one of these outcomes (the success
@@ -1047,7 +1061,12 @@ async def orcho_run_resume(
         raised).
     """
     return await resume_run(
-        run_id, profile=profile, runtime_override=runtime_override,
+        run_id,
+        profile=profile,
+        runtime_override=runtime_override,
+        operator_intent=operator_intent,
+        operator_comment=operator_comment,
+        ctx=ctx,
     )
 
 

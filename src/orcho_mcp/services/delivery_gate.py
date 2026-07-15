@@ -373,68 +373,6 @@ def held_diff_path(run_id: str) -> str | None:
         return None
 
 
-def is_correction_followup_state(
-    state_kind: str, available_action_names: tuple[str, ...] | list[str],
-) -> bool:
-    """True for a correction gate whose ``fix`` is already decided / dead-ended.
-
-    orcho-core's ``delivery_decision_state`` returns ``kind='correction'``
-    with ``fix`` no longer available once the correction was requested (or the run
-    auto-refused a rejected release): repeating ``fix`` is inert and the real next
-    step is a from_run_plan follow-up. A freshly defer-parked rejected gate still
-    offers ``fix`` (the actionable operator decision) and is NOT this state.
-    """
-    return state_kind == "correction" and "fix" not in available_action_names
-
-
-def build_followup_next_action(
-    run_id: str,
-    project_dir: str | None,
-    diff_path: str | None,
-    retained_worktree: str | None = None,
-) -> NextActionRecord:
-    """Ready ``orcho_run_start`` from_run_plan follow-up carrying the held diff.
-
-    The actionable step for a correction whose ``fix`` was already requested (or a
-    rejected dead-end) is a NEW run that carries the parent's plan forward via
-    ``from_run_plan``. The parent's retained ``diff.patch`` and its
-    checkout context are NOT ``orcho_run_start`` parameters, so they never ride in
-    ``args`` (which stays forwardable verbatim, holding only real tool
-    parameters). They are published instead as the typed, machine-readable
-    ``context`` block — ``from_run_plan`` / ``diff_path`` / ``project_dir`` /
-    ``retained_worktree`` — so a typed client reads the diff/worktree pointers
-    from structured keys, never from the ``intent`` prose.
-
-    Shared by the delivery-gate projection and the run-diagnosis wire so both
-    surfaces emit a byte-identical typed action.
-    """
-    diff_ctx = (
-        f" The parent's retained diff is at {diff_path}." if diff_path else ""
-    )
-    args: dict[str, Any] = {"from_run_plan": run_id, "profile": "feature"}
-    if project_dir:
-        args["project_dir"] = project_dir
-    context: dict[str, Any] = {"from_run_plan": run_id}
-    if diff_path:
-        context["diff_path"] = diff_path
-    if project_dir:
-        context["project_dir"] = project_dir
-    if retained_worktree:
-        context["retained_worktree"] = retained_worktree
-    return NextActionRecord(
-        intent=(
-            f"Start a from_run_plan follow-up of run {run_id} to deliver the "
-            "requested correction: it carries the parent's plan forward as a "
-            f"fresh run.{diff_ctx} A bare resume or a repeated fix is inert."
-        ),
-        tool="orcho_run_start",
-        args=args,
-        optional=False,
-        kind="ready_call",
-        context=context,
-    )
-
-
 def _gate_kind_from_state(kind: str) -> str:
     """Map SDK state kind to the MCP projection kind."""
     if kind == "delivery":
@@ -479,7 +417,7 @@ def _superseded_child(meta: dict) -> str | None:
     """Child run id from a durable ``superseded_by_followup`` marker, else None.
 
     orcho-core's finalization stamps ``superseded_by_followup`` on a
-    rejected-FA / correction parent once a from_run_plan follow-up child has
+    rejected-FA / correction parent once a correction follow-up child has
     delivered, settling the parent to ``done`` and evicting its phantom gate.
     """
     marker = meta.get("superseded_by_followup") if isinstance(meta, dict) else None
@@ -494,7 +432,7 @@ def _direct_message(
     """Message for a non-gate (direct checkout / running / terminal) run."""
     if superseded_child:
         return (
-            "This run was superseded by a successful from_run_plan follow-up "
+            "This run was superseded by a successful correction follow-up "
             f"({superseded_child}); its correction is closed and no delivery "
             "gate is pending. Inspect the follow-up child for the delivered "
             "change — do not act on this parent's old release blockers."
@@ -554,6 +492,16 @@ def project_delivery_gate(run_id: str) -> DeliveryGateProjection:
     meta = get_run_meta_raw(run_id) or {}
     if not isinstance(meta, dict):
         meta = {}
+    from orcho_mcp.services.continuation import (
+        correction_resume_action,
+        resolve_core_continuation,
+    )
+    try:
+        continuation = resolve_core_continuation(run_id)
+    except Exception:
+        # A supplemental continuation read must not make the established gate
+        # projection unavailable when a legacy/corrupt run cannot be resolved.
+        continuation = None
 
     cd = _extract_commit_delivery(meta)
     status = _extract_status(cd)
@@ -611,25 +559,24 @@ def project_delivery_gate(run_id: str) -> DeliveryGateProjection:
     available_action_names = tuple(str(a) for a in state.available_actions)
     scope_disclosure, scope_blocker = _scope_fields(state)
 
-    # Correction-followup contract: a correction whose ``fix`` was already requested (only ``halt``
-    # left) is no longer a "choose a delivery decide" gate — the actionable next
-    # step is a from_run_plan follow-up carrying the retained diff. Surface that
-    # typed ``orcho_run_start`` action FIRST, ahead of the residual ``halt``
-    # decide call, so the gate never advertises an inert fix repeat.
     next_actions = _ready_next_actions(run_id, available_action_names)
-    if is_correction_followup_state(state.kind, available_action_names):
-        next_actions = [
-            build_followup_next_action(
-                run_id,
-                _target_checkout(meta, cd),
-                held_diff_path(run_id),
-                _retained_worktree(meta, cd),
-            ),
-            *next_actions,
-        ]
+    correction_action = (
+        correction_resume_action(continuation) if continuation is not None else None
+    )
+    if correction_action is not None:
+        next_actions = [correction_action]
 
     return DeliveryGateProjection(
         run_id=run_id,
+        continuation_subject=(
+            continuation.continuation_subject if continuation is not None else None
+        ),
+        recommended_next_action=(
+            continuation.recommended_next_action if continuation is not None else None
+        ),
+        continuation_blocked=(continuation.blocked if continuation is not None else None),
+        diff_source=(continuation.diff_source if continuation is not None else None),
+        continuation_reason=(continuation.reason if continuation is not None else None),
         kind=kind,
         release=release,
         target_checkout=_target_checkout(meta, cd),
@@ -735,9 +682,7 @@ def delivery_disposition(run_id: str) -> DeliveryDisposition:
 
 __all__ = [
     "DeliveryDisposition",
-    "build_followup_next_action",
     "delivery_disposition",
     "held_diff_path",
-    "is_correction_followup_state",
     "project_delivery_gate",
 ]
