@@ -155,7 +155,6 @@ PLUGIN = {
                 "before_phase": "implement",
                 "gate_sets": ["baseline"],
                 "policy": "warn",
-                "action": "continue_warn",
             },
             {
                 "after_phase": "implement",
@@ -172,7 +171,6 @@ PLUGIN = {
                 "before_delivery": True,
                 "gate_sets": ["baseline", "mcp-runtime", "mcp-smoke"],
                 "policy": "warn",
-                "action": "handoff",
             },
         ],
     },
