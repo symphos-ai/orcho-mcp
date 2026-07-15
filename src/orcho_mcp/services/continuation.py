@@ -23,7 +23,7 @@ CORRECTION_RESUME_INPUT_SCHEMA = {
 
 
 def resolve_core_continuation(run_id: str):
-    from pipeline.control.continuation import resolve_continuation_decision
+    from sdk import resolve_continuation_decision
 
     run_dir = find_run_dir(run_id)
     raw = get_run_meta_raw(run_id) or {}
