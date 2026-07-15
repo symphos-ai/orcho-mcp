@@ -159,7 +159,7 @@ def anyio_backend():
 #
 # orcho-core has no non-interactive mock profile that reliably PARKS a run at a
 # rejected delivery gate or rejects final_acceptance (documented above), and the
-# cross-run supersede needs a real from_run_plan child to deliver — multi-run
+# cross-run supersede needs a real ordinary correction child to deliver — multi-run
 # orchestration the single-spawn mock harness cannot drive. So, mirroring the
 # existing precedent (the parking case is covered against synthetic runs), this
 # scenario smoke drives the FULL contract through the actual MCP/core state
@@ -180,6 +180,7 @@ def _rejected_final_acceptance_meta(
     return meta(
         status="halted",
         project=project_path,
+        worktree={"isolation": "per_run", "path": source_path},
         halt_reason="final_acceptance_rejected",
         halt={"reason": "final_acceptance_rejected", "phase": "final_acceptance"},
         rejected_outcome={
@@ -223,19 +224,29 @@ def _seed_dirty_git_project(path):
 def _followup_child_run(workspace, *, parent_run_id: str, child_run_id: str):
     child_dir = workspace / "runspace" / "runs" / child_run_id
     child_dir.mkdir(parents=True)
+    (child_dir / "correction_context.md").write_text(
+        "# Correction context\n\nOperator comment: fix the rejected release.\n",
+        encoding="utf-8",
+    )
     return SimpleNamespace(
         output_dir=child_dir,
-        state=SimpleNamespace(extras={"plan_source_run_id": parent_run_id}),
-        session={"status": "done", "commit_delivery": {"status": "committed"}},
+        state=SimpleNamespace(extras={"parent_run_id": parent_run_id}),
+        session={
+            "status": "done",
+            "resume_mode": "followup",
+            "parent_run_id": parent_run_id,
+            "profile": "correction",
+            "commit_delivery": {"status": "committed"},
+        },
         session_ts=child_run_id,
     )
 
 
 def test_correction_followup_then_supersede_scenario(fake_workspace):
-    """rejected-FA → fix → from_run_plan follow-up → supersede, end-to-end.
+    """rejected-FA → fix → ordinary correction follow-up → supersede.
 
     Asserts all four surfaces stay consistent across the two transitions:
-    after fix, diagnose + delivery_gate emit the typed from_run_plan action and
+    after fix, diagnose + delivery_gate emit the typed resume-input action and
     live_status reports resume inert; after supersede, the parent reads
     closed/superseded everywhere with no active correction and no authoritative
     old blockers.
@@ -254,7 +265,9 @@ def test_correction_followup_then_supersede_scenario(fake_workspace):
     parent = "20260101_000001"
     child = "20260101_000002"
     project = fake_workspace / "repo"
-    _seed_dirty_git_project(project)
+    retained = fake_workspace / "retained-worktree"
+    project.mkdir()
+    _seed_dirty_git_project(retained)
 
     write_run(
         fake_workspace,
@@ -262,7 +275,7 @@ def test_correction_followup_then_supersede_scenario(fake_workspace):
         meta=_rejected_final_acceptance_meta(
             parent,
             project_path=str(project),
-            source_path=str(project),
+            source_path=str(retained),
         ),
         diff_patch="diff --git a/src/a.py b/src/a.py\n",
     )
@@ -285,35 +298,37 @@ def test_correction_followup_then_supersede_scenario(fake_workspace):
     gate = project_delivery_gate(parent)
     assert gate.kind == "correction_decision_required"
     assert [a.action for a in gate.available_actions] == ["halt"]
-    gate_starts = [na for na in gate.next_actions if na.tool == "orcho_run_start"]
-    assert len(gate_starts) == 1
-    assert gate_starts[0].args["from_run_plan"] == parent
-    # The retained diff path rides as typed, machine-readable ``context`` — not
-    # only as (non-contractual) intent prose.
-    gate_ctx = gate_starts[0].context or {}
-    assert gate_ctx.get("from_run_plan") == parent
-    assert str(gate_ctx.get("diff_path", "")).endswith("diff.patch")
+    gate_resumes = [na for na in gate.next_actions if na.tool == "orcho_run_resume"]
+    assert len(gate_resumes) == 1
+    assert gate_resumes[0].args == {"run_id": parent}
+    assert gate_resumes[0].kind == "operator_input_required"
+    assert gate_resumes[0].choices == ["followup", "exit"]
+    gate_ctx = gate_resumes[0].context or {}
+    assert gate_ctx.get("continuation_subject") == "retained_change"
+    assert gate_ctx.get("diff_source") == "worktree"
+    assert "from_run_plan" not in gate_resumes[0].model_dump_json()
 
     diag = project_run_diagnosis(parent)
     assert diag.condition == "correction_followup_required"
     assert diag.recommended_next_action == "start_followup"
     assert diag.followup_diff_path is not None
-    # The diagnose wire emits the same typed action with the same machine-readable
-    # context, so a typed client gets the diff pointer from both surfaces.
-    diag_starts = [
+    # The diagnose wire emits the same typed input action and retained subject.
+    diag_resumes = [
         na for na in inspect_run_diagnosis(parent).next_actions
-        if na.tool == "orcho_run_start"
+        if na.tool == "orcho_run_resume"
     ]
-    assert len(diag_starts) == 1
-    diag_ctx = diag_starts[0].context or {}
-    assert diag_ctx.get("from_run_plan") == parent
-    assert str(diag_ctx.get("diff_path", "")).endswith("diff.patch")
+    assert len(diag_resumes) == 1
+    assert diag_resumes[0].args == {"run_id": parent}
+    diag_ctx = diag_resumes[0].context or {}
+    assert diag_ctx.get("continuation_subject") == "retained_change"
+    assert diag_ctx.get("diff_source") == "worktree"
+    assert "from_run_plan" not in diag_resumes[0].model_dump_json()
 
     card = build_run_live_status(parent)
     assert card.terminal is not None
     assert card.terminal.resume_meaningful is False
 
-    # ── transition 2: from_run_plan child delivered → parent superseded ─────
+    # ── transition 2: correction child delivered → parent superseded ────────
     _supersede_parent_correction_after_followup(
         _followup_child_run(fake_workspace, parent_run_id=parent, child_run_id=child),
     )

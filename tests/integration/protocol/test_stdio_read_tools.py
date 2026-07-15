@@ -24,6 +24,7 @@ pytest.importorskip("mcp.client.stdio")
 
 from tests.fixtures.mcp_workspace import (  # noqa: E402
     in_workspace_project,
+    init_git_repo,
     write_run,
 )
 from tests.fixtures.stdio import initialized_stdio_session  # noqa: E402
@@ -455,6 +456,121 @@ async def test_stdio_delivery_gate_correction_call_tool(fake_workspace):
         assert na.requires_operator_input is False
         assert na.tool == "orcho_delivery_decide"
         assert na.args["run_id"] == "20260101_000001"
+
+
+@pytest.mark.anyio
+async def test_stdio_retained_change_resume_requires_repeatable_input(fake_workspace):
+    """L3: no-elicitation clients receive the typed correction form to replay."""
+    worktree = fake_workspace / "retained"
+    init_git_repo(worktree)
+    (worktree / "retained.py").write_text("changed = True\n", encoding="utf-8")
+    write_run(
+        fake_workspace, "20260101_000099",
+        meta={
+            "project": "/repo/checkout", "status": "halted", "task": "fix",
+            "halt_reason": "commit_decision_fix",
+            "worktree": {"isolation": "worktree", "path": str(worktree)},
+            "commit_delivery": {
+                "status": "fix_requested", "action": "fix",
+                "release_verdict": "REJECTED", "changed_paths": ["retained.py"],
+            },
+        },
+        commit_decision={"action": "fix", "commit_status": "fix_requested"},
+    )
+
+    async with initialized_stdio_session(fake_workspace) as (session, _):
+        result = await session.call_tool("orcho_run_resume", {"run_id": "20260101_000099"})
+
+    assert result.isError is False
+    payload = result.structuredContent
+    assert payload is not None
+    payload = payload["result"]
+    assert payload["resume_outcome"] == "operator_input_required"
+    [action] = payload["next_actions"]
+    assert action["tool"] == "orcho_run_resume"
+    assert action["args"] == {"run_id": "20260101_000099"}
+    assert action["choices"] == ["followup", "exit"]
+    assert "from_run_plan" not in str(payload)
+
+
+@pytest.mark.anyio
+async def test_stdio_retained_change_elicitation_decline_returns_typed_input(fake_workspace):
+    """L3: a form-capable client receives the correction schema and may decline."""
+    from mcp import ClientSession, StdioServerParameters, types as mcp_types
+    from mcp.client.stdio import stdio_client
+
+    from tests.fixtures.stdio import _build_server_params
+
+    worktree = fake_workspace / "retained-elicitation"
+    init_git_repo(worktree)
+    (worktree / "retained.py").write_text("changed = True\n", encoding="utf-8")
+    write_run(
+        fake_workspace, "20260101_000100",
+        meta={
+            "project": "/repo/checkout", "status": "halted", "task": "fix",
+            "halt_reason": "commit_decision_fix",
+            "worktree": {"isolation": "worktree", "path": str(worktree)},
+            "commit_delivery": {"status": "fix_requested", "action": "fix", "release_verdict": "REJECTED"},
+        },
+        commit_decision={"action": "fix", "commit_status": "fix_requested"},
+    )
+    requests: list[mcp_types.ElicitRequestParams] = []
+
+    async def callback(_ctx, params):
+        requests.append(params)
+        return mcp_types.ElicitResult(action="decline")
+
+    params: StdioServerParameters = _build_server_params(fake_workspace)
+    async with stdio_client(params) as (read, write), ClientSession(
+        read, write, elicitation_callback=callback,
+    ) as session:
+        await session.initialize()
+        result = await session.call_tool("orcho_run_resume", {"run_id": "20260101_000100"})
+
+    assert result.isError is False
+    payload = result.structuredContent
+    assert payload is not None
+    assert payload["result"]["resume_outcome"] == "operator_input_required"
+    assert len(requests) == 1
+    schema = requests[0].requestedSchema
+    assert schema["properties"]["operator_intent"]["enum"] == ["followup", "exit"]
+    assert "operator_comment" in schema["properties"]
+
+
+@pytest.mark.anyio
+async def test_stdio_retained_change_elicitation_accepts_exit(fake_workspace):
+    """L3: form acceptance reaches the shared correction executor without spawn."""
+    from mcp import ClientSession, types as mcp_types
+    from mcp.client.stdio import stdio_client
+
+    from tests.fixtures.stdio import _build_server_params
+
+    worktree = fake_workspace / "retained-exit"
+    init_git_repo(worktree)
+    (worktree / "retained.py").write_text("changed = True\n", encoding="utf-8")
+    write_run(
+        fake_workspace, "20260101_000101",
+        meta={
+            "project": "/repo/checkout", "status": "halted", "task": "fix",
+            "halt_reason": "commit_decision_fix",
+            "worktree": {"isolation": "worktree", "path": str(worktree)},
+            "commit_delivery": {"status": "fix_requested", "action": "fix", "release_verdict": "REJECTED"},
+        },
+        commit_decision={"action": "fix", "commit_status": "fix_requested"},
+    )
+
+    async def callback(_ctx, _params):
+        return mcp_types.ElicitResult(action="accept", content={"operator_intent": "exit"})
+
+    async with stdio_client(_build_server_params(fake_workspace)) as (read, write), ClientSession(
+        read, write, elicitation_callback=callback,
+    ) as session:
+        await session.initialize()
+        result = await session.call_tool("orcho_run_resume", {"run_id": "20260101_000101"})
+
+    assert result.isError is False
+    assert result.structuredContent is not None
+    assert result.structuredContent["result"]["resume_outcome"] == "exit"
 
 
 @pytest.mark.anyio

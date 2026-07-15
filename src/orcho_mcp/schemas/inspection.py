@@ -962,6 +962,11 @@ class DeliveryGateProjection(BaseModel):
     ``orcho_delivery_decide`` per available action.
     """
     run_id: str
+    continuation_subject: str | None = None
+    recommended_next_action: str | None = None
+    continuation_blocked: bool | None = None
+    diff_source: Literal["worktree", "artifact", "none"] | None = None
+    continuation_reason: str | None = None
     kind: Literal[
         "delivery_decision_required",
         "correction_decision_required",

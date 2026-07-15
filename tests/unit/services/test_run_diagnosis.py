@@ -817,12 +817,11 @@ def test_projection_flags_correction_followup_over_terminal_halt(fake_workspace)
 
     d = project_run_diagnosis("20260101_000001")
 
-    assert d.condition == "correction_followup_required"
-    assert d.delivery_gate_kind == "correction_decision_required"
-    assert d.available_actions == ["halt"]
+    assert d.condition == "blocked_worktree"
+    assert d.delivery_gate_kind is None
+    assert d.available_actions == []
     assert d.recommended_next_action == "start_followup"
-    assert d.continuation_subject == "plan_artifact"
-    assert d.followup_project_dir == "/p/x"
+    assert d.continuation_subject == "retained_change"
 
 
 def test_diagnose_delivery_gate_points_to_gate_projection(fake_workspace):
@@ -889,10 +888,10 @@ def test_delivery_completed_gate_kind_points_to_gate_never_a_decision():
 # ── Correction-followup contract: correction_followup_required + superseded parent ───────────────
 
 
-def test_diagnose_correction_followup_emits_from_run_plan_action(fake_workspace):
-    # After fix, diagnose surfaces a typed orcho_run_start from_run_plan action
-    # carrying the retained diff as context (not as a tool arg), and never a
-    # resume of this inert run.
+def test_diagnose_blocked_correction_never_emits_plan_promotion(fake_workspace):
+    # A retained diff artifact alone is insufficient: without an isolated
+    # retained worktree, correction remains typed-blocked and is never promoted
+    # to a from_run_plan child.
     write_run(
         fake_workspace, "20260101_000001",
         meta=meta(
@@ -907,24 +906,10 @@ def test_diagnose_correction_followup_emits_from_run_plan_action(fake_workspace)
 
     diag = orcho_run_diagnose("20260101_000001")
 
-    assert diag.condition == "correction_followup_required"
+    assert diag.condition == "blocked_worktree"
     assert diag.recommended_next_action == "start_followup"
-    starts = [na for na in diag.next_actions if na.tool == "orcho_run_start"]
-    assert len(starts) == 1
-    assert starts[0].kind == "ready_call"
-    assert starts[0].requires_operator_input is False
-    assert starts[0].args["from_run_plan"] == "20260101_000001"
-    assert starts[0].args.get("project_dir") == "/p/x"
-    assert "action" not in starts[0].args
-    # The retained diff path + checkout context ride as typed, machine-readable
-    # ``context`` — NOT as prose in the (non-contractual) intent. A typed client
-    # reads the diff/worktree pointers from these structured keys.
-    ctx = starts[0].context or {}
-    assert ctx.get("from_run_plan") == "20260101_000001"
-    assert ctx.get("project_dir") == "/p/x"
-    assert str(ctx.get("diff_path", "")).endswith("diff.patch")
-    # Never a bare resume of the inert parent.
-    assert all(na.tool != "orcho_run_resume" for na in diag.next_actions)
+    assert diag.next_actions
+    assert all(na.tool != "orcho_run_start" for na in diag.next_actions)
 
 
 def _superseded_parent_meta():
@@ -976,6 +961,7 @@ def test_diagnose_superseded_parent_inspection_only(fake_workspace):
     assert all(na.tool != "orcho_run_resume" for na in diag.next_actions)
     for na in diag.next_actions:
         assert "from_run_plan" not in na.args
+    assert "from_run_plan" not in diag.model_dump_json()
     # The superseding child is the inspection subject.
     assert any(
         na.args.get("run_id") == "20260101_000002" for na in diag.next_actions

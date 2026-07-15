@@ -20,6 +20,9 @@ from __future__ import annotations
 
 from typing import Literal
 
+from mcp.server.fastmcp import Context
+from pydantic import BaseModel, Field, model_validator
+
 from orcho_mcp.errors import (
     InspectOnlyControlError,
     InvalidPlanError,
@@ -27,6 +30,10 @@ from orcho_mcp.errors import (
 )
 from orcho_mcp.schemas import (
     CancelResult,
+    CorrectionBlockedResult,
+    CorrectionExitResult,
+    CorrectionFollowupStartedResult,
+    CorrectionOperatorInputRequiredResult,
     InspectOnlyControlResult,
     NextActionRecord,
     ResumeBlockedResult,
@@ -42,6 +49,56 @@ from orcho_mcp.services.run_projection import (
     project_pending_handoff,
     project_run_diagnosis,
 )
+
+
+class _CorrectionResumeInput(BaseModel):
+    # FastMCP elicitation accepts primitive fields only. Keep this ``str`` at
+    # the transport boundary while publishing the same enum through its JSON
+    # Schema and validating the closed set below.
+    operator_intent: str = Field(json_schema_extra={"enum": ["followup", "exit"]})
+    operator_comment: str | None = Field(default=None, min_length=1)
+
+    @model_validator(mode="after")
+    def _require_comment_for_followup(self):
+        if self.operator_intent not in {"followup", "exit"}:
+            raise ValueError("operator_intent must be followup or exit")
+        if self.operator_intent == "followup" and not self.operator_comment:
+            raise ValueError("operator_comment is required for followup")
+        return self
+
+
+def _correction_input_result(run_id: str, reason: str) -> CorrectionOperatorInputRequiredResult:
+    from orcho_mcp.services.continuation import CORRECTION_RESUME_INPUT_SCHEMA
+    return CorrectionOperatorInputRequiredResult(
+        run_id=run_id,
+        reason=reason,
+        next_actions=[NextActionRecord(
+            intent="Choose whether to launch the retained-change correction follow-up.",
+            tool="orcho_run_resume",
+            args={"run_id": run_id},
+            optional=False,
+            kind="operator_input_required",
+            requires_operator_input=True,
+            choices=["followup", "exit"],
+            input_schema=CORRECTION_RESUME_INPUT_SCHEMA,
+        )],
+    )
+
+
+async def _elicit_correction_input(
+    ctx: Context | None,
+) -> tuple[str, str | None] | None:
+    from orcho_mcp.run_control.handoff import _client_supports_form_elicitation
+
+    if ctx is None or not _client_supports_form_elicitation(ctx):
+        return None
+    result = await ctx.elicit(
+        message="Choose whether to launch the correction follow-up.",
+        schema=_CorrectionResumeInput,
+    )
+    if result.action != "accept":
+        return None
+    return result.data.operator_intent, result.data.operator_comment
 
 
 def build_inspect_only_control_result(
@@ -481,7 +538,18 @@ async def resume_run(
     run_id: str,
     profile: str | None = None,
     runtime_override: RuntimeOverrideArg | None = None,
-) -> RunResumeResult | ResumeBlockedResult | ResumePendingDecisionResult:
+    operator_intent: Literal["followup", "exit"] | None = None,
+    operator_comment: str | None = None,
+    ctx: Context | None = None,
+) -> (
+    RunResumeResult
+    | ResumeBlockedResult
+    | ResumePendingDecisionResult
+    | CorrectionFollowupStartedResult
+    | CorrectionOperatorInputRequiredResult
+    | CorrectionExitResult
+    | CorrectionBlockedResult
+):
     """Continue an interrupted run via the supervisor's ``--resume`` path.
 
     See ``orcho_run_resume`` docstring in ``orcho_mcp.tools`` for the
@@ -536,7 +604,65 @@ async def resume_run(
     raises ``RunNotFoundError`` there), so the guard never adds a new
     failure surface.
     """
+    # This durable core classification intentionally precedes the MCP
+    # inspect-only gate: a CLI-created correction parent is inspect-only, but
+    # MCP may still launch a new, controllable sibling child for it.
+    from orcho_mcp.services.continuation import resolve_core_continuation
     from orcho_mcp.supervisor import get_supervisor
+    try:
+        continuation = resolve_core_continuation(run_id)
+    except OrchoMCPError:
+        continuation = None
+    if continuation is not None and continuation.continuation_subject == "retained_change":
+        if continuation.blocked:
+            if operator_intent == "exit":
+                return CorrectionExitResult(
+                    run_id=run_id,
+                    message="Correction follow-up declined; parent run was not modified.",
+                )
+            return CorrectionBlockedResult(
+                run_id=run_id,
+                diff_source=continuation.diff_source,
+                reason=continuation.reason,
+            )
+        if operator_intent is None:
+            elicited = await _elicit_correction_input(ctx)
+            if elicited is None:
+                return _correction_input_result(run_id, continuation.reason)
+            operator_intent, operator_comment = elicited
+        if operator_intent == "exit":
+            return CorrectionExitResult(
+                run_id=run_id,
+                message="Correction follow-up declined; parent run was not modified.",
+            )
+        if operator_intent != "followup" or not (operator_comment or "").strip():
+            return _correction_input_result(
+                run_id,
+                "followup requires a non-empty operator_comment",
+            )
+        supervisor = get_supervisor()
+        with map_command_errors():
+            handle = await supervisor.followup(
+                parent_run_id=run_id,
+                operator_comment=operator_comment,
+            )
+        return CorrectionFollowupStartedResult(
+            run_id=handle.run_id,
+            parent_run_id=run_id,
+            run_dir=str(handle.run_dir),
+            pid=handle.pid,
+            started_at=handle.started_at,
+            project_dir=handle.project_dir,
+            command=handle.command,
+            next_actions=[],
+            suggested_next_action=NextActionRecord(
+                intent="Watch the correction child.",
+                tool="orcho_run_watch",
+                args={"run_id": handle.run_id},
+                optional=True,
+                kind="ready_call",
+            ),
+        )
 
     diagnosis = _run_diagnosis_or_none(run_id)
     if diagnosis is not None:
