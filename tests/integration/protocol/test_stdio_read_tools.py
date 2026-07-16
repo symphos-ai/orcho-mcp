@@ -1012,6 +1012,112 @@ async def test_stdio_run_evidence_handoff_advice_empty_when_absent(fake_workspac
 
 
 @pytest.mark.anyio
+async def test_stdio_run_evidence_scheduled_gate_ledger(fake_workspace):
+    """Canonical scheduled-gate rows/events survive a real stdio round trip."""
+    from pipeline.verification_ledger import GateLedgerRow, GateTrailEvent
+    from pipeline.verification_ledger_store import ScheduledGateLedger, write_ledger
+
+    run_id = "20260101_000013"
+    project = in_workspace_project(fake_workspace, "ledger-project")
+    run_dir = write_run(
+        fake_workspace,
+        run_id,
+        meta={"project": project, "status": "done", "task": "ledger smoke"},
+        events=[_ev(1, kind="run.start"), _ev(2, kind="run.end")],
+    )
+    rows = (
+        GateLedgerRow(
+            gate="pytest -q",
+            hook="after_phase",
+            phase="implement",
+            timing="after_implement",
+            run_mode="auto",
+            gate_sets=(),
+            condition="always",
+            declared=True,
+            selectable=True,
+            selected=True,
+            execution_policy="require",
+            consequence="required_action",
+            executor="engine",
+            trigger="after_phase",
+        ),
+        GateLedgerRow(
+            gate="pytest -q",
+            hook="before_delivery",
+            phase="",
+            timing="delivery",
+            run_mode="auto",
+            gate_sets=(),
+            condition="always",
+            declared=True,
+            selectable=True,
+            selected=True,
+            execution_policy="warn",
+            consequence="warning",
+            executor="engine",
+            trigger="pre_final",
+        ),
+    )
+    ledger = ScheduledGateLedger(
+        rows,
+        trail=(
+            GateTrailEvent(
+                "pytest -q",
+                "after_phase",
+                "implement",
+                "execution",
+                "pass",
+                "completed",
+                "verification_receipts/pytest.json",
+            ),
+        ),
+    ).finalize()
+    write_ledger(run_dir, ledger)
+
+    async with initialized_stdio_session(fake_workspace) as (session, _):
+        catalog = await session.list_tools()
+        evidence_tool = next(
+            tool for tool in catalog.tools if tool.name == "orcho_run_evidence"
+        )
+        defs = evidence_tool.outputSchema["$defs"]
+        assert "ScheduledGateRowRecord" in defs
+        assert "ScheduledGateEventRecord" in defs
+        assert "VerificationGateCockpitRow" not in defs
+        result = await session.call_tool(
+            "orcho_run_evidence",
+            {"run_id": run_id, "slice": "verification_cockpit"},
+        )
+
+    assert result.isError is False
+    payload = result.structuredContent
+    assert payload is not None
+
+    from orcho_mcp.schemas import EvidenceResult
+
+    evidence = EvidenceResult.model_validate(payload)
+    cockpit = evidence.verification_cockpit
+    assert cockpit is not None
+    assert cockpit.schema_version == "1"
+    assert cockpit.finalized is True
+    assert [(row.command, row.hook, row.phase) for row in cockpit.rows] == [
+        ("pytest -q", "after_phase", "implement"),
+        ("pytest -q", "before_delivery", ""),
+    ]
+    assert [row.disposition for row in cockpit.rows] == [
+        "executed_pass",
+        "residual_missing",
+    ]
+    assert cockpit.rows[0].consequence == "required_action"
+    assert cockpit.rows[1].consequence == "warning"
+    assert cockpit.rows[0].receipt_evidence is not None
+    assert cockpit.rows[0].receipt_evidence.path == "verification_receipts/pytest.json"
+    assert [(event.kind, event.outcome, event.reason) for event in cockpit.events] == [
+        ("execution", "pass", "completed"),
+    ]
+
+
+@pytest.mark.anyio
 async def test_stdio_handoff_advice_tool_typed_error(fake_workspace):
     """``orcho_handoff_advice`` is registered and maps SDK errors over stdio.
 

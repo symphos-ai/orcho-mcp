@@ -49,23 +49,18 @@ a silent drop.
 - **correction requested** — `action == "fix"` (typically alongside a rejected
   release): the run is waiting for a fix decision.
 
-### approved-after-`gate_rerun` and inherited vs current receipts
+### approved-after-`gate_rerun` and receipt evidence
 
 A correction child re-run after a `gate_rerun` reads `release_verdict ==
 "approved"` from **its own** `commit_delivery` block — the parent's earlier
 rejection does not leak into the child's verdict.
 
-The delivery slice does **not** duplicate the verification receipts behind that
-approval. To explain which receipts were inherited from the parent run and which
-were produced by the current child, read them from two other slices:
-
-- `verification_timeline` — the `inherited` aggregate plus each gate's
-  `inherited` flag and `source_run_id` (the deciding receipt's origin run).
-- `receipts` — the per-subtask delivery receipts.
-
-So the captain answers "is this approval standing on the child's own work or on
-inherited receipts?" from `verification_timeline.inherited` + `receipts`, never
-from the delivery slice alone.
+The delivery slice does **not** duplicate the scheduled-gate evidence behind
+that approval. Read `verification_timeline` or `verification_cockpit` for each
+ledger row's `receipt_evidence` and the identity-scoped events that recorded it;
+read `receipts` for per-subtask delivery receipts. The row identity is always
+`(command, hook, phase)`, so the same command scheduled at two hooks remains
+two independently explainable facts.
 
 ## `correction` — fixed-point / non-convergence
 

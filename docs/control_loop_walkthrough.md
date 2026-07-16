@@ -300,8 +300,8 @@ for f in result.findings:
 | `sub_runs` | `list[SubRunLinkRecord]` — cross-run child aliases |
 | `receipts` | `list[SubtaskReceiptRecord]` — per-subtask delivery receipts (`subtask_dag`): state (`done`/`incomplete`/`failed`/`skipped`), done-criteria self-attestation (`criteria_report`, `attestation_summary`, `attestation_error`). An `incomplete` subtask did not close its done-criteria. |
 | `verification_receipts` | durable verification-environment receipts — interpreter, cwd, import checks, commands, clean-tree note, artifact_path |
-| `verification_timeline` | per-gate status (`PASS`/`FAIL`/`MISSING`/`STALE`/`SKIPPED`/`FRESH`), rerun hints, aggregates, auto-run events |
-| `verification_cockpit` | the typed cockpit view of the same gates — header + rows with hook/phase, trigger, policy, required, gate_class, status, env, receipt evidence |
+| `verification_timeline` | canonical scheduled-gate ledger: rows keyed by `command` / `hook` / `phase`, with declaration, selection, execution, disposition, receipt-evidence, and identity-scoped event facts |
+| `verification_cockpit` | the same canonical scheduled-gate ledger projection under the cockpit view name; rows and events are identical to `verification_timeline` |
 | `handoff_advice` | phase-handoff advisor records — handoff_id, phase, recommended vs applied action, confidence, resolved, outcome, token usage + cost, summary |
 | `scope_expansion` | scope-expansion audit — classification, category, evidence, has_blocker flag |
 | `delivery` | post-release commit-delivery outcome — release_verdict, decision_status, action, applied/committed/skipped/failed, commit_sha, halt_reason |

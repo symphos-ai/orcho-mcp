@@ -22,6 +22,7 @@ per-command detail), so this module reads the durable JSON artifacts
 under ``<run_dir>/verification_receipts/`` directly — the sanctioned
 fallback — without re-implementing the banned generic loaders.
 """
+
 from __future__ import annotations
 
 import json
@@ -68,7 +69,6 @@ from orcho_mcp.errors import (
     RunNotFoundError,
     WorkspaceNotResolvedError,
 )
-from orcho_mcp.inspection.verification_cockpit import build_verification_cockpit
 from orcho_mcp.schemas import (
     CorrectionSliceRecord,
     CriterionReportRecord,
@@ -84,15 +84,16 @@ from orcho_mcp.schemas import (
     HandoffAdviceUsageRecord,
     ImplementDeliveryRecord,
     PlanSliceRecord,
+    ReceiptEvidenceRecord,
+    ScheduledGateEventRecord,
+    ScheduledGateRowRecord,
     ScopeExpansionItemRecord,
     ScopeExpansionSliceRecord,
     SubRunLinkRecord,
     SubtaskReceiptRecord,
-    VerificationAutorunEventRecord,
     VerificationCheckRecord,
     VerificationCommandRecord,
     VerificationReceiptRecord,
-    VerificationTimelineGateRecord,
     VerificationTimelineRecord,
 )
 from orcho_mcp.services.delivery_gate import (
@@ -184,14 +185,10 @@ def _implement_whole_plan_delivered(meta: dict[str, Any]) -> bool:
         return False
     if not implement.get("output"):
         return False
-    if any(
-        implement.get(key) for key in ("guardrail_blocked", "failed", "error")
-    ):
+    if any(implement.get(key) for key in ("guardrail_blocked", "failed", "error")):
         return False
     imeta = implement.get("meta")
-    return not (
-        isinstance(imeta, dict) and _as_int(imeta.get("subtask_count")) > 0
-    )
+    return not (isinstance(imeta, dict) and _as_int(imeta.get("subtask_count")) > 0)
 
 
 def _phase_attempts(value: Any) -> list[dict[str, Any]]:
@@ -332,7 +329,8 @@ def _coerce_exit_code(raw: Any) -> int | None:
 
 
 def _project_verification_receipt(
-    data: dict[str, Any], artifact_path: Path,
+    data: dict[str, Any],
+    artifact_path: Path,
 ) -> VerificationReceiptRecord:
     """Project one parsed receipt dict into a typed record.
 
@@ -345,28 +343,38 @@ def _project_verification_receipt(
     for c in raw_checks if isinstance(raw_checks, list) else []:
         if not isinstance(c, dict):
             continue
-        checks.append(VerificationCheckRecord(
-            name=str(c.get("name", "")),
-            expected=_optional_str(c.get("expected")),
-            actual=_optional_str(c.get("actual")),
-            passed=bool(c.get("passed")),
-        ))
+        checks.append(
+            VerificationCheckRecord(
+                name=str(c.get("name", "")),
+                expected=_optional_str(c.get("expected")),
+                actual=_optional_str(c.get("actual")),
+                passed=bool(c.get("passed")),
+            )
+        )
 
     raw_commands = data.get("commands")
     commands: list[VerificationCommandRecord] = []
     for cm in raw_commands if isinstance(raw_commands, list) else []:
         if not isinstance(cm, dict):
             continue
-        commands.append(VerificationCommandRecord(
-            argv=_coerce_argv(cm.get("argv")),
-            exit_code=_coerce_exit_code(cm.get("exit_code")),
-        ))
+        commands.append(
+            VerificationCommandRecord(
+                argv=_coerce_argv(cm.get("argv")),
+                exit_code=_coerce_exit_code(cm.get("exit_code")),
+            )
+        )
 
     all_passed = bool(checks) and all(c.passed for c in checks)
     raw_round = data.get("round")
-    round_val = raw_round if isinstance(raw_round, int) and not isinstance(
-        raw_round, bool,
-    ) else None
+    round_val = (
+        raw_round
+        if isinstance(raw_round, int)
+        and not isinstance(
+            raw_round,
+            bool,
+        )
+        else None
+    )
 
     return VerificationReceiptRecord(
         phase=_optional_str(data.get("phase")),
@@ -412,65 +420,55 @@ def _read_verification_receipts(
 
 
 def _project_verification_timeline(proj: Any) -> VerificationTimelineRecord:
-    """Project the SDK verification-timeline dataclass into the wire record.
+    """Map the canonical SDK ledger one-to-one onto the public wire record."""
 
-    Pure pass-through: the SDK
-    (``sdk.get_verification_timeline``) already owns the durable
-    classification and the six-value status enum (no ``MANUAL``), so this
-    only maps the typed dataclass onto the Pydantic wire model — per-gate
-    ``searched_run_dirs`` / ``rerun_hint`` / ``status`` included. Empty SDK
-    strings (``env`` / ``hook`` / ``receipt_path`` / ``source_run_id`` /
-    ``stale_reason``) collapse to ``None`` so the wire stays clean. The SDK
-    gate record carries no per-gate ``source``; it is reported ``None``.
-    """
-    gates = [
-        VerificationTimelineGateRecord(
-            command=g.command,
-            env=_optional_str(g.env),
-            hook=_optional_str(g.hook),
-            source=None,
-            policy=_optional_str(g.policy),
-            required=bool(g.required),
-            status=g.status,
-            receipt_path=_optional_str(g.receipt_path),
-            source_run_id=_optional_str(g.source_run_id),
-            inherited=bool(g.inherited),
-            stale_reason=_optional_str(g.stale_reason),
-            searched_run_dirs=[str(d) for d in g.searched_run_dirs],
-            rerun_hint=[str(h) for h in g.rerun_hint],
-            # Mirror the SDK gate's environment-provenance note: a provenance
-            # break downgrades the gate to FAIL and populates this. The
-            # ``getattr`` default keeps a version-skewed core without the field
-            # from breaking the slice.
-            detail=_optional_str(getattr(g, "detail", None)),
+    def receipt(value: Any) -> ReceiptEvidenceRecord | None:
+        if value is None:
+            return None
+        return ReceiptEvidenceRecord(
+            classification=value.classification,
+            path=value.path,
+            source=value.source,
+            inherited=value.inherited,
+            reason=value.reason,
+            rerun=value.rerun,
         )
-        for g in proj.gates
-    ]
-    autorun_events = [
-        VerificationAutorunEventRecord(
-            hook_label=str(e.hook_label),
-            source=str(e.source),
-            ran_pass=[str(c) for c in e.ran_pass],
-            ran_fail=[str(c) for c in e.ran_fail],
-            skipped_fresh=[str(c) for c in e.skipped_fresh],
-            skipped_manual=[str(c) for c in e.skipped_manual],
-            receipt_paths=[str(p) for p in e.receipt_paths],
-        )
-        for e in proj.autorun_events
-    ]
+
     return VerificationTimelineRecord(
+        schema_version=proj.schema_version,
         run_id=str(proj.run_id),
-        has_contract=bool(proj.has_contract),
-        gates=gates,
-        residual_missing=[str(c) for c in proj.residual_missing],
-        residual_stale=[str(c) for c in proj.residual_stale],
-        residual_failed=[str(c) for c in proj.residual_failed],
-        manual_only=[str(c) for c in proj.manual_only],
-        inherited=[str(c) for c in proj.inherited],
-        searched_run_dirs=[str(d) for d in proj.searched_run_dirs],
-        suggested_commands=[str(c) for c in proj.suggested_commands],
-        autorun_events=autorun_events,
-        scheduled_trail_available=bool(proj.scheduled_trail_available),
+        project=proj.project,
+        finalized=proj.finalized,
+        rows=[
+            ScheduledGateRowRecord(
+                command=row.command,
+                hook=row.hook,
+                phase=row.phase,
+                declared=row.declared,
+                selectable=row.selectable,
+                selected=row.selected,
+                execution_policy=row.execution_policy,
+                consequence=row.consequence,
+                disposition=row.disposition,
+                selection_reason=row.selection_reason,
+                executor=row.executor,
+                trigger=row.trigger,
+                receipt_evidence=receipt(row.receipt_evidence),
+            )
+            for row in proj.rows
+        ],
+        events=[
+            ScheduledGateEventRecord(
+                command=event.command,
+                hook=event.hook,
+                phase=event.phase,
+                kind=event.kind,
+                outcome=event.outcome,
+                reason=event.reason,
+                receipt_evidence=receipt(event.receipt_evidence),
+            )
+            for event in proj.events
+        ],
     )
 
 
@@ -553,7 +551,7 @@ def _normalize_scope_classification(raw: Any) -> str:
     if not s:
         return "notice"
     if s.startswith(_SCOPE_STATUS_PREFIX):
-        return s[len(_SCOPE_STATUS_PREFIX):] or "notice"
+        return s[len(_SCOPE_STATUS_PREFIX) :] or "notice"
     return s
 
 
@@ -592,12 +590,22 @@ def _project_scope_expansion(run_id: str) -> ScopeExpansionSliceRecord:
     if not isinstance(meta, dict):
         return ScopeExpansionSliceRecord()
     phases = meta.get("phases")
-    final_acceptance = phases.get("final_acceptance") if isinstance(
-        phases, dict,
-    ) else None
-    raw = final_acceptance.get("scope_expansion") if isinstance(
-        final_acceptance, dict,
-    ) else None
+    final_acceptance = (
+        phases.get("final_acceptance")
+        if isinstance(
+            phases,
+            dict,
+        )
+        else None
+    )
+    raw = (
+        final_acceptance.get("scope_expansion")
+        if isinstance(
+            final_acceptance,
+            dict,
+        )
+        else None
+    )
     if not isinstance(raw, dict):
         return ScopeExpansionSliceRecord()
 
@@ -609,12 +617,14 @@ def _project_scope_expansion(run_id: str) -> ScopeExpansionSliceRecord:
         path = _optional_str(it.get("path"))
         if path is None:
             continue
-        items.append(ScopeExpansionItemRecord(
-            path=path,
-            classification=_normalize_scope_classification(it.get("status")),
-            category=_optional_str(it.get("category")),
-            evidence=_str_list(it.get("evidence")),
-        ))
+        items.append(
+            ScopeExpansionItemRecord(
+                path=path,
+                classification=_normalize_scope_classification(it.get("status")),
+                category=_optional_str(it.get("category")),
+                evidence=_str_list(it.get("evidence")),
+            )
+        )
     return ScopeExpansionSliceRecord(
         items=items,
         has_blocker=bool(raw.get("has_blocker")),
@@ -626,14 +636,20 @@ def _project_scope_expansion(run_id: str) -> ScopeExpansionSliceRecord:
 # these sets is an unrecognized status → all four booleans False, raw status
 # preserved.
 _DELIVERY_APPLIED_STATUSES = frozenset({"applied_uncommitted", "committed"})
-_DELIVERY_FAILED_STATUSES = frozenset({
-    "commit_failed", "apply_failed", "halted", "verification_blocked",
-    "target_dirty",
-})
+_DELIVERY_FAILED_STATUSES = frozenset(
+    {
+        "commit_failed",
+        "apply_failed",
+        "halted",
+        "verification_blocked",
+        "target_dirty",
+    }
+)
 
 
 def _project_delivery(
-    run_id: str, errors: list[dict[str, Any]],
+    run_id: str,
+    errors: list[dict[str, Any]],
 ) -> DeliverySummaryRecord | None:
     """Project the post-release commit-delivery outcome from durable meta.
 
@@ -723,9 +739,7 @@ def _project_correction(run_id: str) -> CorrectionSliceRecord | None:
     # The block is only ever written on non-convergence; derive the flag from
     # the durable signals rather than hardcoding it.
     non_converging = (
-        halt_reason == "correction_not_converging"
-        or bool(repeated)
-        or reason is not None
+        halt_reason == "correction_not_converging" or bool(repeated) or reason is not None
     )
     return CorrectionSliceRecord(
         non_converging=non_converging,
@@ -750,15 +764,25 @@ def inspect_run_evidence(
     thin sync shim.
     """
     valid_slices = {
-        "all", "plan", "findings", "commands", "artifacts",
-        "errors", "sub_runs", "receipts", "verification_receipts",
-        "verification_timeline", "verification_cockpit", "handoff_advice",
-        "scope_expansion", "delivery", "correction",
+        "all",
+        "plan",
+        "findings",
+        "commands",
+        "artifacts",
+        "errors",
+        "sub_runs",
+        "receipts",
+        "verification_receipts",
+        "verification_timeline",
+        "verification_cockpit",
+        "handoff_advice",
+        "scope_expansion",
+        "delivery",
+        "correction",
     }
     if slice not in valid_slices:
         raise InvalidPlanError(
-            f"orcho_run_evidence: slice must be one of "
-            f"{sorted(valid_slices)!r}, got {slice!r}"
+            f"orcho_run_evidence: slice must be one of {sorted(valid_slices)!r}, got {slice!r}"
         )
 
     sev_kw: dict[str, Any] = {}
@@ -816,7 +840,10 @@ def inspect_run_evidence(
 
         if "findings" in want:
             findings = _sdk_list_findings(
-                run_id, cwd=None, phases=phases_kw, **sev_kw,
+                run_id,
+                cwd=None,
+                phases=phases_kw,
+                **sev_kw,
             )
             # Advisory rule (AC5): a ``validate_plan`` finding forwarded into a
             # successful whole-plan implement is advisory (visible, not active),
@@ -835,9 +862,14 @@ def inspect_run_evidence(
             _advisory_attempt = _advisory_validate_plan_attempt(_meta)
             out["findings"] = [
                 FindingRecord(
-                    id=f.id, severity=f.severity, title=f.title,
-                    body=f.body, required_fix=f.required_fix,
-                    file=f.file, line=f.line, phase=f.phase,
+                    id=f.id,
+                    severity=f.severity,
+                    title=f.title,
+                    body=f.body,
+                    required_fix=f.required_fix,
+                    file=f.file,
+                    line=f.line,
+                    phase=f.phase,
                     attempt=f.attempt,
                     advisory=(
                         _advisory_attempt is not None
@@ -852,8 +884,10 @@ def inspect_run_evidence(
             cmds = _sdk_list_evidence_commands(run_id, cwd=None)
             out["commands"] = [
                 EvidenceCommandSliceRecord(
-                    argv_summary=c.argv_summary, cwd=c.cwd,
-                    exit_code=c.exit_code, duration_s=c.duration_s,
+                    argv_summary=c.argv_summary,
+                    cwd=c.cwd,
+                    exit_code=c.exit_code,
+                    duration_s=c.duration_s,
                     outcome=c.outcome,
                 )
                 for c in cmds
@@ -863,7 +897,9 @@ def inspect_run_evidence(
             arts = _sdk_list_evidence_artifacts(run_id, cwd=None)
             out["artifacts"] = [
                 EvidenceArtifactSliceRecord(
-                    path=a.path, kind=a.kind, size_bytes=a.size_bytes,
+                    path=a.path,
+                    kind=a.kind,
+                    size_bytes=a.size_bytes,
                 )
                 for a in arts
             ]
@@ -900,7 +936,9 @@ def inspect_run_evidence(
             links = _sdk_list_sub_runs(run_id, cwd=None)
             out["sub_runs"] = [
                 SubRunLinkRecord(
-                    name=link.name, status=link.status, run_dir=link.run_dir,
+                    name=link.name,
+                    status=link.status,
+                    run_dir=link.run_dir,
                 )
                 for link in links
             ]
@@ -920,8 +958,10 @@ def inspect_run_evidence(
                     error=r.error,
                     criteria_report=[
                         CriterionReportRecord(
-                            index=c.index, criterion=c.criterion,
-                            met=c.met, evidence=c.evidence,
+                            index=c.index,
+                            criterion=c.criterion,
+                            met=c.met,
+                            evidence=c.evidence,
                         )
                         for c in r.criteria_report
                     ],
@@ -982,23 +1022,21 @@ def inspect_run_evidence(
         if needs_timeline:
             # Availability is guaranteed by the precondition check above. The
             # official verification-gate timeline is a read-only durable SDK
-            # projection (no pipeline import in MCP): the SDK owns the
-            # classification + the six-value status enum, this layer is a pure
-            # wire pass-through. ``cwd=None`` disables walk-up so the long-lived
+            # projection (no pipeline import in MCP): this layer forwards its
+            # canonical ledger rows and identity-scoped events unchanged.
+            # ``cwd=None`` disables walk-up so the long-lived
             # server never binds to an arbitrary process cwd's runspace — the
             # same discipline as ``services.run_lookup`` and the other SDK
             # accessors. RunNotFound resolves through map_sdk_errors.
             #
-            # ONE SDK read feeds BOTH slices: the timeline is a pure wire
-            # pass-through and the cockpit a derived projection over the same
-            # ``proj`` — never a second ``get_verification_timeline`` call.
+            # ONE SDK read feeds BOTH public names. They are intentionally the
+            # same canonical ledger projection, not separate semantic views.
             proj = _sdk_get_verification_timeline(run_id=run_id, cwd=None)
+            timeline = _project_verification_timeline(proj)
             if "verification_timeline" in want:
-                out["verification_timeline"] = _project_verification_timeline(
-                    proj,
-                )
+                out["verification_timeline"] = timeline
             if "verification_cockpit" in want:
-                out["verification_cockpit"] = build_verification_cockpit(proj)
+                out["verification_cockpit"] = timeline
 
     return EvidenceResult(**out)
 

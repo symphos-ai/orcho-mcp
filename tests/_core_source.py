@@ -43,6 +43,7 @@ Source precedence (first match wins):
 If none resolves to a real checkout the module is inert and imports fall
 through to whatever is installed.
 """
+
 from __future__ import annotations
 
 import importlib
@@ -124,6 +125,11 @@ def _candidate_roots() -> list[Path]:
     checkout = Path(__file__).resolve().parents[1]
     if checkout.name == "checkout" and checkout.parent.name.startswith("wt_"):
         roots.append(checkout.parent.parent / "wt_core" / "checkout")
+    # A runspace checkout is nested below the repository workspace rather than
+    # directly beside its companion.  Walk only its ancestors and retain the
+    # same checkout-shape validation below; this finds
+    # ``<workspace>/orcho-core`` without ever selecting an installed package.
+    roots.extend(parent / "orcho-core" for parent in checkout.parents)
     # Sibling dev checkout: ``.../orcho-mcp`` → ``.../orcho-core``.
     roots.append(checkout.parent / "orcho-core")
     return roots
@@ -158,16 +164,11 @@ def pin_core_source() -> Path | None:
         root = root.resolve()
         if not _is_core_checkout(root):
             continue
-        already = any(
-            isinstance(f, _OrchoCoreSrcFinder) and f._root == root
-            for f in sys.meta_path
-        )
+        already = any(isinstance(f, _OrchoCoreSrcFinder) and f._root == root for f in sys.meta_path)
         if already:
             return root
         # Remove any prior instance pointing elsewhere, then take precedence.
-        sys.meta_path[:] = [
-            f for f in sys.meta_path if not isinstance(f, _OrchoCoreSrcFinder)
-        ]
+        sys.meta_path[:] = [f for f in sys.meta_path if not isinstance(f, _OrchoCoreSrcFinder)]
         _evict_loaded_core()
         sys.meta_path.insert(0, _OrchoCoreSrcFinder(root))
         importlib.invalidate_caches()

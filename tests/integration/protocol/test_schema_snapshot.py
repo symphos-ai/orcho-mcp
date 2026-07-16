@@ -133,3 +133,82 @@ def test_run_inspection_tools_explain_their_operator_questions():
     )
     assert "How much did it consume?" in descriptions["orcho_run_metrics"]
     assert "What changed?" in descriptions["orcho_run_diff"]
+
+
+def test_evidence_schema_publishes_canonical_scheduled_gate_ledger():
+    """The evidence tool exposes ledger rows/events, not the retired cockpit."""
+    committed = _load_committed_schema()
+    evidence = next(
+        tool for tool in committed["tools"] if tool["name"] == "orcho_run_evidence"
+    )
+    defs = evidence["outputSchema"]["$defs"]
+
+    assert {
+        "ReceiptEvidenceRecord",
+        "ScheduledGateRowRecord",
+        "ScheduledGateEventRecord",
+        "VerificationTimelineRecord",
+    } <= set(defs)
+    assert not {
+        "VerificationAutorunEventRecord",
+        "VerificationCockpit",
+        "VerificationGateCockpitRow",
+        "VerificationTimelineGateRecord",
+    } & set(defs)
+
+    row = defs["ScheduledGateRowRecord"]
+    assert set(row["properties"]) == {
+        "command",
+        "hook",
+        "phase",
+        "declared",
+        "selectable",
+        "selected",
+        "execution_policy",
+        "consequence",
+        "disposition",
+        "selection_reason",
+        "executor",
+        "trigger",
+        "receipt_evidence",
+    }
+    assert row["properties"]["execution_policy"]["enum"] == [
+        "manual", "suggest", "warn", "require", "unknown",
+    ]
+    assert row["properties"]["consequence"]["enum"] == [
+        "none", "warning", "required_action",
+    ]
+    assert row["properties"]["disposition"]["anyOf"][0]["enum"] == [
+        "not_selected",
+        "manual_available",
+        "suggested",
+        "skipped_fresh",
+        "executed_pass",
+        "executed_fail",
+        "residual_missing",
+        "residual_stale",
+        "residual_failed",
+    ]
+    assert row["properties"]["selected"]["anyOf"][0]["type"] == "boolean"
+    assert row["properties"]["disposition"]["anyOf"][1]["type"] == "null"
+
+    event = defs["ScheduledGateEventRecord"]
+    assert event["properties"]["kind"]["enum"] == [
+        "selection", "execution", "reuse", "receipt",
+    ]
+    timeline = defs["VerificationTimelineRecord"]
+    assert set(timeline["properties"]) == {
+        "schema_version", "run_id", "project", "finalized", "rows", "events",
+    }
+    for retired in (
+        "status",
+        "manual_only",
+        "required",
+        "gate_class",
+        "class_source",
+        "policy_summary",
+        "autorun_events",
+        "scheduled_trail_available",
+    ):
+        assert retired not in row["properties"]
+        assert retired not in event["properties"]
