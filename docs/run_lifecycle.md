@@ -1,5 +1,10 @@
 # Orcho MCP — Run Lifecycle
 
+For the complete state and decision graph across lifecycle, supervisor,
+handoff, delivery, lineage, and control-authority axes, see
+[MCP Control State Machine](architecture/control_state_machine.md). This
+document remains the per-tool wire contract.
+
 Canonical contract for how runs are started, observed, resumed, and
 cancelled through the MCP wire. The naming convention is
 **`orcho_run_<verb>`** for everything that operates on a run. The
@@ -86,10 +91,13 @@ question is specifically about patch content.
 | **Resume** | Re-spawn a pipeline subprocess against an existing `run_dir`, loading the on-disk checkpoint. *Not* a smart "skip already-done phases" — it is a fresh process that respects whichever profile the caller picks. |
 | **Cancel** | Signal the run's process group. Graceful (`SIGTERM`) lets the pipeline flush the checkpoint and emit `run.interrupted`; hard (`SIGKILL`) drops in-flight work. |
 
-Deliberately **not** vocabulary in v0.1.0a:
+Deliberately **not** vocabulary:
 
 - "Continue from where it stopped, automatically picking the next phase" — this is *not* what resume does.
-- "Pause and unpause" — runs do not pause arbitrarily; they finish, fail, get cancelled, or pause **only** when a phase's declared `handoff` policy fires. The declarative pause point is `orcho_phase_handoff_decide` over `meta.status="awaiting_phase_handoff"`.
+- "Pause and unpause" — there is no generic process-pause toggle. Runs park at
+  explicit durable decision points: a phase handoff, a runner-owned cross
+  gate, a plan-review tail, or a post-release delivery/correction gate. Each
+  has its own typed read and command contract.
 
 ---
 
@@ -199,7 +207,8 @@ next?" check:
 
 - `meta.status` walks through the pipeline-defined values
   (`running` → `done` / `failed` / `interrupted` / `halted` /
-  `awaiting_phase_handoff`).
+  `awaiting_phase_handoff`; cross runs also use
+  `awaiting_gate_decision` / `awaiting_human_review`).
 - `metrics` is `null` until the pipeline writes its first metrics
   flush; populated incrementally per phase.
 - `sub_runs` is empty for single-project runs; populated for cross-
@@ -572,7 +581,8 @@ orcho_run_status(run_id)   ← caller reads meta.phase_handoff
        ↓
 orcho_phase_handoff_decide(run_id, handoff_id, action, feedback?, note?)
        │
-       ├── action="continue"          → writes the decision artifact;
+       ├── action="continue"          → when present in available_actions,
+       │                                writes the decision artifact;
        │                                meta.status STAYS awaiting_phase_handoff.
        │                                Caller follows up with:
        │                                    orcho_run_resume(run_id)
@@ -609,7 +619,7 @@ orcho_phase_handoff_decide(run_id, handoff_id, action, feedback?, note?)
 |---|---|---|
 | `run_id` | `str` | Run to decide on. |
 | `handoff_id` | `str` | Must equal `meta.phase_handoff.id` (e.g. `"validate_plan:plan_round:2"`). Stale UI cannot decide on a fresh handoff. |
-| `action` | `"continue"` \| `"retry_feedback"` \| `"continue_with_waiver"` \| `"halt"` | Must be in the active handoff's `available_actions`. |
+| `action` | `"continue"` \| `"retry_feedback"` \| `"continue_with_waiver"` \| `"halt"` | Must be in the active handoff's `available_actions`. Bare `continue` is not universal; incomplete implement offers only retry, explicit waiver, or halt. |
 | `feedback` | `str \| None` | Human direction injected into the next round. Required (non-empty) for `retry_feedback` and `continue_with_waiver`; rejected for the other actions. |
 | `note` | `str \| None` | Free-form audit comment. Persisted in the artifact, never required. |
 
