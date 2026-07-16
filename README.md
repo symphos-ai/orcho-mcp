@@ -25,10 +25,12 @@ observe, decide, inspect, and resume without raw log scraping.
 typed, no log scraping. Real session; the run is `mock=True`. Interactive
 version: [docs.orcho.dev](https://docs.orcho.dev/start/let-your-agent-drive/).</sub>
 
-> **Status:** ``v0.1.0`` public release line. Core control loop surfaces are available:
+> **Status:** public alpha. Core control-loop surfaces are available:
 >
 > - **Act**: ``orcho_run_start`` / ``orcho_run_resume`` / ``orcho_run_cancel`` with L4-test-pinned semantics (process-group signal handling, supervisor-owned restart-recovery, race-aware cancel).
 > - **Observe**: ``orcho_run_status`` answers "What is happening / what should I do next?"; ``orcho_run_history`` and ``orcho_run_events_tail`` are read-only, polling-friendly context.
+> - **Route**: ``orcho_run_diagnose`` and ``orcho_workspace_pending_decisions`` classify the continuation subject and visible decision work.
+> - **Decision support**: ``orcho_handoff_advice`` / ``orcho_delivery_gate`` explain sanctioned choices without applying them.
 > - **Decide**: ``orcho_phase_handoff_decide`` resolves runtime-published phase-handoff actions; ``orcho_delivery_gate`` / ``orcho_delivery_decide`` expose and resolve post-release delivery or correction. Decision tools never invent actions and never spawn a pipeline process.
 > - **Inspect**: ``orcho_run_evidence`` answers "What happened / what proves it?"; ``orcho_run_diff`` answers "What changed?"
 > - **Measure**: ``orcho_run_metrics`` answers "How much did it consume?" with tokens, duration, phase breakdown, and cost-reference fields when available.
@@ -173,6 +175,18 @@ When choosing a read tool, start from the question:
 | What changed? | `orcho_run_diff` |
 
 For an end-to-end walkthrough of the full control loop with code, see [`docs/control_loop_walkthrough.md`](docs/control_loop_walkthrough.md).
+
+### Current public-alpha boundaries
+
+- `orcho_run_live_status` is a bounded mono-run card. Cross runs use the
+  broader status, event, evidence, and sub-run projections.
+- `orcho_workspace_pending_decisions` currently aggregates phase handoffs; it
+  is not a universal inbox for every delivery and cross-gate decision.
+- a CLI-started or otherwise foreign run can be fully inspected, but mutation
+  is refused as `inspect_only` when this MCP server does not own its supervisor
+  record.
+- core owns the lifecycle and allowed actions. The MCP layer projects that
+  state; it does not create a second state machine.
 
 ## Architecture
 
