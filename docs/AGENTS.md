@@ -27,6 +27,8 @@ instead of explaining why it changed.
 - `docs/testing.md` defines the MCP testing philosophy and layer rules.
 - `docs/architecture/mcp_boundaries.md` defines package boundaries.
 - `docs/architecture/anatomy_of_a_request.md` traces request flow.
+- `docs/architecture/control_state_machine.md` maps the complete multi-axis
+  run-control state and decision graph exposed through MCP.
 - `docs/run_lifecycle.md` documents run-control semantics.
 - `docs/mcp_schema.json` is generated contract data; update it through the
   schema dump tool when the MCP wire surface intentionally changes.

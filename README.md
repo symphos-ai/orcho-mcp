@@ -29,7 +29,7 @@ version: [docs.orcho.dev](https://docs.orcho.dev/start/let-your-agent-drive/).</
 >
 > - **Act**: ``orcho_run_start`` / ``orcho_run_resume`` / ``orcho_run_cancel`` with L4-test-pinned semantics (process-group signal handling, supervisor-owned restart-recovery, race-aware cancel).
 > - **Observe**: ``orcho_run_status`` answers "What is happening / what should I do next?"; ``orcho_run_history`` and ``orcho_run_events_tail`` are read-only, polling-friendly context.
-> - **Decide**: ``orcho_phase_handoff_decide`` — generic phase-handoff state transition for paused runs. The pipeline pauses with ``status=awaiting_phase_handoff`` when a phase's declared ``handoff`` policy fires; ``continue`` / ``retry_feedback`` / ``halt`` write a decision artifact (``halt`` flips ``meta.status`` to ``halted`` synchronously). Pure state transition; never spawns.
+> - **Decide**: ``orcho_phase_handoff_decide`` resolves runtime-published phase-handoff actions; ``orcho_delivery_gate`` / ``orcho_delivery_decide`` expose and resolve post-release delivery or correction. Decision tools never invent actions and never spawn a pipeline process.
 > - **Inspect**: ``orcho_run_evidence`` answers "What happened / what proves it?"; ``orcho_run_diff`` answers "What changed?"
 > - **Measure**: ``orcho_run_metrics`` answers "How much did it consume?" with tokens, duration, phase breakdown, and cost-reference fields when available.
 >
@@ -149,15 +149,17 @@ A static catalogue is also committed at [`docs/mcp_schema.json`](docs/mcp_schema
 
 ## Control loop
 
-The full contract — **starting**, **observing**, **resuming**, **cancelling**, **deciding** (QA gate), and **inspecting** runs through the MCP wire — lives in [`docs/run_lifecycle.md`](docs/run_lifecycle.md). Tool docstrings stay terse; that file is the long-form reference.
+The full contract — **starting**, **observing**, **resuming**, **cancelling**, **deciding**, and **inspecting** runs through the MCP wire — lives in [`docs/run_lifecycle.md`](docs/run_lifecycle.md). The complete multi-axis decision graph is documented in [`docs/architecture/control_state_machine.md`](docs/architecture/control_state_machine.md). Tool docstrings stay terse; those files are the long-form references.
 
 Tool naming is consistent: every run-lifecycle tool is `orcho_run_<verb>`. State-transition and inspection tools sit beside that group with their own names:
 
 | Group | Tools |
 |---|---|
 | **Act** | `orcho_run_start`, `orcho_run_resume`, `orcho_run_cancel` |
-| **Observe** | `orcho_run_status`, `orcho_run_history`, `orcho_run_events_tail` |
-| **Decide** | `orcho_phase_handoff_decide` |
+| **Observe** | `orcho_run_status`, `orcho_run_live_status`, `orcho_run_watch`, `orcho_run_events_summary`, `orcho_run_events_tail`, `orcho_run_history` |
+| **Route** | `orcho_run_diagnose`, `orcho_workspace_pending_decisions` |
+| **Decision support** | `orcho_handoff_advice`, `orcho_delivery_gate` |
+| **Decide** | `orcho_phase_handoff_decide`, `orcho_delivery_decide` |
 | **Inspect** | `orcho_run_evidence`, `orcho_run_diff` |
 | **Measure** | `orcho_run_metrics` |
 
@@ -183,6 +185,9 @@ The post-v1 cross-MCP consumer roadmap (orcho-as-MCP-client — pipeline agents 
 
 For contributor-facing architecture and test guidance:
 
+- [`docs/architecture/control_state_machine.md`](docs/architecture/control_state_machine.md)
+  maps core lifecycle state, MCP projections, pending decisions, delivery,
+  continuation lineage, and the typed tool edge for each supported transition.
 - [`docs/architecture/mcp_boundaries.md`](docs/architecture/mcp_boundaries.md)
   describes the package boundaries enforced by the architecture tests.
 - [`docs/architecture/observation_delivery.md`](docs/architecture/observation_delivery.md)

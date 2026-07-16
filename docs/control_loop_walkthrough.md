@@ -6,7 +6,9 @@ let an agent drive an Orcho run from spawn to terminal-with-audit
 without ever reading a raw log line.
 
 For the formal contract (vocabulary, error catalog, idempotency rules),
-see [`run_lifecycle.md`](run_lifecycle.md).
+see [`run_lifecycle.md`](run_lifecycle.md). For the complete multi-axis
+decision graph, see
+[`architecture/control_state_machine.md`](architecture/control_state_machine.md).
 
 ---
 
@@ -160,49 +162,51 @@ findings = orcho_run_evidence(
     phases=["validate_plan"],
 ).findings
 
-# Decide. Four outcomes:
-# (a) ``continue`` — manual override, write the artifact, then resume.
-result = orcho_phase_handoff_decide(
-    started.run_id,
-    handoff_id=handoff_id,
-    action="continue",
-    note="Plan addresses the data-model concern raised in F1.",
-)
-# meta.status STAYS awaiting_phase_handoff. Follow up with resume:
-await orcho_run_resume(started.run_id)  # inherits meta.profile
+# The operator chooses exactly ONE verb from ``available``.
+selected_action = await choose_action(available)
+feedback = None
+note = None
 
-# (b) ``retry_feedback`` — one extra human-directed plan round.
-result = orcho_phase_handoff_decide(
-    started.run_id,
-    handoff_id=handoff_id,
-    action="retry_feedback",
-    feedback="Add the auth-migration step before deployment.",
-    note="Plan missed auth migration; one more round.",
-)
-await orcho_run_resume(started.run_id)  # inherits meta.profile (feature)
+if selected_action == "retry_feedback":
+    feedback = "Add the auth-migration step before deployment."
+    note = "Plan missed auth migration; one more round."
+elif selected_action == "continue_with_waiver":
+    feedback = "F2 is a known false positive on generated code; accepted."
+    note = "Waiving the rejection; see feedback."
+elif selected_action == "continue":
+    note = "The concern is addressed; override and continue."
+elif selected_action == "halt":
+    note = "The current result is not acceptable."
 
-# (c) ``continue_with_waiver`` — accept the rejected verdict, recording
-#     why. ``feedback`` is required (non-empty) and persists the waiver.
 result = orcho_phase_handoff_decide(
     started.run_id,
     handoff_id=handoff_id,
-    action="continue_with_waiver",
-    feedback="F2 is a known false positive on generated code; accepted.",
-    note="Waiving validate_plan rejection; see feedback.",
+    action=selected_action,
+    feedback=feedback,
+    note=note,
 )
-# meta.status STAYS awaiting_phase_handoff. Follow up with resume:
-await orcho_run_resume(started.run_id)  # inherits meta.profile
 
-# (d) ``halt`` — terminal, no resume.
-result = orcho_phase_handoff_decide(
-    started.run_id,
-    handoff_id=handoff_id,
-    action="halt",
-    note="Plan misses the auth migration. Restart with revised task.",
-)
-# meta.status flips to "halted" synchronously and meta.phase_handoff
-# is cleared.
+if selected_action != "halt":
+    # Non-halt decisions leave meta.status awaiting_phase_handoff until
+    # resume applies the recorded decision.
+    await orcho_run_resume(started.run_id)  # inherits meta.profile
+# ``halt`` flips meta.status to "halted" synchronously and clears the
+# active meta.phase_handoff; do not resume it.
 ```
+
+The verb vocabulary is:
+
+| Verb | Effect |
+|---|---|
+| `continue` | When offered, record a plain override and advance on resume. |
+| `retry_feedback` | Require feedback and run one human-directed retry path. |
+| `continue_with_waiver` | Require an explicit waiver rationale and advance on resume. |
+| `halt` | Settle the run to `halted`; no resume follows. |
+
+This table is not a promise that every handoff offers all four verbs. The active
+payload is authoritative. In particular, an incomplete implement handoff
+offers `retry_feedback`, `continue_with_waiver`, and `halt`; it does not offer
+bare `continue`.
 
 Phase-handoff decisions are exact-payload idempotent. Replaying the
 same `(handoff_id, action, feedback, note)` returns the persisted
@@ -401,8 +405,10 @@ What to know before wiring this loop:
   a durable `pr_intent` (branch / base / title / suggested_command) for
   the client to turn into a pull request.
 - A cross-project run can also pause on `status="awaiting_gate_decision"`
-  (a cross gate awaiting operator override); resolve it through the same
-  decide-then-resume discipline, never a blind resume.
+  (a runner-owned manual cross gate). MCP observes this state, but the current
+  MCP catalog has no mutation tool for its `run` / `skip` decision. Resolve it
+  through a core-native control surface, then resume; do not send it to
+  `orcho_phase_handoff_decide` and do not blindly resume.
 
 ---
 
@@ -477,6 +483,7 @@ structural gate that enforces this.
 ## Pointers
 
 - `docs/run_lifecycle.md` — formal contract, vocabulary, error catalog
+- `docs/architecture/control_state_machine.md` — complete state and decision graph
 - `docs/mcp_schema.json` — the JSON-Schema snapshot of every tool
 - `docs/demos/demo-1b-single-project-mcp.md` — runnable single-project MCP proof
 - `../orcho-core/docs/reference/sdk_api.md` — SDK API reference
