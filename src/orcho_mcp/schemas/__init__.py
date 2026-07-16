@@ -22,6 +22,7 @@ etc.) keep working without churn. Domain modules can also be imported
 directly when a caller wants the narrower surface
 (``from orcho_mcp.schemas.read import RunStatus``).
 """
+
 from __future__ import annotations
 
 from orcho_mcp.schemas.authoring import (
@@ -48,19 +49,18 @@ from orcho_mcp.schemas.inspection import (
     HandoffAdviceUsageRecord,
     ImplementDeliveryRecord,
     PlanSliceRecord,
+    ReceiptEvidenceRecord,
     RunDiffFile,
     RunDiffResult,
+    ScheduledGateEventRecord,
+    ScheduledGateRowRecord,
     ScopeExpansionItemRecord,
     ScopeExpansionSliceRecord,
     SubRunLinkRecord,
     SubtaskReceiptRecord,
-    VerificationAutorunEventRecord,
     VerificationCheckRecord,
-    VerificationCockpit,
     VerificationCommandRecord,
-    VerificationGateCockpitRow,
     VerificationReceiptRecord,
-    VerificationTimelineGateRecord,
     VerificationTimelineRecord,
 )
 from orcho_mcp.schemas.observe import (
@@ -245,13 +245,12 @@ __all__ = [
     "ScopeExpansionSliceRecord",
     "SubRunLinkRecord",
     "SubtaskReceiptRecord",
-    "VerificationAutorunEventRecord",
     "VerificationCheckRecord",
-    "VerificationCockpit",
     "VerificationCommandRecord",
-    "VerificationGateCockpitRow",
     "VerificationReceiptRecord",
-    "VerificationTimelineGateRecord",
+    "ReceiptEvidenceRecord",
+    "ScheduledGateEventRecord",
+    "ScheduledGateRowRecord",
     "VerificationTimelineRecord",
     # workflows
     "RecipeBranchStep",

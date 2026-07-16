@@ -1276,29 +1276,19 @@ def orcho_run_evidence(
         the exact commands + exit codes, the clean-tree note
         (``temp_env_outside_checkout``), and the on-disk
         ``artifact_path``. Empty when the run recorded no receipts.
-      - ``"verification_timeline"`` — the official verification-gate
-        timeline as typed data: per-gate ``status`` (exactly one of
-        ``PASS`` / ``FAIL`` / ``MISSING`` / ``STALE`` / ``SKIPPED`` /
-        ``FRESH`` — a manual/operator-only gate is ``SKIPPED`` with
-        ``policy='manual_only'``), each missing/stale/failed required gate
-        carrying its own ``rerun_hint`` + ``searched_run_dirs``, plus the
-        residual / manual-only / inherited aggregates and the auto-run
-        events. ``has_contract=False`` when the project declares no
-        verification contract.
-      - ``"verification_cockpit"`` — the SAME verification gates as a typed
-        cockpit (built from one shared SDK read, never hiding the timeline):
-        a header (``has_contract`` / ``mode`` / ``envs`` / ``policy_summary``
-        / ``effect``) plus one row per gate. Each row keeps the command name
-        AND its planning properties visible together — ``hook``/phase,
-        ``trigger``, ``policy``, ``required``, ``gate_class`` + ``class_source``,
-        the same six-value ``status``, ``env``, and the deciding-receipt
-        evidence (``receipt_path`` / ``inherited`` / ``source_run_id``) with
-        ``stale_reason`` / ``rerun_hint`` where applicable. ``trigger`` is
-        derived deterministically: ``operator_only`` for a manual-only gate
-        (membership or ``policy='manual_only'``) — present on purpose, NOT an
-        automation failure; ``auto`` when the run's automation acted on the
-        command; else ``manual``. ``has_contract=False`` when the project
-        declares no verification contract.
+      - ``"verification_timeline"`` — the canonical scheduled-gate ledger.
+        Each row retains its full identity (``command`` / ``hook`` / ``phase``),
+        declaration and selection facts (``declared`` / ``selectable`` /
+        ``selected`` / ``selection_reason``), execution facts
+        (``execution_policy`` / ``consequence`` / ``executor`` / ``trigger``),
+        nullable terminal ``disposition``, and any ``receipt_evidence``.
+        Identity-scoped ``events`` retain their kind, outcome, reason, and
+        receipt evidence. MCP forwards these SDK facts without deriving a
+        command-level status or policy summary.
+      - ``"verification_cockpit"`` — the same canonical scheduled-gate ledger
+        projection under the cockpit view name. It has the identical rows and
+        identity-scoped events as ``verification_timeline`` and is built from
+        the same SDK read.
       - ``"handoff_advice"`` — Stage 0/1 phase-handoff advisor evidence:
         one record per advisor call (``handoff_id`` / ``phase`` /
         ``recommended_action`` / ``applied_action`` / ``confidence`` /

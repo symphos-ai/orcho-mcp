@@ -17,6 +17,8 @@ Marked ``mcp_integration``; enable with ``pytest -m mcp_integration``.
 from __future__ import annotations
 
 import asyncio
+import os
+import subprocess
 import time
 from pathlib import Path
 
@@ -40,6 +42,48 @@ async def _wait_status(
         await asyncio.sleep(0.2)
     raise AssertionError(
         f"run {run_id} did not reach {expected!r} within {timeout_s}s"
+    )
+
+
+def _write_verification_contract(project: Path) -> None:
+    """Commit a small scheduled-gate contract so the mock worktree receives it."""
+    plugin = project / ".orcho" / "multiagent" / "plugin.py"
+    plugin.parent.mkdir(parents=True)
+    plugin.write_text(
+        '''PLUGIN = {
+    "verification": {
+        "commands": {"ledger-check": {"run": "python -c 'pass'"}},
+        "schedule": [
+            {"after_phase": "implement", "commands": ["ledger-check"], "policy": "require"},
+            {"before_delivery": True, "commands": ["ledger-check"], "policy": "warn"},
+        ],
+    },
+}
+''',
+        encoding="utf-8",
+    )
+    subprocess.run(
+        ["git", "add", str(plugin.relative_to(project))],
+        cwd=project,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "add scheduled gate contract"],
+        cwd=project,
+        check=True,
+    )
+
+
+def _pin_core_for_mock_pipeline(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make the detached mock pipeline import the paired core checkout."""
+    from tests._core_source import pin_core_source
+
+    core_root = pin_core_source()
+    assert core_root is not None, "paired orcho-core checkout was not found"
+    prior = os.environ.get("PYTHONPATH", "")
+    monkeypatch.setenv(
+        "PYTHONPATH",
+        os.pathsep.join(path for path in (str(core_root), prior) if path),
     )
 
 
@@ -72,6 +116,83 @@ async def test_slice_all_populates_every_slice(mock_project: Path) -> None:
     assert result.artifacts is not None
     assert result.errors is not None
     assert result.sub_runs is not None
+
+
+@pytest.mark.asyncio
+async def test_mock_run_evidence_reads_canonical_scheduled_gate_ledger(
+    mock_project: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A real mock run preserves duplicate scheduled-gate identities in both views."""
+    from orcho_mcp.tools import orcho_run_evidence, orcho_run_start
+
+    _pin_core_for_mock_pipeline(monkeypatch)
+    _write_verification_contract(mock_project)
+    started = await orcho_run_start(
+        task="run scheduled verification ledger",
+        project_dir=str(mock_project),
+        mock=True,
+        max_rounds=1,
+    )
+    await _wait_status(started.run_id, {"done"})
+
+    ledger_path = (
+        mock_project.parent / "runspace" / "runs" / started.run_id
+        / "scheduled_gate_ledger.json"
+    )
+    assert ledger_path.is_file(), (
+        "paired core completed a declared scheduled-gate contract without "
+        "persisting scheduled_gate_ledger.json"
+    )
+
+    timeline_result = orcho_run_evidence(
+        started.run_id,
+        slice="verification_timeline",
+    )
+    cockpit_result = orcho_run_evidence(
+        started.run_id,
+        slice="verification_cockpit",
+    )
+    timeline = timeline_result.verification_timeline
+    cockpit = cockpit_result.verification_cockpit
+    assert timeline is not None
+    assert cockpit is not None
+    assert cockpit.model_dump() == timeline.model_dump()
+    assert timeline.finalized is True
+
+    rows = [row for row in timeline.rows if row.command == "ledger-check"]
+    assert [(row.command, row.hook, row.phase) for row in rows] == [
+        ("ledger-check", "after_phase", "implement"),
+        ("ledger-check", "before_delivery", ""),
+    ]
+    required, warning = rows
+    assert (
+        required.declared,
+        required.selectable,
+        required.selected,
+        required.execution_policy,
+        required.consequence,
+        required.executor,
+        required.trigger,
+        required.disposition,
+    ) == (True, True, True, "require", "required_action", "engine", "after_phase", "executed_pass")
+    assert (
+        warning.declared,
+        warning.selectable,
+        warning.selected,
+        warning.execution_policy,
+        warning.consequence,
+        warning.executor,
+        warning.trigger,
+    ) == (True, True, True, "warn", "warning", "engine", "pre_final")
+    assert any(
+        event.command == "ledger-check"
+        and event.hook == "after_phase"
+        and event.phase == "implement"
+        and event.kind == "execution"
+        and event.outcome == "pass"
+        for event in timeline.events
+    )
 
 
 # ── individual slices ──────────────────────────────────────────────────────

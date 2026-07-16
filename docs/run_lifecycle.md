@@ -48,7 +48,7 @@ involved:
 
 | Tool | Purpose |
 |---|---|
-| `orcho_run_evidence` | What happened / what proves it? Typed slices for plan summary, findings (severity-filterable), commands, artifacts, errors+halt reason, cross-run sub-aliases, per-subtask delivery receipts (`subtask_dag`), and verification-environment receipts (interpreter / cwd / import checks / commands / clean-tree note). Replaces raw log/event-jsonl reads for control-loop clients. |
+| `orcho_run_evidence` | What happened / what proves it? Typed slices for plan summary, findings (severity-filterable), commands, artifacts, errors+halt reason, cross-run sub-aliases, per-subtask delivery receipts (`subtask_dag`), verification-environment receipts, and the canonical scheduled-gate ledger (`verification_timeline` / `verification_cockpit`). Ledger rows retain identity, declaration, selection, execution, disposition, and receipt-evidence facts; events stay identity-scoped. Replaces raw log/event-jsonl reads for control-loop clients. |
 | `orcho_run_diagnose` | Read-only resume-situation verdict: a typed `condition`, a one-line `reason`, and call-readiness-typed `next_actions`. Call before any risky `orcho_run_resume`. See [Diagnosing a run](#diagnosing-a-run--orcho_run_diagnose). |
 | `orcho_delivery_gate` | Read-only projection of a post-release delivery / correction gate: SDK-derived kind, available actions, blocked actions, diff summary, and ready calls to `orcho_delivery_decide`. |
 
@@ -713,6 +713,9 @@ fit the answer in its context window.
 | `"errors"` | `ErrorsHaltSliceRecord` — status, errors[], halt_reason, halted_at, error_summary, and `implement_delivery` (typed delivery/waiver audit; `None` for a clean delivery). See [Delivery / waiver audit](#delivery--waiver-audit-implement_delivery). |
 | `"sub_runs"` | `list[SubRunLinkRecord]` — cross-run child aliases (name, status, run_dir). Empty for single-project runs. |
 | `"receipts"` | `list[SubtaskReceiptRecord]` — per-subtask delivery receipts for a `subtask_dag` run. Each carries `subtask_id`, `state` (`done` / `incomplete` / `failed` / `skipped`), `runtime`, `model`, `skill`, `depends_on`, `done_criteria`, `duration`, `error`, and the done-criteria self-attestation: `criteria_report` (`list[CriterionReportRecord]` of index/criterion/met/evidence), `attestation_summary`, `attestation_error`. An `incomplete` subtask executed but did not close its done-criteria; the reason is in `attestation_error`. Empty for `whole_plan` runs. |
+| `"verification_receipts"` | `list[VerificationReceiptRecord]` — durable verification-environment receipts: interpreter, cwd, import checks, commands, clean-tree note, and artifact path. |
+| `"verification_timeline"` | `VerificationTimelineRecord` — canonical scheduled-gate ledger rows and identity-scoped events. Rows preserve `(command, hook, phase)`, declaration/selection facts, execution policy/consequence/executor/trigger, nullable disposition, and `receipt_evidence`. |
+| `"verification_cockpit"` | `VerificationTimelineRecord` — the same canonical scheduled-gate ledger projection under the cockpit view name; its rows and events are identical to `verification_timeline`. |
 
 ### Filters
 

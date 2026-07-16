@@ -3739,7 +3739,7 @@
       }
     },
     {
-      "description": "What happened / what proves it?\n\n    Typed evidence slices for reconstructing why the run reached its current\n    state: plan contract, findings, commands, artifacts, errors, receipts,\n    verification, delivery, correction, and cross-run children. Use this for\n    audit / post-mortem / proof; use ``orcho_run_status`` for the live operator\n    snapshot, ``orcho_run_metrics`` for consumption, and ``orcho_run_diff`` for\n    patch content.\n\n    The full evidence bundle (``collect_evidence``) is exhaustive; this\n    tool surfaces narrow projections control-loop clients actually\n    need: what the plan said, which findings blocked the run, which\n    commands the pipeline shelled out to, what artifacts landed, why\n    the run halted, and the cross-run alias linkage for cross-project\n    parents.\n\n    ``slice``:\n      - ``\"all\"`` (default) — every slice populated in one response.\n      - ``\"plan\"`` — plan summary only, including the plan's declared\n        ``allowed_modifications`` globs (from the durable plan artifact).\n      - ``\"findings\"`` — flattened findings list (filterable). Each finding\n        carries an ``advisory`` flag: the latest non-approved ``validate_plan``\n        attempt's findings, forwarded into a successful whole-plan implement,\n        are advisory (visible, NOT an active release blocker). ``advisory``\n        isolates only that subset — findings are flattened across all attempts,\n        so ``advisory=False`` still includes historical/resolved entries and is\n        NOT the active-blocker set.\n      - ``\"commands\"`` — pipeline shell-outs.\n      - ``\"artifacts\"`` — files the run wrote.\n      - ``\"errors\"`` — errors + halt reason.\n      - ``\"sub_runs\"`` — cross-run child alias links (empty for\n        single-project runs).\n      - ``\"receipts\"`` — per-subtask delivery receipts for a\n        ``subtask_dag`` run: state (``done|incomplete|failed|skipped``)\n        plus the done-criteria self-attestation (``criteria_report``,\n        ``attestation_summary``, ``attestation_error``). A subtask that\n        executed but did not close its done-criteria is ``incomplete``\n        with the reason in ``attestation_error``. Empty for\n        ``whole_plan`` runs.\n      - ``\"verification_receipts\"`` — durable verification-environment\n        receipts for the developer-side phases: which\n        interpreter (``python``) and working directory (``cwd``) ran the\n        checks, the import checks (name / expected / actual / passed),\n        the exact commands + exit codes, the clean-tree note\n        (``temp_env_outside_checkout``), and the on-disk\n        ``artifact_path``. Empty when the run recorded no receipts.\n      - ``\"verification_timeline\"`` — the official verification-gate\n        timeline as typed data: per-gate ``status`` (exactly one of\n        ``PASS`` / ``FAIL`` / ``MISSING`` / ``STALE`` / ``SKIPPED`` /\n        ``FRESH`` — a manual/operator-only gate is ``SKIPPED`` with\n        ``policy='manual_only'``), each missing/stale/failed required gate\n        carrying its own ``rerun_hint`` + ``searched_run_dirs``, plus the\n        residual / manual-only / inherited aggregates and the auto-run\n        events. ``has_contract=False`` when the project declares no\n        verification contract.\n      - ``\"verification_cockpit\"`` — the SAME verification gates as a typed\n        cockpit (built from one shared SDK read, never hiding the timeline):\n        a header (``has_contract`` / ``mode`` / ``envs`` / ``policy_summary``\n        / ``effect``) plus one row per gate. Each row keeps the command name\n        AND its planning properties visible together — ``hook``/phase,\n        ``trigger``, ``policy``, ``required``, ``gate_class`` + ``class_source``,\n        the same six-value ``status``, ``env``, and the deciding-receipt\n        evidence (``receipt_path`` / ``inherited`` / ``source_run_id``) with\n        ``stale_reason`` / ``rerun_hint`` where applicable. ``trigger`` is\n        derived deterministically: ``operator_only`` for a manual-only gate\n        (membership or ``policy='manual_only'``) — present on purpose, NOT an\n        automation failure; ``auto`` when the run's automation acted on the\n        command; else ``manual``. ``has_contract=False`` when the project\n        declares no verification contract.\n      - ``\"handoff_advice\"`` — Stage 0/1 phase-handoff advisor evidence:\n        one record per advisor call (``handoff_id`` / ``phase`` /\n        ``recommended_action`` / ``applied_action`` / ``confidence`` /\n        ``resolved`` / ``repeated`` / ``outcome`` / ``finding_fingerprint`` /\n        token-usage + cost / ``advice_artifact``) plus an aggregate ``summary``\n        (``calls`` / ``applied_retries`` / ``resolved_retries`` / ``repeated`` /\n        ``stopped`` / ``unknown`` / ``usage``). ``resolved`` is tri-state\n        (True / False / None). A run with no advisor surface returns an empty\n        slice (``calls=[]``, zeroed summary), never an error.\n      - ``\"scope_expansion\"`` — the ADR 0110 scope-expansion audit recorded at\n        ``final_acceptance``: one item per out-of-plan path with its\n        ``classification`` (``notice`` / ``risk`` / ``blocker``), ``category``,\n        and supporting ``evidence``, plus the aggregate ``has_blocker``\n        decision-condition flag. A ``notice`` is informational ONLY — it never\n        forms an operator handoff / next_action; a ``blocker`` is surfaced via\n        ``has_blocker`` as the operator-decision condition. This is a SEPARATE\n        axis from the delivery ``scope_disclosure`` on ``orcho_delivery_gate``\n        (which names strict-mono sibling files behind a shipping block). Empty\n        slice (``items=[]``, ``has_blocker=False``) when the run recorded no\n        scope-expansion audit, never an error.\n      - ``\"delivery\"`` — the post-release commit-delivery outcome as typed\n        data: ``release_verdict`` (``approved`` / ``rejected`` / ``none``), the\n        raw ``decision_status`` + ``action``, and the distinguishable\n        ``applied`` / ``committed`` / ``skipped`` / ``failed`` booleans mapped\n        from the core ``CommitDeliveryStatus`` vocabulary, plus ``commit_sha`` /\n        ``halt_reason`` and the same ``implement_delivery`` audit as the\n        ``errors`` slice (single source). ``None`` when the run recorded no\n        commit-delivery decision. This is read-only evidence — NOT the\n        interactive ``orcho_delivery_gate``. The inherited-vs-current\n        verification receipts behind an approved gate-rerun child live in the\n        ``verification_timeline`` (``inherited`` + per-gate ``source_run_id``)\n        and ``receipts`` slices, not here.\n      - ``\"correction\"`` — the ADR 0098 correction fixed-point outcome:\n        ``non_converging`` (an operator-decision condition — the captain may\n        stop), the ``repeated`` blockers, ``parent_run_id`` / ``child_run_id``,\n        advisory ``suggested_actions`` (next-step hints, never auto-applied),\n        and ``reason``. ``None`` when core recorded no fixed-point block.\n\n    ``severity_min`` (only honoured when findings are returned):\n    minimum-criticality cutoff. ``\"P0\"`` returns only P0; ``\"P1\"``\n    returns P0 + P1; etc. ``None`` returns all severities.\n\n    ``phases`` (only honoured for findings): restrict to specific\n    finding-bearing phases (``plan_qa``, ``review``, ``final_qa``,\n    ``compliance_check``). ``None`` returns findings from all four.\n\n    Errors:\n      - RunNotFoundError — unknown run_id.\n      - InvalidPlanError — invalid ``slice`` value or invalid\n        ``severity_min`` value.\n    ",
+      "description": "What happened / what proves it?\n\n    Typed evidence slices for reconstructing why the run reached its current\n    state: plan contract, findings, commands, artifacts, errors, receipts,\n    verification, delivery, correction, and cross-run children. Use this for\n    audit / post-mortem / proof; use ``orcho_run_status`` for the live operator\n    snapshot, ``orcho_run_metrics`` for consumption, and ``orcho_run_diff`` for\n    patch content.\n\n    The full evidence bundle (``collect_evidence``) is exhaustive; this\n    tool surfaces narrow projections control-loop clients actually\n    need: what the plan said, which findings blocked the run, which\n    commands the pipeline shelled out to, what artifacts landed, why\n    the run halted, and the cross-run alias linkage for cross-project\n    parents.\n\n    ``slice``:\n      - ``\"all\"`` (default) — every slice populated in one response.\n      - ``\"plan\"`` — plan summary only, including the plan's declared\n        ``allowed_modifications`` globs (from the durable plan artifact).\n      - ``\"findings\"`` — flattened findings list (filterable). Each finding\n        carries an ``advisory`` flag: the latest non-approved ``validate_plan``\n        attempt's findings, forwarded into a successful whole-plan implement,\n        are advisory (visible, NOT an active release blocker). ``advisory``\n        isolates only that subset — findings are flattened across all attempts,\n        so ``advisory=False`` still includes historical/resolved entries and is\n        NOT the active-blocker set.\n      - ``\"commands\"`` — pipeline shell-outs.\n      - ``\"artifacts\"`` — files the run wrote.\n      - ``\"errors\"`` — errors + halt reason.\n      - ``\"sub_runs\"`` — cross-run child alias links (empty for\n        single-project runs).\n      - ``\"receipts\"`` — per-subtask delivery receipts for a\n        ``subtask_dag`` run: state (``done|incomplete|failed|skipped``)\n        plus the done-criteria self-attestation (``criteria_report``,\n        ``attestation_summary``, ``attestation_error``). A subtask that\n        executed but did not close its done-criteria is ``incomplete``\n        with the reason in ``attestation_error``. Empty for\n        ``whole_plan`` runs.\n      - ``\"verification_receipts\"`` — durable verification-environment\n        receipts for the developer-side phases: which\n        interpreter (``python``) and working directory (``cwd``) ran the\n        checks, the import checks (name / expected / actual / passed),\n        the exact commands + exit codes, the clean-tree note\n        (``temp_env_outside_checkout``), and the on-disk\n        ``artifact_path``. Empty when the run recorded no receipts.\n      - ``\"verification_timeline\"`` — the canonical scheduled-gate ledger.\n        Each row retains its full identity (``command`` / ``hook`` / ``phase``),\n        declaration and selection facts (``declared`` / ``selectable`` /\n        ``selected`` / ``selection_reason``), execution facts\n        (``execution_policy`` / ``consequence`` / ``executor`` / ``trigger``),\n        nullable terminal ``disposition``, and any ``receipt_evidence``.\n        Identity-scoped ``events`` retain their kind, outcome, reason, and\n        receipt evidence. MCP forwards these SDK facts without deriving a\n        command-level status or policy summary.\n      - ``\"verification_cockpit\"`` — the same canonical scheduled-gate ledger\n        projection under the cockpit view name. It has the identical rows and\n        identity-scoped events as ``verification_timeline`` and is built from\n        the same SDK read.\n      - ``\"handoff_advice\"`` — Stage 0/1 phase-handoff advisor evidence:\n        one record per advisor call (``handoff_id`` / ``phase`` /\n        ``recommended_action`` / ``applied_action`` / ``confidence`` /\n        ``resolved`` / ``repeated`` / ``outcome`` / ``finding_fingerprint`` /\n        token-usage + cost / ``advice_artifact``) plus an aggregate ``summary``\n        (``calls`` / ``applied_retries`` / ``resolved_retries`` / ``repeated`` /\n        ``stopped`` / ``unknown`` / ``usage``). ``resolved`` is tri-state\n        (True / False / None). A run with no advisor surface returns an empty\n        slice (``calls=[]``, zeroed summary), never an error.\n      - ``\"scope_expansion\"`` — the ADR 0110 scope-expansion audit recorded at\n        ``final_acceptance``: one item per out-of-plan path with its\n        ``classification`` (``notice`` / ``risk`` / ``blocker``), ``category``,\n        and supporting ``evidence``, plus the aggregate ``has_blocker``\n        decision-condition flag. A ``notice`` is informational ONLY — it never\n        forms an operator handoff / next_action; a ``blocker`` is surfaced via\n        ``has_blocker`` as the operator-decision condition. This is a SEPARATE\n        axis from the delivery ``scope_disclosure`` on ``orcho_delivery_gate``\n        (which names strict-mono sibling files behind a shipping block). Empty\n        slice (``items=[]``, ``has_blocker=False``) when the run recorded no\n        scope-expansion audit, never an error.\n      - ``\"delivery\"`` — the post-release commit-delivery outcome as typed\n        data: ``release_verdict`` (``approved`` / ``rejected`` / ``none``), the\n        raw ``decision_status`` + ``action``, and the distinguishable\n        ``applied`` / ``committed`` / ``skipped`` / ``failed`` booleans mapped\n        from the core ``CommitDeliveryStatus`` vocabulary, plus ``commit_sha`` /\n        ``halt_reason`` and the same ``implement_delivery`` audit as the\n        ``errors`` slice (single source). ``None`` when the run recorded no\n        commit-delivery decision. This is read-only evidence — NOT the\n        interactive ``orcho_delivery_gate``. The inherited-vs-current\n        verification receipts behind an approved gate-rerun child live in the\n        ``verification_timeline`` (``inherited`` + per-gate ``source_run_id``)\n        and ``receipts`` slices, not here.\n      - ``\"correction\"`` — the ADR 0098 correction fixed-point outcome:\n        ``non_converging`` (an operator-decision condition — the captain may\n        stop), the ``repeated`` blockers, ``parent_run_id`` / ``child_run_id``,\n        advisory ``suggested_actions`` (next-step hints, never auto-applied),\n        and ``reason``. ``None`` when core recorded no fixed-point block.\n\n    ``severity_min`` (only honoured when findings are returned):\n    minimum-criticality cutoff. ``\"P0\"`` returns only P0; ``\"P1\"``\n    returns P0 + P1; etc. ``None`` returns all severities.\n\n    ``phases`` (only honoured for findings): restrict to specific\n    finding-bearing phases (``plan_qa``, ``review``, ``final_qa``,\n    ``compliance_check``). ``None`` returns findings from all four.\n\n    Errors:\n      - RunNotFoundError — unknown run_id.\n      - InvalidPlanError — invalid ``slice`` value or invalid\n        ``severity_min`` value.\n    ",
       "inputSchema": {
         "properties": {
           "phases": {
@@ -4996,6 +4996,248 @@
             "title": "ProviderPressure",
             "type": "object"
           },
+          "ReceiptEvidenceRecord": {
+            "description": "Receipt fact attached to one scheduled-gate identity by the SDK.",
+            "properties": {
+              "classification": {
+                "default": "",
+                "title": "Classification",
+                "type": "string"
+              },
+              "inherited": {
+                "default": false,
+                "title": "Inherited",
+                "type": "boolean"
+              },
+              "path": {
+                "default": "",
+                "title": "Path",
+                "type": "string"
+              },
+              "reason": {
+                "default": "",
+                "title": "Reason",
+                "type": "string"
+              },
+              "rerun": {
+                "default": false,
+                "title": "Rerun",
+                "type": "boolean"
+              },
+              "source": {
+                "default": "",
+                "title": "Source",
+                "type": "string"
+              }
+            },
+            "title": "ReceiptEvidenceRecord",
+            "type": "object"
+          },
+          "ScheduledGateEventRecord": {
+            "description": "Canonical identity-scoped event from the SDK's scheduled-gate trail.",
+            "properties": {
+              "command": {
+                "title": "Command",
+                "type": "string"
+              },
+              "hook": {
+                "title": "Hook",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "selection",
+                  "execution",
+                  "reuse",
+                  "receipt"
+                ],
+                "title": "Kind",
+                "type": "string"
+              },
+              "outcome": {
+                "title": "Outcome",
+                "type": "string"
+              },
+              "phase": {
+                "title": "Phase",
+                "type": "string"
+              },
+              "reason": {
+                "title": "Reason",
+                "type": "string"
+              },
+              "receipt_evidence": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ReceiptEvidenceRecord"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              }
+            },
+            "required": [
+              "command",
+              "hook",
+              "phase",
+              "kind",
+              "outcome",
+              "reason"
+            ],
+            "title": "ScheduledGateEventRecord",
+            "type": "object"
+          },
+          "ScheduledGateRowRecord": {
+            "description": "Canonical SDK ledger row; no gate semantics are derived in MCP.",
+            "properties": {
+              "command": {
+                "title": "Command",
+                "type": "string"
+              },
+              "consequence": {
+                "enum": [
+                  "none",
+                  "warning",
+                  "required_action"
+                ],
+                "title": "Consequence",
+                "type": "string"
+              },
+              "declared": {
+                "title": "Declared",
+                "type": "boolean"
+              },
+              "disposition": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "not_selected",
+                      "manual_available",
+                      "suggested",
+                      "skipped_fresh",
+                      "executed_pass",
+                      "executed_fail",
+                      "residual_missing",
+                      "residual_stale",
+                      "residual_failed"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Disposition"
+              },
+              "execution_policy": {
+                "enum": [
+                  "manual",
+                  "suggest",
+                  "warn",
+                  "require",
+                  "unknown"
+                ],
+                "title": "Execution Policy",
+                "type": "string"
+              },
+              "executor": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "engine",
+                      "operator"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Executor"
+              },
+              "hook": {
+                "title": "Hook",
+                "type": "string"
+              },
+              "phase": {
+                "title": "Phase",
+                "type": "string"
+              },
+              "receipt_evidence": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/ReceiptEvidenceRecord"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "selectable": {
+                "title": "Selectable",
+                "type": "boolean"
+              },
+              "selected": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Selected"
+              },
+              "selection_reason": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Selection Reason"
+              },
+              "trigger": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "before_phase",
+                      "after_phase",
+                      "pre_final",
+                      "operator",
+                      "on_resume"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Trigger"
+              }
+            },
+            "required": [
+              "command",
+              "hook",
+              "phase",
+              "declared",
+              "selectable",
+              "execution_policy",
+              "consequence"
+            ],
+            "title": "ScheduledGateRowRecord",
+            "type": "object"
+          },
           "ScopeExpansionItemRecord": {
             "description": "One scope-expansion observation recorded at ``final_acceptance``.\n\nThis is the ADR 0110 scope-expansion axis: ``final_acceptance`` compares\nthe change actually delivered against the plan's declared surface and\nrecords paths that fell outside it, each with a triage ``classification``.\nIt is a SEPARATE fact from the delivery ``scope_disclosure`` on\n:class:`DeliveryGateProjection` — that one names sibling-repo files\nimplicated by a strict-mono ``delivery_scope_violation`` (a shipping guard),\nwhereas this one is the plan-vs-delivered surface audit. Do not conflate the\ntwo axes.\n\n``classification`` is EXACTLY one of ``'notice'`` / ``'risk'`` /\n``'blocker'`` (projected verbatim from the core item's ``status``):\n\n  - ``notice`` — informational only. It never implies an operator decision\n    or a human handoff; the MCP layer surfaces it as data and forms no\n    ``next_action`` for it.\n  - ``risk`` — a flagged expansion worth operator attention, still not a\n    hard stop on its own.\n  - ``blocker`` — an out-of-scope change core treats as a release-blocking\n    condition; reflected through the slice's ``has_blocker`` flag.\n\n``category`` is the optional core-supplied bucket for the observation;\n``evidence`` carries the supporting breadcrumbs (paths / notes) verbatim.",
             "properties": {
@@ -5194,60 +5436,6 @@
             "title": "SubtaskReceiptRecord",
             "type": "object"
           },
-          "VerificationAutorunEventRecord": {
-            "description": "One durable auto-run firing mirrored from the run's phase log.\n\n``ran_pass`` are commands executed and passing this firing; ``ran_fail``\nthose that failed; ``skipped_fresh`` were already present (fresh receipt,\nnot executed); ``skipped_manual`` were intentionally not auto-run.\n``receipt_paths`` are the durable env / command receipts this firing wrote.",
-            "properties": {
-              "hook_label": {
-                "title": "Hook Label",
-                "type": "string"
-              },
-              "ran_fail": {
-                "items": {
-                  "type": "string"
-                },
-                "title": "Ran Fail",
-                "type": "array"
-              },
-              "ran_pass": {
-                "items": {
-                  "type": "string"
-                },
-                "title": "Ran Pass",
-                "type": "array"
-              },
-              "receipt_paths": {
-                "items": {
-                  "type": "string"
-                },
-                "title": "Receipt Paths",
-                "type": "array"
-              },
-              "skipped_fresh": {
-                "items": {
-                  "type": "string"
-                },
-                "title": "Skipped Fresh",
-                "type": "array"
-              },
-              "skipped_manual": {
-                "items": {
-                  "type": "string"
-                },
-                "title": "Skipped Manual",
-                "type": "array"
-              },
-              "source": {
-                "title": "Source",
-                "type": "string"
-              }
-            },
-            "required": [
-              "hook_label",
-              "source"
-            ],
-            "title": "VerificationAutorunEventRecord",
-            "type": "object"
-          },
           "VerificationCheckRecord": {
             "description": "One environment check from a verification-environment receipt.\n\nThe canonical check is ``pipeline_import``: it proves which\n``pipeline/__init__.py`` the phase's interpreter actually imported.\n``expected`` / ``actual`` are absolute paths (``None`` when the check\ncould not be confirmed); ``passed`` is True only when they matched.",
             "properties": {
@@ -5291,105 +5479,6 @@
             "title": "VerificationCheckRecord",
             "type": "object"
           },
-          "VerificationCockpit": {
-            "description": "Typed cockpit projection of a run's verification gates.\n\nA read-only, actionable view derived from the SAME SDK call that feeds\n``VerificationTimelineRecord`` — it augments the timeline, never replaces\nor hides it. The header carries contract presence, the (best-effort) work\nmode, the environments seen across gates, an aggregate ``policy_summary``,\nand a human-readable ``effect`` string. ``gates`` is the per-gate cockpit\nrows; the residual / manual-only / inherited aggregates mirror the\ntimeline's so a manual-only ``SKIPPED`` gate never lands in\nresidual missing / failed.\n\n``has_contract`` is ALWAYS set explicitly by the builder from\n``proj.has_contract`` (the default here exists only so the constructor is\nusable). ``mode`` stays ``None`` until core exposes ``work_mode`` through the\ntimeline projection.",
-            "properties": {
-              "effect": {
-                "description": "Human-readable derived effect of the policy aggregate.",
-                "title": "Effect",
-                "type": "string"
-              },
-              "envs": {
-                "items": {
-                  "type": "string"
-                },
-                "title": "Envs",
-                "type": "array"
-              },
-              "gates": {
-                "items": {
-                  "$ref": "#/$defs/VerificationGateCockpitRow"
-                },
-                "title": "Gates",
-                "type": "array"
-              },
-              "has_contract": {
-                "default": false,
-                "title": "Has Contract",
-                "type": "boolean"
-              },
-              "inherited": {
-                "items": {
-                  "type": "string"
-                },
-                "title": "Inherited",
-                "type": "array"
-              },
-              "manual_only": {
-                "items": {
-                  "type": "string"
-                },
-                "title": "Manual Only",
-                "type": "array"
-              },
-              "mode": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Mode"
-              },
-              "policy_summary": {
-                "description": "Aggregate of gate policies: 'require' | 'warn' | 'suggest' | 'mixed' | 'none'.",
-                "title": "Policy Summary",
-                "type": "string"
-              },
-              "residual_failed": {
-                "items": {
-                  "type": "string"
-                },
-                "title": "Residual Failed",
-                "type": "array"
-              },
-              "residual_missing": {
-                "items": {
-                  "type": "string"
-                },
-                "title": "Residual Missing",
-                "type": "array"
-              },
-              "residual_stale": {
-                "items": {
-                  "type": "string"
-                },
-                "title": "Residual Stale",
-                "type": "array"
-              },
-              "run_id": {
-                "title": "Run Id",
-                "type": "string"
-              },
-              "suggested_commands": {
-                "items": {
-                  "type": "string"
-                },
-                "title": "Suggested Commands",
-                "type": "array"
-              }
-            },
-            "required": [
-              "run_id",
-              "policy_summary",
-              "effect"
-            ],
-            "title": "VerificationCockpit",
-            "type": "object"
-          },
           "VerificationCommandRecord": {
             "description": "One command a verification-environment receipt recorded.\n\n``argv`` is the exact command line (normalised to a list of strings);\n``exit_code`` is its return code (``None`` when the subprocess could\nnot be launched / timed out).",
             "properties": {
@@ -5414,168 +5503,6 @@
               }
             },
             "title": "VerificationCommandRecord",
-            "type": "object"
-          },
-          "VerificationGateCockpitRow": {
-            "description": "One verification gate as a cockpit row — a typed, actionable\n\nprojection of a single ``VerificationTimelineGateRecord`` that makes the\ngate's *planning* properties (how it fires, who owns it, what it gates on)\nlegible alongside its status, without collapsing any of them.\n\n``trigger`` is derived deterministically (never read from core):\n\n  - ``operator_only`` — the command is in the timeline's ``manual_only``\n    set OR ``policy == 'manual_only'``. A manual / operator-only gate is\n    present here on purpose; ``status='SKIPPED'`` for it is NOT an\n    automation failure and must not be read as missing.\n  - ``auto`` — the command appears in an autorun event's ``ran_pass`` /\n    ``ran_fail`` / ``skipped_fresh`` (the run's automation acted on it).\n  - ``manual`` — neither of the above (a declared gate the automation has\n    not acted on and that is not operator-only).\n\n``class_source`` honours provenance: ``'core'`` ONLY when ``gate_class``\ncame from a durable core field. When the class is inferred locally it is\n``'derived'``; when there is no class signal at all it is ``'unspecified'``.\n``'core'`` must never be claimed for a guessed taxonomy.\n\n``status`` is the same six-value enum as the timeline\n(``PASS`` / ``FAIL`` / ``MISSING`` / ``STALE`` / ``SKIPPED`` / ``FRESH``);\nthere is no ``MANUAL`` status — manual is expressed via\n``trigger`` + ``policy``. ``inherited`` / ``source_run_id`` / ``receipt_path``\ncarry the deciding-receipt evidence; ``stale_reason`` / ``rerun_hint`` are\npopulated where applicable.",
-            "properties": {
-              "class_source": {
-                "default": "unspecified",
-                "enum": [
-                  "core",
-                  "derived",
-                  "unspecified"
-                ],
-                "title": "Class Source",
-                "type": "string"
-              },
-              "command": {
-                "title": "Command",
-                "type": "string"
-              },
-              "detail": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "description": "Human-readable operator note, populated when an environment-provenance break downgrades the gate to ``FAIL`` — names the failing verification_environment check with its expected/actual (e.g. ``pipeline_import: expected <X> actual <Y>``). ``None`` for an ordinary gate.",
-                "title": "Detail"
-              },
-              "env": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Env"
-              },
-              "gate_class": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Gate Class"
-              },
-              "hook": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "description": "Delivery hook / phase the gate is scheduled at (e.g. ``after_phase(implement)``, ``before_delivery``).",
-                "title": "Hook"
-              },
-              "inherited": {
-                "default": false,
-                "title": "Inherited",
-                "type": "boolean"
-              },
-              "policy": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Policy"
-              },
-              "receipt_path": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Receipt Path"
-              },
-              "required": {
-                "default": false,
-                "title": "Required",
-                "type": "boolean"
-              },
-              "rerun_hint": {
-                "items": {
-                  "type": "string"
-                },
-                "title": "Rerun Hint",
-                "type": "array"
-              },
-              "source_run_id": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Source Run Id"
-              },
-              "stale_reason": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Stale Reason"
-              },
-              "status": {
-                "enum": [
-                  "PASS",
-                  "FAIL",
-                  "MISSING",
-                  "STALE",
-                  "SKIPPED",
-                  "FRESH"
-                ],
-                "title": "Status",
-                "type": "string"
-              },
-              "trigger": {
-                "enum": [
-                  "auto",
-                  "manual",
-                  "operator_only"
-                ],
-                "title": "Trigger",
-                "type": "string"
-              }
-            },
-            "required": [
-              "command",
-              "trigger",
-              "status"
-            ],
-            "title": "VerificationGateCockpitRow",
             "type": "object"
           },
           "VerificationReceiptRecord": {
@@ -5679,245 +5606,51 @@
             "title": "VerificationReceiptRecord",
             "type": "object"
           },
-          "VerificationTimelineGateRecord": {
-            "description": "One required delivery command's official verification-gate state.\n\nProjected verbatim from the SDK's durable\n``sdk.get_verification_timeline`` per-gate record. ``status`` is EXACTLY\none of the six values ``PASS`` / ``FAIL`` / ``MISSING`` / ``STALE`` /\n``SKIPPED`` / ``FRESH`` — there is no ``MANUAL`` value. A manual /\noperator-only gate is surfaced as ``status='SKIPPED'`` with\n``policy='manual_only'`` and membership in the timeline's ``manual_only``,\nnever as missing.\n\n``searched_run_dirs`` and ``rerun_hint`` are populated ONLY for a\nnon-present required gate (``MISSING`` / ``STALE`` / ``FAIL``); present and\nmanual gates carry empty lists. ``inherited`` is True when the deciding\nreceipt came from a parent run (``source_run_id`` differs from this run).",
-            "properties": {
-              "command": {
-                "title": "Command",
-                "type": "string"
-              },
-              "detail": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "description": "Human-readable operator note, populated when an environment-provenance break downgrades the gate to ``FAIL`` — names the failing verification_environment check with its expected/actual (e.g. ``pipeline_import: expected <X> actual <Y>``). ``None`` for an ordinary gate.",
-                "title": "Detail"
-              },
-              "env": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Env"
-              },
-              "hook": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "description": "Delivery hook the gate is scheduled at (e.g. ``after_phase(implement)``, ``before_delivery``).",
-                "title": "Hook"
-              },
-              "inherited": {
-                "default": false,
-                "title": "Inherited",
-                "type": "boolean"
-              },
-              "policy": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "description": "Effective delivery policy (``require`` / ``warn`` / ``suggest`` / ``manual_only``).",
-                "title": "Policy"
-              },
-              "receipt_path": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Receipt Path"
-              },
-              "required": {
-                "default": false,
-                "title": "Required",
-                "type": "boolean"
-              },
-              "rerun_hint": {
-                "items": {
-                  "type": "string"
-                },
-                "title": "Rerun Hint",
-                "type": "array"
-              },
-              "searched_run_dirs": {
-                "items": {
-                  "type": "string"
-                },
-                "title": "Searched Run Dirs",
-                "type": "array"
-              },
-              "source": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Source"
-              },
-              "source_run_id": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Source Run Id"
-              },
-              "stale_reason": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "default": null,
-                "title": "Stale Reason"
-              },
-              "status": {
-                "enum": [
-                  "PASS",
-                  "FAIL",
-                  "MISSING",
-                  "STALE",
-                  "SKIPPED",
-                  "FRESH"
-                ],
-                "title": "Status",
-                "type": "string"
-              }
-            },
-            "required": [
-              "command",
-              "status"
-            ],
-            "title": "VerificationTimelineGateRecord",
-            "type": "object"
-          },
           "VerificationTimelineRecord": {
-            "description": "Typed projection of a run's official verification-gate timeline.\n\nRead-only durable source of truth from ``sdk.get_verification_timeline``:\nper-gate status + remediation (``gates``), the aggregate residual / manual /\ninherited sets, the shared ``suggested_commands`` hints, and the durable\nauto-run events. ``scheduled_trail_available`` is ``False`` until core\npersists a durable per-firing scheduled-gate trail — see GC-10 in\n``docs/ux/flagship_gap_spec.md`` for the exact core follow-up gap.",
+            "description": "Canonical scheduled-gate ledger projection returned by the SDK.",
             "properties": {
-              "autorun_events": {
+              "events": {
                 "items": {
-                  "$ref": "#/$defs/VerificationAutorunEventRecord"
+                  "$ref": "#/$defs/ScheduledGateEventRecord"
                 },
-                "title": "Autorun Events",
+                "title": "Events",
                 "type": "array"
               },
-              "gates": {
-                "items": {
-                  "$ref": "#/$defs/VerificationTimelineGateRecord"
-                },
-                "title": "Gates",
-                "type": "array"
-              },
-              "has_contract": {
+              "finalized": {
                 "default": false,
-                "title": "Has Contract",
+                "title": "Finalized",
                 "type": "boolean"
               },
-              "inherited": {
-                "items": {
-                  "type": "string"
-                },
-                "title": "Inherited",
-                "type": "array"
+              "project": {
+                "default": "",
+                "title": "Project",
+                "type": "string"
               },
-              "manual_only": {
+              "rows": {
                 "items": {
-                  "type": "string"
+                  "$ref": "#/$defs/ScheduledGateRowRecord"
                 },
-                "title": "Manual Only",
-                "type": "array"
-              },
-              "residual_failed": {
-                "items": {
-                  "type": "string"
-                },
-                "title": "Residual Failed",
-                "type": "array"
-              },
-              "residual_missing": {
-                "items": {
-                  "type": "string"
-                },
-                "title": "Residual Missing",
-                "type": "array"
-              },
-              "residual_stale": {
-                "items": {
-                  "type": "string"
-                },
-                "title": "Residual Stale",
+                "title": "Rows",
                 "type": "array"
               },
               "run_id": {
                 "title": "Run Id",
                 "type": "string"
               },
-              "scheduled_trail_available": {
-                "default": false,
-                "title": "Scheduled Trail Available",
-                "type": "boolean"
-              },
-              "searched_run_dirs": {
-                "items": {
-                  "type": "string"
-                },
-                "title": "Searched Run Dirs",
-                "type": "array"
-              },
-              "suggested_commands": {
-                "items": {
-                  "type": "string"
-                },
-                "title": "Suggested Commands",
-                "type": "array"
+              "schema_version": {
+                "title": "Schema Version",
+                "type": "string"
               }
             },
             "required": [
+              "schema_version",
               "run_id"
             ],
             "title": "VerificationTimelineRecord",
             "type": "object"
           }
         },
-        "description": "Returned by ``orcho_run_evidence``.\n\nThe ``slice`` field echoes back the requested view; the matching\nfield on the result is populated, others stay ``None``. ``slice=\"all\"``\npopulates every slice for one-shot inspection.\n\nSlices:\n  - ``\"plan\"`` — plan summary incl. ``allowed_modifications`` from the\n    durable plan (PlanSliceRecord)\n  - ``\"findings\"`` — flattened reviewer findings, each with an ``advisory``\n    flag: the latest non-approved ``validate_plan`` attempt's findings,\n    forwarded into a successful whole-plan implement, are advisory (visible,\n    not an active release blocker). ``advisory`` isolates only that subset;\n    because findings are flattened across all attempts, ``advisory=False``\n    still includes historical/resolved entries and must NOT be read as\n    \"active\" (list of FindingRecord)\n  - ``\"commands\"`` — pipeline shell-outs (list)\n  - ``\"artifacts\"`` — files the run wrote (list)\n  - ``\"errors\"`` — errors + halt reason (ErrorsHaltSliceRecord)\n  - ``\"sub_runs\"`` — cross-run child aliases (list)\n  - ``\"receipts\"`` — per-subtask delivery receipts incl. done-criteria\n    attestation (list of SubtaskReceiptRecord)\n  - ``\"verification_receipts\"`` — durable verification-environment\n    receipts (interpreter / cwd / import checks / commands / exit\n    codes / clean-tree note) (list of VerificationReceiptRecord)\n  - ``\"verification_timeline\"`` — official verification-gate timeline:\n    per-gate status (six-value enum, no MANUAL) with per-gate\n    rerun_hint / searched_run_dirs, the residual / manual-only /\n    inherited aggregates, and the auto-run events\n    (VerificationTimelineRecord)\n  - ``\"verification_cockpit\"`` — typed cockpit projection of the SAME\n    timeline (one SDK read): header (has_contract / mode / envs /\n    policy_summary / effect) plus per-gate cockpit rows that surface\n    trigger (auto / manual / operator_only), policy, requiredness, gate\n    class + provenance, status, and evidence (VerificationCockpit)\n  - ``\"handoff_advice\"`` — Stage 0/1 phase-handoff advisor evidence:\n    per-call records (handoff_id / phase / recommended_action /\n    applied_action / confidence / resolved / repeated / outcome /\n    finding_fingerprint / usage+cost / advice_artifact) plus an aggregate\n    summary (calls / applied_retries / resolved_retries / repeated /\n    stopped / unknown / usage). Empty slice when the run has no advisor\n    surface (HandoffAdviceSliceRecord)\n  - ``\"scope_expansion\"`` — ADR 0110 scope-expansion audit from\n    ``final_acceptance``: per-path items (path / classification\n    notice|risk|blocker / category / evidence) plus the aggregate\n    ``has_blocker`` decision-condition flag. A ``notice`` is informational\n    only and never forms an operator handoff. This is a SEPARATE axis from\n    the delivery ``scope_disclosure`` on ``DeliveryGateProjection`` (which\n    names strict-mono sibling files behind a shipping block). Empty slice\n    when the run recorded no scope-expansion audit (ScopeExpansionSliceRecord)\n  - ``\"delivery\"`` — post-release commit-delivery outcome as typed data:\n    ``release_verdict`` (approved / rejected / none), the raw\n    ``decision_status`` + ``action``, and the distinguishable\n    ``applied`` / ``committed`` / ``skipped`` / ``failed`` booleans (mapped\n    from the core CommitDeliveryStatus vocabulary), ``commit_sha`` /\n    ``halt_reason``, plus the same ``implement_delivery`` audit as the\n    ``errors`` slice. ``None`` when the run recorded no commit-delivery\n    decision. Inherited-vs-current receipts behind an approved gate-rerun\n    child live in the ``verification_timeline`` + ``receipts`` slices\n    (DeliverySummaryRecord)\n  - ``\"correction\"`` — ADR 0098 correction fixed-point / non-convergence:\n    ``non_converging`` (an operator-decision condition), ``repeated``\n    blockers, ``parent_run_id`` / ``child_run_id``, advisory\n    ``suggested_actions`` (never auto-applied), and ``reason``. ``None``\n    when core recorded no fixed-point block (CorrectionSliceRecord)\n  - ``\"all\"`` — every slice in one response",
+        "description": "Returned by ``orcho_run_evidence``.\n\nThe ``slice`` field echoes back the requested view; the matching\nfield on the result is populated, others stay ``None``. ``slice=\"all\"``\npopulates every slice for one-shot inspection.\n\nSlices:\n  - ``\"plan\"`` — plan summary incl. ``allowed_modifications`` from the\n    durable plan (PlanSliceRecord)\n  - ``\"findings\"`` — flattened reviewer findings, each with an ``advisory``\n    flag: the latest non-approved ``validate_plan`` attempt's findings,\n    forwarded into a successful whole-plan implement, are advisory (visible,\n    not an active release blocker). ``advisory`` isolates only that subset;\n    because findings are flattened across all attempts, ``advisory=False``\n    still includes historical/resolved entries and must NOT be read as\n    \"active\" (list of FindingRecord)\n  - ``\"commands\"`` — pipeline shell-outs (list)\n  - ``\"artifacts\"`` — files the run wrote (list)\n  - ``\"errors\"`` — errors + halt reason (ErrorsHaltSliceRecord)\n  - ``\"sub_runs\"`` — cross-run child aliases (list)\n  - ``\"receipts\"`` — per-subtask delivery receipts incl. done-criteria\n    attestation (list of SubtaskReceiptRecord)\n  - ``\"verification_receipts\"`` — durable verification-environment\n    receipts (interpreter / cwd / import checks / commands / exit\n    codes / clean-tree note) (list of VerificationReceiptRecord)\n  - ``\"verification_timeline\"`` — canonical scheduled-gate ledger rows\n    and identity-scoped events from the SDK (VerificationTimelineRecord)\n  - ``\"verification_cockpit\"`` — the same canonical ledger projection\n    under the cockpit view name (VerificationTimelineRecord)\n  - ``\"handoff_advice\"`` — Stage 0/1 phase-handoff advisor evidence:\n    per-call records (handoff_id / phase / recommended_action /\n    applied_action / confidence / resolved / repeated / outcome /\n    finding_fingerprint / usage+cost / advice_artifact) plus an aggregate\n    summary (calls / applied_retries / resolved_retries / repeated /\n    stopped / unknown / usage). Empty slice when the run has no advisor\n    surface (HandoffAdviceSliceRecord)\n  - ``\"scope_expansion\"`` — ADR 0110 scope-expansion audit from\n    ``final_acceptance``: per-path items (path / classification\n    notice|risk|blocker / category / evidence) plus the aggregate\n    ``has_blocker`` decision-condition flag. A ``notice`` is informational\n    only and never forms an operator handoff. This is a SEPARATE axis from\n    the delivery ``scope_disclosure`` on ``DeliveryGateProjection`` (which\n    names strict-mono sibling files behind a shipping block). Empty slice\n    when the run recorded no scope-expansion audit (ScopeExpansionSliceRecord)\n  - ``\"delivery\"`` — post-release commit-delivery outcome as typed data:\n    ``release_verdict`` (approved / rejected / none), the raw\n    ``decision_status`` + ``action``, and the distinguishable\n    ``applied`` / ``committed`` / ``skipped`` / ``failed`` booleans (mapped\n    from the core CommitDeliveryStatus vocabulary), ``commit_sha`` /\n    ``halt_reason``, plus the same ``implement_delivery`` audit as the\n    ``errors`` slice. ``None`` when the run recorded no commit-delivery\n    decision. Inherited-vs-current receipts behind an approved gate-rerun\n    child live in the ``verification_timeline`` + ``receipts`` slices\n    (DeliverySummaryRecord)\n  - ``\"correction\"`` — ADR 0098 correction fixed-point / non-convergence:\n    ``non_converging`` (an operator-decision condition), ``repeated``\n    blockers, ``parent_run_id`` / ``child_run_id``, advisory\n    ``suggested_actions`` (never auto-applied), and ``reason``. ``None``\n    when core recorded no fixed-point block (CorrectionSliceRecord)\n  - ``\"all\"`` — every slice in one response",
         "properties": {
           "artifacts": {
             "anyOf": [
@@ -6071,7 +5804,7 @@
           "verification_cockpit": {
             "anyOf": [
               {
-                "$ref": "#/$defs/VerificationCockpit"
+                "$ref": "#/$defs/VerificationTimelineRecord"
               },
               {
                 "type": "null"

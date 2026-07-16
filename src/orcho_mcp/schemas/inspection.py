@@ -6,6 +6,7 @@ commands, artifacts, errors, sub_runs) and ``orcho_run_diff`` (per-file
 surfaces; ``services/run_artifacts.py`` (resources path) and
 ``inspection/`` (tool path) are the implementation homes.
 """
+
 from __future__ import annotations
 
 from typing import Any, Literal
@@ -37,6 +38,7 @@ class FindingRecord(BaseModel):
     blocker". Build the active-blocker set from the reviewer / final_acceptance
     verdicts (the ``delivery`` / ``correction`` slices), not from this flag.
     """
+
     id: str
     severity: str
     title: str
@@ -51,6 +53,7 @@ class FindingRecord(BaseModel):
 
 class PlanSliceRecord(BaseModel):
     """Compact plan projection — short enough for an LLM context window."""
+
     source: str
     short_summary: str
     planning_context: str
@@ -107,6 +110,7 @@ class ImplementDeliveryRecord(BaseModel):
         ``incomplete_subtasks``, ``missing_subtask_receipts``;
       - ``kind == 'phase_handoff_waiver'`` → ``decided_by``.
     """
+
     delivery_status: str = Field(
         description="'clean' | 'repaired' | 'waived' | 'incomplete'.",
     )
@@ -167,6 +171,7 @@ class CriterionReportRecord(BaseModel):
     test gates remain the verification layer; this record only reports what was
     claimed.
     """
+
     index: int = Field(
         description="1-based position in the subtask's declared done_criteria.",
     )
@@ -185,6 +190,7 @@ class SubtaskReceiptRecord(BaseModel):
     ``attestation_summary`` / ``attestation_error`` carry the P7 attestation
     and are empty / ``None`` for criteria-less subtasks and pre-P7 runs.
     """
+
     subtask_id: str
     state: str
     runtime: str = ""
@@ -220,6 +226,7 @@ class VerificationCheckRecord(BaseModel):
     ``expected`` / ``actual`` are absolute paths (``None`` when the check
     could not be confirmed); ``passed`` is True only when they matched.
     """
+
     name: str
     expected: str | None = None
     actual: str | None = None
@@ -233,6 +240,7 @@ class VerificationCommandRecord(BaseModel):
     ``exit_code`` is its return code (``None`` when the subprocess could
     not be launched / timed out).
     """
+
     argv: list[str] = Field(default_factory=list)
     exit_code: int | None = None
 
@@ -248,6 +256,7 @@ class VerificationReceiptRecord(BaseModel):
     clean-tree note). ``all_passed`` rolls up the checks; ``artifact_path``
     is the on-disk receipt path under the run directory.
     """
+
     phase: str | None = None
     round: int | None = None
     kind: str = "verification_environment"
@@ -264,8 +273,8 @@ class VerificationReceiptRecord(BaseModel):
     temp_env_outside_checkout: bool = Field(
         default=True,
         description="Clean-tree note: True when any throwaway environment "
-                    "lived outside the source checkout (so it cannot pollute "
-                    "``git status`` in the checkout).",
+        "lived outside the source checkout (so it cannot pollute "
+        "``git status`` in the checkout).",
     )
     all_passed: bool = Field(
         default=False,
@@ -274,195 +283,82 @@ class VerificationReceiptRecord(BaseModel):
     artifact_path: str | None = Field(
         default=None,
         description="On-disk path of the receipt JSON under the run "
-                    "directory (``<run_dir>/verification_receipts/...``).",
+        "directory (``<run_dir>/verification_receipts/...``).",
     )
 
 
-class VerificationTimelineGateRecord(BaseModel):
-    """One required delivery command's official verification-gate state.
+class ReceiptEvidenceRecord(BaseModel):
+    """Receipt fact attached to one scheduled-gate identity by the SDK."""
 
-    Projected verbatim from the SDK's durable
-    ``sdk.get_verification_timeline`` per-gate record. ``status`` is EXACTLY
-    one of the six values ``PASS`` / ``FAIL`` / ``MISSING`` / ``STALE`` /
-    ``SKIPPED`` / ``FRESH`` — there is no ``MANUAL`` value. A manual /
-    operator-only gate is surfaced as ``status='SKIPPED'`` with
-    ``policy='manual_only'`` and membership in the timeline's ``manual_only``,
-    never as missing.
-
-    ``searched_run_dirs`` and ``rerun_hint`` are populated ONLY for a
-    non-present required gate (``MISSING`` / ``STALE`` / ``FAIL``); present and
-    manual gates carry empty lists. ``inherited`` is True when the deciding
-    receipt came from a parent run (``source_run_id`` differs from this run).
-    """
-    command: str
-    env: str | None = None
-    hook: str | None = Field(
-        default=None,
-        description="Delivery hook the gate is scheduled at "
-                    "(e.g. ``after_phase(implement)``, ``before_delivery``).",
-    )
-    source: str | None = None
-    policy: str | None = Field(
-        default=None,
-        description="Effective delivery policy "
-                    "(``require`` / ``warn`` / ``suggest`` / ``manual_only``).",
-    )
-    required: bool = False
-    status: Literal["PASS", "FAIL", "MISSING", "STALE", "SKIPPED", "FRESH"]
-    receipt_path: str | None = None
-    source_run_id: str | None = None
+    classification: str = ""
+    path: str = ""
+    source: str = ""
     inherited: bool = False
-    stale_reason: str | None = None
-    searched_run_dirs: list[str] = Field(default_factory=list)
-    rerun_hint: list[str] = Field(default_factory=list)
-    detail: str | None = Field(
-        default=None,
-        description="Human-readable operator note, populated when an "
-                    "environment-provenance break downgrades the gate to "
-                    "``FAIL`` — names the failing verification_environment check "
-                    "with its expected/actual "
-                    "(e.g. ``pipeline_import: expected <X> actual <Y>``). "
-                    "``None`` for an ordinary gate.",
-    )
+    reason: str = ""
+    rerun: bool = False
 
 
-class VerificationAutorunEventRecord(BaseModel):
-    """One durable auto-run firing mirrored from the run's phase log.
+class ScheduledGateRowRecord(BaseModel):
+    """Canonical SDK ledger row; no gate semantics are derived in MCP."""
 
-    ``ran_pass`` are commands executed and passing this firing; ``ran_fail``
-    those that failed; ``skipped_fresh`` were already present (fresh receipt,
-    not executed); ``skipped_manual`` were intentionally not auto-run.
-    ``receipt_paths`` are the durable env / command receipts this firing wrote.
-    """
-    hook_label: str
-    source: str
-    ran_pass: list[str] = Field(default_factory=list)
-    ran_fail: list[str] = Field(default_factory=list)
-    skipped_fresh: list[str] = Field(default_factory=list)
-    skipped_manual: list[str] = Field(default_factory=list)
-    receipt_paths: list[str] = Field(default_factory=list)
+    command: str
+    hook: str
+    phase: str
+    declared: bool
+    selectable: bool
+    selected: bool | None = None
+    execution_policy: Literal["manual", "suggest", "warn", "require", "unknown"]
+    consequence: Literal["none", "warning", "required_action"]
+    disposition: (
+        Literal[
+            "not_selected",
+            "manual_available",
+            "suggested",
+            "skipped_fresh",
+            "executed_pass",
+            "executed_fail",
+            "residual_missing",
+            "residual_stale",
+            "residual_failed",
+        ]
+        | None
+    ) = None
+    selection_reason: str | None = None
+    executor: Literal["engine", "operator"] | None = None
+    trigger: (
+        Literal[
+            "before_phase",
+            "after_phase",
+            "pre_final",
+            "operator",
+            "on_resume",
+        ]
+        | None
+    ) = None
+    receipt_evidence: ReceiptEvidenceRecord | None = None
+
+
+class ScheduledGateEventRecord(BaseModel):
+    """Canonical identity-scoped event from the SDK's scheduled-gate trail."""
+
+    command: str
+    hook: str
+    phase: str
+    kind: Literal["selection", "execution", "reuse", "receipt"]
+    outcome: str
+    reason: str
+    receipt_evidence: ReceiptEvidenceRecord | None = None
 
 
 class VerificationTimelineRecord(BaseModel):
-    """Typed projection of a run's official verification-gate timeline.
+    """Canonical scheduled-gate ledger projection returned by the SDK."""
 
-    Read-only durable source of truth from ``sdk.get_verification_timeline``:
-    per-gate status + remediation (``gates``), the aggregate residual / manual /
-    inherited sets, the shared ``suggested_commands`` hints, and the durable
-    auto-run events. ``scheduled_trail_available`` is ``False`` until core
-    persists a durable per-firing scheduled-gate trail — see GC-10 in
-    ``docs/ux/flagship_gap_spec.md`` for the exact core follow-up gap.
-    """
+    schema_version: str
     run_id: str
-    has_contract: bool = False
-    gates: list[VerificationTimelineGateRecord] = Field(default_factory=list)
-    residual_missing: list[str] = Field(default_factory=list)
-    residual_stale: list[str] = Field(default_factory=list)
-    residual_failed: list[str] = Field(default_factory=list)
-    manual_only: list[str] = Field(default_factory=list)
-    inherited: list[str] = Field(default_factory=list)
-    searched_run_dirs: list[str] = Field(default_factory=list)
-    suggested_commands: list[str] = Field(default_factory=list)
-    autorun_events: list[VerificationAutorunEventRecord] = Field(
-        default_factory=list,
-    )
-    scheduled_trail_available: bool = False
-
-
-class VerificationGateCockpitRow(BaseModel):
-    """One verification gate as a cockpit row — a typed, actionable
-
-    projection of a single ``VerificationTimelineGateRecord`` that makes the
-    gate's *planning* properties (how it fires, who owns it, what it gates on)
-    legible alongside its status, without collapsing any of them.
-
-    ``trigger`` is derived deterministically (never read from core):
-
-      - ``operator_only`` — the command is in the timeline's ``manual_only``
-        set OR ``policy == 'manual_only'``. A manual / operator-only gate is
-        present here on purpose; ``status='SKIPPED'`` for it is NOT an
-        automation failure and must not be read as missing.
-      - ``auto`` — the command appears in an autorun event's ``ran_pass`` /
-        ``ran_fail`` / ``skipped_fresh`` (the run's automation acted on it).
-      - ``manual`` — neither of the above (a declared gate the automation has
-        not acted on and that is not operator-only).
-
-    ``class_source`` honours provenance: ``'core'`` ONLY when ``gate_class``
-    came from a durable core field. When the class is inferred locally it is
-    ``'derived'``; when there is no class signal at all it is ``'unspecified'``.
-    ``'core'`` must never be claimed for a guessed taxonomy.
-
-    ``status`` is the same six-value enum as the timeline
-    (``PASS`` / ``FAIL`` / ``MISSING`` / ``STALE`` / ``SKIPPED`` / ``FRESH``);
-    there is no ``MANUAL`` status — manual is expressed via
-    ``trigger`` + ``policy``. ``inherited`` / ``source_run_id`` / ``receipt_path``
-    carry the deciding-receipt evidence; ``stale_reason`` / ``rerun_hint`` are
-    populated where applicable.
-    """
-    command: str
-    hook: str | None = Field(
-        default=None,
-        description="Delivery hook / phase the gate is scheduled at "
-                    "(e.g. ``after_phase(implement)``, ``before_delivery``).",
-    )
-    trigger: Literal["auto", "manual", "operator_only"]
-    policy: str | None = None
-    required: bool = False
-    gate_class: str | None = None
-    class_source: Literal["core", "derived", "unspecified"] = "unspecified"
-    status: Literal["PASS", "FAIL", "MISSING", "STALE", "SKIPPED", "FRESH"]
-    env: str | None = None
-    receipt_path: str | None = None
-    inherited: bool = False
-    source_run_id: str | None = None
-    stale_reason: str | None = None
-    rerun_hint: list[str] = Field(default_factory=list)
-    detail: str | None = Field(
-        default=None,
-        description="Human-readable operator note, populated when an "
-                    "environment-provenance break downgrades the gate to "
-                    "``FAIL`` — names the failing verification_environment check "
-                    "with its expected/actual "
-                    "(e.g. ``pipeline_import: expected <X> actual <Y>``). "
-                    "``None`` for an ordinary gate.",
-    )
-
-
-class VerificationCockpit(BaseModel):
-    """Typed cockpit projection of a run's verification gates.
-
-    A read-only, actionable view derived from the SAME SDK call that feeds
-    ``VerificationTimelineRecord`` — it augments the timeline, never replaces
-    or hides it. The header carries contract presence, the (best-effort) work
-    mode, the environments seen across gates, an aggregate ``policy_summary``,
-    and a human-readable ``effect`` string. ``gates`` is the per-gate cockpit
-    rows; the residual / manual-only / inherited aggregates mirror the
-    timeline's so a manual-only ``SKIPPED`` gate never lands in
-    residual missing / failed.
-
-    ``has_contract`` is ALWAYS set explicitly by the builder from
-    ``proj.has_contract`` (the default here exists only so the constructor is
-    usable). ``mode`` stays ``None`` until core exposes ``work_mode`` through the
-    timeline projection.
-    """
-    run_id: str
-    has_contract: bool = False
-    mode: str | None = None
-    envs: list[str] = Field(default_factory=list)
-    policy_summary: str = Field(
-        description="Aggregate of gate policies: "
-                    "'require' | 'warn' | 'suggest' | 'mixed' | 'none'.",
-    )
-    effect: str = Field(
-        description="Human-readable derived effect of the policy aggregate.",
-    )
-    gates: list[VerificationGateCockpitRow] = Field(default_factory=list)
-    residual_missing: list[str] = Field(default_factory=list)
-    residual_stale: list[str] = Field(default_factory=list)
-    residual_failed: list[str] = Field(default_factory=list)
-    manual_only: list[str] = Field(default_factory=list)
-    inherited: list[str] = Field(default_factory=list)
-    suggested_commands: list[str] = Field(default_factory=list)
+    project: str = ""
+    finalized: bool = False
+    rows: list[ScheduledGateRowRecord] = Field(default_factory=list)
+    events: list[ScheduledGateEventRecord] = Field(default_factory=list)
 
 
 class HandoffAdviceUsageRecord(BaseModel):
@@ -472,6 +368,7 @@ class HandoffAdviceUsageRecord(BaseModel):
     fabricated zero (an absent cost is meaningful: cost unknown). Mirrors the
     SDK ``HandoffAdviceUsage`` projection verbatim.
     """
+
     tokens_in: int | None = None
     tokens_out: int | None = None
     tokens_cached: int | None = None
@@ -492,6 +389,7 @@ class HandoffAdviceCallRecord(BaseModel):
     ``resolved`` is tri-state: ``True`` (the retry cleared the finding),
     ``False`` (it recurred), or ``None`` (unknown / not an applied retry).
     """
+
     handoff_id: str
     phase: str
     advice_artifact: str
@@ -516,6 +414,7 @@ class HandoffAdviceCallRecord(BaseModel):
 
 class HandoffAdviceSummaryRecord(BaseModel):
     """Run-level rollup over the handoff-advice calls (mirrors the SDK summary)."""
+
     calls: int = 0
     applied_retries: int = 0
     resolved_retries: int = 0
@@ -535,6 +434,7 @@ class HandoffAdviceSliceRecord(BaseModel):
     error — read-only forensic data the operator can correlate with the
     ``orcho_handoff_advice`` recommendation tool.
     """
+
     calls: list[HandoffAdviceCallRecord] = Field(default_factory=list)
     summary: HandoffAdviceSummaryRecord = Field(
         default_factory=HandoffAdviceSummaryRecord,
@@ -567,6 +467,7 @@ class ScopeExpansionItemRecord(BaseModel):
     ``category`` is the optional core-supplied bucket for the observation;
     ``evidence`` carries the supporting breadcrumbs (paths / notes) verbatim.
     """
+
     path: str
     classification: str = Field(
         description="'notice' | 'risk' | 'blocker' (from the core item status).",
@@ -589,6 +490,7 @@ class ScopeExpansionSliceRecord(BaseModel):
     operator-decision situation from a purely informational ``notice``-only
     audit. It changes no core policy — it only reflects what core recorded.
     """
+
     items: list[ScopeExpansionItemRecord] = Field(default_factory=list)
     has_blocker: bool = False
 
@@ -603,6 +505,7 @@ class PrIntentRecord(BaseModel):
     record is ``None`` (absent) when core did not emit a ``pr_intent`` block
     (e.g. a stale core, or a delivery mode with no PR intent).
     """
+
     branch: str | None = None
     base: str | None = None
     title: str | None = None
@@ -662,19 +565,19 @@ class DeliverySummaryRecord(BaseModel):
     ``services.delivery_gate`` helpers the interactive gate projection uses, so
     the two surfaces never drift.
     """
+
     release_verdict: str = Field(
         description="Release outcome from meta ``release_verdict``: "
-                    "'approved' | 'rejected' | 'none'.",
+        "'approved' | 'rejected' | 'none'.",
     )
     decision_status: str | None = Field(
         default=None,
         description="Raw ``meta['commit_delivery'].status`` "
-                    "(CommitDeliveryStatus), preserved verbatim.",
+        "(CommitDeliveryStatus), preserved verbatim.",
     )
     action: str | None = Field(
         default=None,
-        description="Raw ``meta['commit_delivery'].action`` "
-                    "(approve / apply / fix / skip / halt).",
+        description="Raw ``meta['commit_delivery'].action`` (approve / apply / fix / skip / halt).",
     )
     applied: bool = False
     committed: bool = False
@@ -739,6 +642,7 @@ class CorrectionSliceRecord(BaseModel):
     from (e.g. stop and inspect), NEVER an auto-applied fix. MCP surfaces the
     fact; it does not act on it.
     """
+
     non_converging: bool = False
     repeated: list[str] = Field(
         default_factory=list,
@@ -779,16 +683,10 @@ class EvidenceResult(BaseModel):
       - ``"verification_receipts"`` — durable verification-environment
         receipts (interpreter / cwd / import checks / commands / exit
         codes / clean-tree note) (list of VerificationReceiptRecord)
-      - ``"verification_timeline"`` — official verification-gate timeline:
-        per-gate status (six-value enum, no MANUAL) with per-gate
-        rerun_hint / searched_run_dirs, the residual / manual-only /
-        inherited aggregates, and the auto-run events
-        (VerificationTimelineRecord)
-      - ``"verification_cockpit"`` — typed cockpit projection of the SAME
-        timeline (one SDK read): header (has_contract / mode / envs /
-        policy_summary / effect) plus per-gate cockpit rows that surface
-        trigger (auto / manual / operator_only), policy, requiredness, gate
-        class + provenance, status, and evidence (VerificationCockpit)
+      - ``"verification_timeline"`` — canonical scheduled-gate ledger rows
+        and identity-scoped events from the SDK (VerificationTimelineRecord)
+      - ``"verification_cockpit"`` — the same canonical ledger projection
+        under the cockpit view name (VerificationTimelineRecord)
       - ``"handoff_advice"`` — Stage 0/1 phase-handoff advisor evidence:
         per-call records (handoff_id / phase / recommended_action /
         applied_action / confidence / resolved / repeated / outcome /
@@ -821,6 +719,7 @@ class EvidenceResult(BaseModel):
         when core recorded no fixed-point block (CorrectionSliceRecord)
       - ``"all"`` — every slice in one response
     """
+
     run_id: str
     slice: str
     plan: PlanSliceRecord | None = None
@@ -832,7 +731,7 @@ class EvidenceResult(BaseModel):
     receipts: list[SubtaskReceiptRecord] | None = None
     verification_receipts: list[VerificationReceiptRecord] | None = None
     verification_timeline: VerificationTimelineRecord | None = None
-    verification_cockpit: VerificationCockpit | None = None
+    verification_cockpit: VerificationTimelineRecord | None = None
     handoff_advice: HandoffAdviceSliceRecord | None = None
     scope_expansion: ScopeExpansionSliceRecord | None = None
     delivery: DeliverySummaryRecord | None = None
@@ -844,6 +743,7 @@ class EvidenceResult(BaseModel):
 
 class RunDiffFile(BaseModel):
     """Per-file +A -R summary in a :class:`RunDiffResult`."""
+
     path: str
     added: int
     removed: int
@@ -870,6 +770,7 @@ class RunDiffResult(BaseModel):
     normalized phase name on phase calls, ``None`` on run calls — so
     clients don't have to remember what they asked for.
     """
+
     run_id: str
     found: bool
     mode: Literal["preview", "stat", "full"]
@@ -897,6 +798,7 @@ class DeliveryGateDiffSummary(BaseModel):
     only this summary's completeness (the projection message names the
     missing artifact).
     """
+
     files_changed: int = 0
     changed_paths: list[str] = Field(default_factory=list)
     untracked_paths: list[str] = Field(default_factory=list)
@@ -919,6 +821,7 @@ class DeliveryActionRecord(BaseModel):
     ``fix`` / ``skip`` / ``halt`` never commit. ``effect`` is a one-line
     human-readable description of what choosing the action does.
     """
+
     action: str
     effect: str
     creates_commit: bool = False
@@ -961,6 +864,7 @@ class DeliveryGateProjection(BaseModel):
     required verification. ``next_actions`` carries one ``ready_call`` to
     ``orcho_delivery_decide`` per available action.
     """
+
     run_id: str
     continuation_subject: str | None = None
     recommended_next_action: str | None = None
@@ -1092,8 +996,10 @@ __all__ = [
     "SubRunLinkRecord",
     "SubtaskReceiptRecord",
     "VerificationCheckRecord",
-    "VerificationCockpit",
     "VerificationCommandRecord",
-    "VerificationGateCockpitRow",
     "VerificationReceiptRecord",
+    "ReceiptEvidenceRecord",
+    "ScheduledGateEventRecord",
+    "ScheduledGateRowRecord",
+    "VerificationTimelineRecord",
 ]
