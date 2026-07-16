@@ -10,6 +10,10 @@ up test files via rootdir collection, and creating one would shadow the
 """
 from __future__ import annotations
 
+import importlib
+import importlib.metadata
+from importlib.metadata import version
+
 import pytest
 
 
@@ -22,6 +26,24 @@ def test_package_imports_clean():
 
     assert orcho_mcp.__version__
     assert isinstance(orcho_mcp.__version__, str)
+    assert orcho_mcp.__version__ == version("orcho-mcp")
+
+
+def test_package_version_has_source_checkout_fallback(monkeypatch):
+    """A source import without installed metadata remains diagnosable."""
+    import orcho_mcp
+
+    real_version = importlib.metadata.version
+
+    def missing_metadata(_distribution: str) -> str:
+        raise importlib.metadata.PackageNotFoundError
+
+    monkeypatch.setattr(importlib.metadata, "version", missing_metadata)
+    try:
+        assert importlib.reload(orcho_mcp).__version__ == "0+unknown"
+    finally:
+        monkeypatch.setattr(importlib.metadata, "version", real_version)
+        importlib.reload(orcho_mcp)
 
 
 def test_server_instance_named_orcho():
@@ -40,7 +62,7 @@ def test_main_handles_version_flag(capsys):
 
     assert exc.value.code == 0
     captured = capsys.readouterr()
-    assert "orcho-mcp" in captured.out
+    assert captured.out.strip() == f"orcho-mcp {version('orcho-mcp')}"
 
 
 def test_errors_hierarchy():
