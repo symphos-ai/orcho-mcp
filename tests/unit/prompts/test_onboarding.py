@@ -128,3 +128,33 @@ def test_content_starts_with_user_friendly_heading():
     assert re.search(r"orcho", first_line, re.IGNORECASE), (
         "first heading should name the product"
     )
+
+
+def _section(text: str, heading: str) -> str:
+    """Return one level-two onboarding section, excluding the next one."""
+    match = re.search(
+        rf"^## {re.escape(heading)}$([\s\S]*?)(?=^## |\Z)",
+        text,
+        flags=re.MULTILINE,
+    )
+    assert match, f"onboarding section missing: {heading!r}"
+    return match.group(1)
+
+
+def test_watch_progress_routes_single_shot_and_long_poll_intents() -> None:
+    """The onboarding progress section must not steer position checks to status."""
+    watch_progress = _section(orcho_getting_started(), "5. Watch progress")
+
+    assert "orcho_run_live_status(run_id=\"<run_id>\")" in watch_progress
+    assert "orcho_run_watch(run_id=\"<run_id>\")" in watch_progress
+    assert "single-shot progress snapshot" in watch_progress
+    assert "long-poll instead" in watch_progress
+    assert re.search(r"not to check progress\s+position", watch_progress)
+
+
+def test_quick_reference_routes_progress_to_live_status_not_status() -> None:
+    """Quick-reference tool selection keeps progress and lifecycle separate."""
+    quick_reference = _section(orcho_getting_started(), "Quick reference")
+
+    assert "| Check progress | `orcho_run_live_status` |" in quick_reference
+    assert "orcho_run_status" not in quick_reference

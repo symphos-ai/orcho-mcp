@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from orcho_mcp import tools
 from orcho_mcp.discovery import collect_catalog
 
 _REPO_ROOT = Path(__file__).parent.parent.parent.parent.resolve()
@@ -133,6 +134,53 @@ def test_run_inspection_tools_explain_their_operator_questions():
     )
     assert "How much did it consume?" in descriptions["orcho_run_metrics"]
     assert "What changed?" in descriptions["orcho_run_diff"]
+
+
+def test_live_catalog_pins_progress_navigation_and_tool_exports() -> None:
+    """Catalog introspection, rather than source docstrings, is the contract.
+
+    The first description line is what clients see while choosing a tool.  Pin
+    the short intent labels here, and make ``tools.__all__`` an exact manifest
+    of the tools actually registered on the shared FastMCP instance.
+    """
+    live = collect_catalog()
+    descriptions = {
+        tool["name"]: tool.get("description") or ""
+        for tool in live["tools"]
+    }
+    first_line = {
+        name: description.splitlines()[0]
+        for name, description in descriptions.items()
+    }
+
+    assert first_line["orcho_run_status"] == (
+        "Durable status snapshot for one run — not the live-progress view."
+    )
+    assert first_line["orcho_run_live_status"] == (
+        "Where is this run right now, and what do I do next? "
+        "(subtask progress index/total)"
+    )
+    assert first_line["orcho_run_start"] == (
+        "Start a real run (mock or live) in a detached subprocess; "
+        "return run_id now."
+    )
+    assert first_line["orcho_run_project_typed"] == (
+        "Mock-only, in-process typed run (blocking); for real runs use "
+        "orcho_run_start."
+    )
+    assert first_line["orcho_run_project_typed_async"] == (
+        "Mock-only, in-process typed run (non-blocking); for real runs use "
+        "orcho_run_start."
+    )
+    assert "current_subtask" in descriptions["orcho_run_events_summary"]
+
+    registered = {tool["name"] for tool in live["tools"]}
+    exported = set(tools.__all__)
+    assert exported == registered, (
+        "tools.__all__ must exactly match the FastMCP catalog; "
+        f"missing exports: {sorted(registered - exported)}; "
+        f"extra exports: {sorted(exported - registered)}"
+    )
 
 
 def test_evidence_schema_publishes_canonical_scheduled_gate_ledger():

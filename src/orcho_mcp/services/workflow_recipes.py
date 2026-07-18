@@ -74,6 +74,11 @@ def _plan_then_implement() -> WorkflowRecipe:
                 ),
             ),
             RecipeToolStep(
+                id="live_status_plan",
+                tool="orcho_run_live_status",
+                args={},
+            ),
+            RecipeToolStep(
                 id="watch_plan",
                 tool="orcho_run_watch",
                 args={"until": "handoff_or_terminal"},
@@ -103,6 +108,11 @@ def _plan_then_implement() -> WorkflowRecipe:
                     "single-shot 'where is the run now' snapshot (subtask "
                     "index/total) call orcho_run_live_status instead."
                 ),
+            ),
+            RecipeToolStep(
+                id="live_status_implement",
+                tool="orcho_run_live_status",
+                args={},
             ),
             RecipeToolStep(
                 id="watch_implement",
@@ -214,6 +224,11 @@ def _resume_failed_run() -> WorkflowRecipe:
                     "refresh this compact summary; it carries status, "
                     "current_phase, next_seq, and bounded recent events."
                 ),
+            ),
+            RecipeToolStep(
+                id="live_status_resumed",
+                tool="orcho_run_live_status",
+                args={"run_id": "${run_id}"},
             ),
             RecipeToolStep(
                 id="watch",
