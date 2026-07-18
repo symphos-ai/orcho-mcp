@@ -146,6 +146,53 @@ def test_live_monitoring_steps_prefer_summary_resource() -> None:
     }
 
 
+def test_progress_recipes_offer_single_shot_live_status_before_watching() -> None:
+    """Progress recipes distinguish an immediate position read from long-polling.
+
+    ``orcho_run_status`` remains valid for lifecycle classification (notably
+    before resuming a failed run), but it must not become the monitor inserted
+    between start/resume and the corresponding bounded watch.
+    """
+    listing = list_workflow_recipes()
+    expected_live_steps = {
+        "plan_then_implement": {"live_status_plan", "live_status_implement"},
+        "resume_failed_run": {"live_status_resumed"},
+        "observe_active_run": {"live_status"},
+    }
+    for name, expected_ids in expected_live_steps.items():
+        recipe = next(recipe for recipe in listing.recipes if recipe.name == name)
+        tool_steps = [
+            step for step in recipe.steps if isinstance(step, RecipeToolStep)
+        ]
+        live_steps = [
+            step for step in tool_steps if step.tool == "orcho_run_live_status"
+        ]
+        assert {step.id for step in live_steps} == expected_ids, (
+            f"{name}: immediate progress steps must be live-status reads"
+        )
+
+        watches = [
+            index for index, step in enumerate(tool_steps)
+            if step.tool == "orcho_run_watch"
+        ]
+        assert watches, (
+            f"{name}: continuous observation must retain orcho_run_watch"
+        )
+        for live_step in live_steps:
+            assert tool_steps.index(live_step) < next(
+                watch for watch in watches if watch > tool_steps.index(live_step)
+            ), f"{name}.{live_step.id}: live status must precede its watch"
+
+        # A status read is allowed only before resume's state-classification
+        # decision.  It is not a progress-position fallback after the run has
+        # started/resumed.
+        progress_anchor = min(tool_steps.index(step) for step in live_steps)
+        assert all(
+            step.tool != "orcho_run_status"
+            for step in tool_steps[progress_anchor:]
+        ), f"{name}: do not steer post-start progress through orcho_run_status"
+
+
 def test_inspect_delivery_gate_branches_on_all_kinds() -> None:
     """The delivery-gate recipe forks on every orcho_delivery_gate kind.
 

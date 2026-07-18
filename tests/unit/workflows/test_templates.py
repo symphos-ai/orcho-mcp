@@ -69,7 +69,14 @@ class TestPlanThenImplement:
         """Progress-tracking steps point at orcho_run_live_status (with
         orcho_run_watch as the long-poll), not orcho_run_status."""
         text = orcho_plan_then_implement(task="x", project_dir="/tmp/p")
-        assert "orcho_run_live_status" in text
+        assert (
+            "Track progress with\n"
+            "   `orcho_run_live_status(run_id)` (single-shot:"
+        ) in text
+        assert (
+            "Track the child run's progress with `orcho_run_live_status`\n"
+            "   (single-shot:"
+        ) in text
 
     def test_template_references_from_run_plan_arg(self) -> None:
         """The second step of the workflow MUST use --from-run-plan
@@ -193,6 +200,14 @@ class TestResumeFailedRun:
         text = orcho_resume_failed_run(run_id="r-1")
         assert "from_run_plan" in text
 
+    def test_template_routes_resumed_progress_to_live_status(self) -> None:
+        """A resumed run's immediate progress read is live status, not status."""
+        text = orcho_resume_failed_run(run_id="r-1")
+        assert (
+            "After resume, follow progress with `orcho_run_live_status`\n"
+            "   (single-shot:"
+        ) in text
+
 
 class TestObserveActiveRun:
     def test_template_includes_run_id(self) -> None:
@@ -211,7 +226,11 @@ class TestObserveActiveRun:
         orcho_run_live_status for a single-shot snapshot, distinct from
         the continuous watch loop."""
         text = orcho_observe_active_run(run_id="r-1")
-        assert "orcho_run_live_status" in text
+        assert (
+            'For a one-shot progress snapshot —\n'
+            'current phase, subtask position (index/total), and whether the run is\n'
+            'paused or terminal — call `orcho_run_live_status(run_id)`.'
+        ) in text
 
     def test_template_recommends_bounded_timeout(self) -> None:
         """A short bounded watch is the whole point — the template must
