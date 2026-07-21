@@ -91,6 +91,23 @@ question is specifically about patch content.
 | **Resume** | Re-spawn a pipeline subprocess against an existing `run_dir`, loading the on-disk checkpoint. *Not* a smart "skip already-done phases" — it is a fresh process that respects whichever profile the caller picks. |
 | **Cancel** | Signal the run's process group. Graceful (`SIGTERM`) lets the pipeline flush the checkpoint and emit `run.interrupted`; hard (`SIGKILL`) drops in-flight work. |
 
+### Decision, continuation, and settlement
+
+A recorded phase-handoff decision is idempotent: replay returns the original
+decision timestamp, action, and UTF-8 feedback without rewriting the artifact.
+Status, live status, diagnosis, the workspace inbox, and a reconnecting watch
+then offer only resume; a decision-read failure is explicitly degraded and
+offers read-only diagnosis. Resume and follow-up are preflighted by core before
+any subprocess launch: a finalized same-run parent is refused without a spawn,
+while an explicit retained-change follow-up creates a distinct child with
+parent lineage.
+When a launch exits, MCP writes the matching terminal status to both
+`mcp_supervisor.json` and core's `run_supervisor.json`; reconnecting after a
+watch/transport loss reads that durable settlement rather than assuming
+running. This includes abnormal exits: an rc=1 is settled as `failed` with
+`halt_reason="abnormal_exit:1"` across status, live status, diagnosis, and
+errors evidence.
+
 Deliberately **not** vocabulary:
 
 - "Continue from where it stopped, automatically picking the next phase" — this is *not* what resume does.

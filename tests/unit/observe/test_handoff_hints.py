@@ -594,7 +594,7 @@ async def test_watch_handoff_fallback_to_sdk_findings(
         line=None,
     )
 
-    def fake_list_findings(run_id, cwd=None, phases=None):  # noqa: ARG001
+    def fake_list_findings(run_id, cwd=None, phases=None, runs_dir=None):  # noqa: ARG001
         assert phases == ("validate_plan",)
         return [fake_finding]
 
@@ -655,7 +655,7 @@ async def test_watch_handoff_empty_findings_triggers_fallback(
     )
     calls: list[tuple] = []
 
-    def fake_list_findings(run_id, cwd=None, phases=None):  # noqa: ARG001
+    def fake_list_findings(run_id, cwd=None, phases=None, runs_dir=None):  # noqa: ARG001
         calls.append((run_id, phases))
         return [fake_finding]
 

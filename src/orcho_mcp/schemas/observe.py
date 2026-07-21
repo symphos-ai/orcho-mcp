@@ -166,6 +166,12 @@ class PendingHandoffSummary(BaseModel):
                     "exists for this handoff (the operator has decided and "
                     "only ``orcho_run_resume`` remains).",
     )
+    decision_state: Literal["recorded", "missing", "degraded"] = Field(
+        default="missing", description="Typed decision-artifact read outcome; degraded never means missing.",
+    )
+    decision_degraded_reason: str | None = Field(
+        default=None, description="Stable safe reason when decision_state is degraded.",
+    )
     suggested_next_action: str | None = Field(
         default=None,
         description="One-line pointer at the right next tool: decide then "
@@ -866,6 +872,8 @@ class RunLiveHandoff(BaseModel):
                     "resume when no decision exists yet, resume when one "
                     "already does.",
     )
+    decision_state: Literal["recorded", "missing", "degraded"] = "missing"
+    decision_degraded_reason: str | None = None
 
 
 class RunLiveTerminal(BaseModel):

@@ -462,6 +462,11 @@ def build_handoff_hint(
     read_model = project_handoff_read_model(
         run_id, current_phase=snap.current_phase,
     )
+    # A recorded decision has no remaining decide form; a degraded read must
+    # not be mistaken for a fresh decision.  The compact pending projection
+    # still reports the safe next step.
+    if read_model.decision_state != "missing":
+        return None
     actions = read_model.actions
     handoff_id = read_model.handoff_id
     phase = read_model.phase

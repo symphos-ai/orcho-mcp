@@ -522,6 +522,12 @@ class RunStatus(BaseModel):
             "run is mid-flight or terminal-success."
         ),
     )
+    decision_state: Literal["recorded", "missing", "degraded"] | None = Field(
+        default=None, description="Typed active-handoff decision read outcome, when applicable.",
+    )
+    decision_degraded_reason: str | None = Field(
+        default=None, description="Stable reason when decision_state is degraded.",
+    )
     artefacts: list[ArtefactRefRecord] = Field(
         default_factory=list,
         description=(

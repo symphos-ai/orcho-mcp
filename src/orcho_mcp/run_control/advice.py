@@ -30,6 +30,7 @@ from orcho_mcp.schemas import (
     NextActionRecord,
 )
 from orcho_mcp.services.errors import map_sdk_errors
+from orcho_mcp.services.run_lookup import find_run_dir
 
 #: Advisory verbs whose decision requires a non-empty ``feedback`` string
 #: (mirrors the decide path). For ``retry_feedback`` the advisor SUPPLIES that
@@ -99,8 +100,9 @@ def request_advice(
     """
     provider = _resolve_advisor_provider(run_id)
     with map_sdk_errors(run_id):
+        run_dir = find_run_dir(run_id)
         advice = _sdk_request_handoff_advice(
-            run_id, handoff_id, cwd=None, provider=provider,
+            run_id, handoff_id, runs_dir=run_dir.parent, cwd=None, provider=provider,
         )
 
     return HandoffAdviceResult(

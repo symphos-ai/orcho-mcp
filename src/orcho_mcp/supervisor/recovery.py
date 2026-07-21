@@ -16,15 +16,15 @@ function that takes the supervisor as its first argument.
 from __future__ import annotations
 
 import contextlib
-import json
 from typing import TYPE_CHECKING
 
 from core.observability.events import append_event
 
 from orcho_mcp.errors import WorkspaceNotResolvedError
+from orcho_mcp.supervisor.handle import RunHandle
 from orcho_mcp.supervisor.paths import resolve_runs_dir
 from orcho_mcp.supervisor.process import is_pid_alive
-from orcho_mcp.supervisor.state import STATE_FILE, read_state
+from orcho_mcp.supervisor.state import read_state, settle_launch
 
 if TYPE_CHECKING:
     from orcho_mcp.supervisor.manager import RunsSupervisor
@@ -75,13 +75,15 @@ def recover(sup: RunsSupervisor) -> list[str]:
             # Still running under some other supervisor instance — leave alone.
             continue
 
-        state["status"] = "orphaned"
-        if not state.get("halt_reason"):
-            state["halt_reason"] = "orphaned_no_supervisor"
-        (entry / STATE_FILE).write_text(
-            json.dumps(state, indent=2, ensure_ascii=False) + "\n",
-            encoding="utf-8",
+        handle = RunHandle(
+            run_id=entry.name, pid=pid, pgid=int(state.get("pgid", pid)),
+            run_dir=entry, project_dir=str(state.get("project_dir") or state.get("cwd") or ""),
+            command=list(state.get("command") or []), started_at=str(state.get("started_at") or ""),
+            mock=bool(state.get("mock", False)), output_mode=str(state.get("output_mode") or "full"),
+            status="orphaned", halt_reason=str(state.get("halt_reason") or "orphaned_no_supervisor"),
         )
+        if not settle_launch(handle):
+            continue
         with contextlib.suppress(Exception):
             append_event(
                 entry,

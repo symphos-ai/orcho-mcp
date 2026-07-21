@@ -17,6 +17,7 @@ import json
 import os
 
 import pytest
+from sdk.run_control import read_launch_state
 
 from orcho_mcp.supervisor import RunsSupervisor
 
@@ -43,12 +44,14 @@ def test_recover_marks_dead_pid_as_orphaned(fake_workspace):
     assert "20260506_test_aa1111" in orphaned
     state = json.loads((run_dir / "mcp_supervisor.json").read_text())
     assert state["status"] == "orphaned"
+    assert read_launch_state(run_dir)["status"] == "orphaned"
 
     # Orphan event was appended.
     events_path = run_dir / "events.jsonl"
     assert events_path.is_file()
     lines = [line for line in events_path.read_text().splitlines() if line.strip()]
     assert any("run.orphaned" in line for line in lines)
+    assert sup.recover() == []
 
 
 def test_recover_leaves_live_pid_alone(fake_workspace):

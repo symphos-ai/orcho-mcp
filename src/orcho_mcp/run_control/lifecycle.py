@@ -27,6 +27,7 @@ from orcho_mcp.errors import (
     InspectOnlyControlError,
     InvalidPlanError,
     OrchoMCPError,
+    PipelineSpawnError,
 )
 from orcho_mcp.schemas import (
     CancelResult,
@@ -416,6 +417,27 @@ def _rejected_terminal_response(
     )
 
 
+def _preflight_blocked_response(
+    run_id: str, reason: str, status: str | None,
+) -> ResumeBlockedResult:
+    """Return a no-spawn refusal produced by core continuation preflight."""
+    return ResumeBlockedResult(
+        run_id=run_id,
+        resume_outcome="preflight_blocked",
+        status=status or "unknown",
+        reason=reason,
+        message=f"Run {run_id} cannot be resumed: {reason}",
+        recommended_run_id=None,
+        suggested_next_action="inspect the run status and continuation evidence",
+        next_actions=[
+            NextActionRecord(
+                intent="Inspect the run's current status.", tool="orcho_run_status",
+                args={"run_id": run_id}, optional=True, kind="ready_call",
+            ),
+        ],
+    )
+
+
 def _recover_via_source_response(
     run_id: str, diagnosis: RunDiagnosisProjection,
 ) -> ResumeBlockedResult:
@@ -607,19 +629,72 @@ async def resume_run(
     # This durable core classification intentionally precedes the MCP
     # inspect-only gate: a CLI-created correction parent is inspect-only, but
     # MCP may still launch a new, controllable sibling child for it.
-    from orcho_mcp.services.continuation import resolve_core_continuation
+    from orcho_mcp.services.continuation import (
+        preflight_core_continuation,
+        resolve_core_continuation,
+    )
     from orcho_mcp.supervisor import get_supervisor
     try:
         continuation = resolve_core_continuation(run_id)
     except OrchoMCPError:
         continuation = None
+
+    # Explicit operator input is authoritative regardless of the continuation
+    # subject.  In particular, never quietly turn ``followup`` for a
+    # checkpoint-resumable run into a same-run ``resume``: core owns that
+    # classification and returns the typed blocker when no follow-up is valid.
+    if operator_intent == "exit":
+        return CorrectionExitResult(
+            run_id=run_id,
+            message="Continuation declined; parent run was not modified.",
+        )
+    if operator_intent == "followup":
+        if not (operator_comment or "").strip():
+            return _correction_input_result(
+                run_id,
+                "followup requires a non-empty operator_comment",
+            )
+        preflight = preflight_core_continuation(
+            run_id, intent="followup", operator_comment=operator_comment,
+        )
+        if preflight.resolution.blocker or preflight.resolution.operation != "start_followup":
+            return CorrectionBlockedResult(
+                run_id=run_id,
+                diff_source=(
+                    continuation.diff_source
+                    if continuation is not None else None
+                ),
+                reason=(
+                    preflight.resolution.blocker
+                    or preflight.resolution.operation
+                ),
+            )
+        supervisor = get_supervisor()
+        with map_command_errors():
+            handle = await supervisor.followup(
+                parent_run_id=run_id,
+                operator_comment=operator_comment,
+            )
+        return CorrectionFollowupStartedResult(
+            run_id=handle.run_id,
+            parent_run_id=run_id,
+            run_dir=str(handle.run_dir),
+            pid=handle.pid,
+            started_at=handle.started_at,
+            project_dir=handle.project_dir,
+            command=handle.command,
+            next_actions=[],
+            suggested_next_action=NextActionRecord(
+                intent="Watch the correction child.",
+                tool="orcho_run_watch",
+                args={"run_id": handle.run_id},
+                optional=True,
+                kind="ready_call",
+            ),
+        )
+
     if continuation is not None and continuation.continuation_subject == "retained_change":
         if continuation.blocked:
-            if operator_intent == "exit":
-                return CorrectionExitResult(
-                    run_id=run_id,
-                    message="Correction follow-up declined; parent run was not modified.",
-                )
             return CorrectionBlockedResult(
                 run_id=run_id,
                 diff_source=continuation.diff_source,
@@ -633,12 +708,21 @@ async def resume_run(
         if operator_intent == "exit":
             return CorrectionExitResult(
                 run_id=run_id,
-                message="Correction follow-up declined; parent run was not modified.",
+                message="Continuation declined; parent run was not modified.",
             )
         if operator_intent != "followup" or not (operator_comment or "").strip():
             return _correction_input_result(
                 run_id,
                 "followup requires a non-empty operator_comment",
+            )
+        preflight = preflight_core_continuation(
+            run_id, intent="followup", operator_comment=operator_comment,
+        )
+        if preflight.resolution.blocker or preflight.resolution.operation != "start_followup":
+            return CorrectionBlockedResult(
+                run_id=run_id,
+                diff_source=continuation.diff_source,
+                reason=preflight.resolution.blocker or preflight.resolution.operation,
             )
         supervisor = get_supervisor()
         with map_command_errors():
@@ -674,7 +758,16 @@ async def resume_run(
                     reason=diagnosis.control_reason or diagnosis.reason,
                 ),
             )
+        preflight = preflight_core_continuation(run_id, intent="resume")
         blocked = _resume_block_or_none(run_id, diagnosis)
+        if preflight.resolution.blocker:
+            # Preserve the established terminal/superseded projection while
+            # ensuring canonical core preflight ran before any launch path.
+            if blocked is not None:
+                return blocked
+            return _preflight_blocked_response(
+                run_id, preflight.resolution.blocker, diagnosis.status,
+            )
         if blocked is not None:
             return blocked
 
@@ -690,8 +783,27 @@ async def resume_run(
         _persist_runtime_override(run_id, runtime_override)
 
     supervisor = get_supervisor()
-    with map_command_errors():
-        handle = await supervisor.resume(run_id, profile=profile)
+    try:
+        with map_command_errors():
+            handle = await supervisor.resume(run_id, profile=profile)
+    except PipelineSpawnError as spawn_error:
+        # A launch can race a terminal/finalized write. Re-check through core
+        # before surfacing the spawn error, but never turn a genuine failure
+        # into a business-state refusal.
+        try:
+            raced = preflight_core_continuation(run_id, intent="resume")
+        except OrchoMCPError as read_error:
+            # The failed launch can also race deletion/unavailability of the
+            # parent.  In that case there is no canonical state to classify;
+            # preserve the original typed spawn failure rather than replacing
+            # it with an unrelated read error.
+            raise spawn_error from read_error
+        if raced.resolution.blocker:
+            return _preflight_blocked_response(
+                run_id, raced.resolution.blocker,
+                diagnosis.status if diagnosis is not None else None,
+            )
+        raise
     return RunResumeResult(
         run_id=handle.run_id,
         run_dir=str(handle.run_dir),
