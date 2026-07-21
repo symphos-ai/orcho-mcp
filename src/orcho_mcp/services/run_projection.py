@@ -37,7 +37,7 @@ valid hint at the exact moment the run paused. SDK errors from the
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from sdk import (
     get_errors_halt as _sdk_get_errors_halt,
@@ -109,6 +109,25 @@ class HandoffReadModel:
     loop_max_rounds: int | None = None
     last_output: str | None = None
     decision_artifact_exists: bool = False
+    decision_state: Literal["recorded", "missing", "degraded"] = "missing"
+    decision_degraded_reason: str | None = None
+
+
+@dataclass(frozen=True)
+class DecisionArtifactRead:
+    """Typed result of reading a handoff decision artifact.
+
+    A reader error is not evidence that the artifact is absent.  Keeping this
+    distinction at the projection boundary prevents every consumer from
+    accidentally advertising a second mutation while storage is degraded.
+    """
+
+    state: Literal["recorded", "missing", "degraded"]
+    reason: str | None = None
+
+    @property
+    def exists(self) -> bool:
+        return self.state == "recorded"
 
 
 def _normalise_handoff_actions(raw: object) -> list[str]:
@@ -164,7 +183,7 @@ def _incomplete_subtask_count(artifacts: object) -> int:
 
 
 def _resolve_raw_findings(
-    run_id: str, phase: str | None, handoff_payload: dict,
+    run_id: str, phase: str | None, handoff_payload: dict, *, runs_dir: Path,
 ) -> list[object]:
     """Resolve the findings *source* for the handoff read-model.
 
@@ -186,7 +205,7 @@ def _resolve_raw_findings(
         return list(raw)
     try:
         phases_kw = (phase,) if phase else None
-        sdk_results = _sdk_list_findings(run_id, cwd=None, phases=phases_kw)
+        sdk_results = _sdk_list_findings(run_id, runs_dir=runs_dir, cwd=None, phases=phases_kw)
         return list(sdk_results) if sdk_results else []
     except Exception:
         return []
@@ -219,7 +238,9 @@ def _coerce_optional_int(raw: object) -> int | None:
     return None
 
 
-def _decision_artifact_exists(run_id: str, handoff_id: str | None) -> bool:
+def _read_decision_artifact(
+    run_id: str, handoff_id: str | None, *, runs_dir: Path,
+) -> DecisionArtifactRead:
     """Whether a persisted decision artifact already exists for ``handoff_id``.
 
     Routed through ``sdk.load_phase_handoff_decision`` — the sanctioned
@@ -231,13 +252,14 @@ def _decision_artifact_exists(run_id: str, handoff_id: str | None) -> bool:
     as a structured error rather than an opaque traceback here.
     """
     if not handoff_id:
-        return False
+        return DecisionArtifactRead("missing")
     try:
-        return _sdk_load_phase_handoff_decision(
-            run_id, handoff_id, cwd=None,
-        ) is not None
+        decision = _sdk_load_phase_handoff_decision(
+            run_id, handoff_id, runs_dir=runs_dir, cwd=None,
+        )
+        return DecisionArtifactRead("recorded" if decision is not None else "missing")
     except Exception:
-        return False
+        return DecisionArtifactRead("degraded", "decision_artifact_read_failed")
 
 
 def project_handoff_read_model(
@@ -275,13 +297,13 @@ def project_handoff_read_model(
     incomplete_count = _incomplete_subtask_count(
         handoff_payload.get("artifacts"),
     )
-    raw_findings = _resolve_raw_findings(run_id, phase, handoff_payload)
+    raw_findings = _resolve_raw_findings(run_id, phase, handoff_payload, runs_dir=run_dir.parent)
 
     verdict = _coerce_optional_str(handoff_payload.get("verdict"))
     round_n = _coerce_optional_int(handoff_payload.get("round"))
     loop_max_rounds = _coerce_optional_int(handoff_payload.get("loop_max_rounds"))
     last_output = _coerce_optional_str(handoff_payload.get("last_output"))
-    decision_artifact_exists = _decision_artifact_exists(run_id, handoff_id)
+    decision = _read_decision_artifact(run_id, handoff_id, runs_dir=run_dir.parent)
 
     return HandoffReadModel(
         actions=actions,
@@ -294,7 +316,9 @@ def project_handoff_read_model(
         round_n=round_n,
         loop_max_rounds=loop_max_rounds,
         last_output=last_output,
-        decision_artifact_exists=decision_artifact_exists,
+        decision_artifact_exists=decision.exists,
+        decision_state=decision.state,
+        decision_degraded_reason=decision.reason,
     )
 
 
@@ -335,6 +359,8 @@ class PendingHandoffProjection:
     available_actions: list[str] = field(default_factory=list)
     last_output: str | None = None
     decision_artifact_exists: bool = False
+    decision_state: Literal["recorded", "missing", "degraded"] = "missing"
+    decision_degraded_reason: str | None = None
     suggested_next_action: str | None = None
 
 
@@ -360,7 +386,7 @@ def _round_label(
 
 
 def _suggested_next_action(
-    decision_artifact_exists: bool, actions: list[str],
+    decision_state: Literal["recorded", "missing", "degraded"], actions: list[str],
 ) -> str:
     """One-line next-step pointer for a pending handoff.
 
@@ -368,11 +394,13 @@ def _suggested_next_action(
     recorded and only ``orcho_run_resume`` remains; otherwise the run is
     still awaiting a decision via ``orcho_phase_handoff_decide``.
     """
-    if decision_artifact_exists:
+    if decision_state == "recorded":
         return (
             "call orcho_run_resume to apply the recorded decision and "
             "continue the run"
         )
+    if decision_state == "degraded":
+        return "inspect orcho_run_diagnose; the persisted handoff decision could not be read"
     return (
         "call orcho_phase_handoff_decide to resolve the pause, then "
         "orcho_run_resume to continue"
@@ -428,7 +456,7 @@ def project_pending_handoff(
     round_n = _coerce_optional_int(handoff_payload.get("round"))
     loop_max_rounds = _coerce_optional_int(handoff_payload.get("loop_max_rounds"))
     last_output = _coerce_optional_str(handoff_payload.get("last_output"))
-    decision_artifact_exists = _decision_artifact_exists(run_id, handoff_id)
+    decision = _read_decision_artifact(run_id, handoff_id, runs_dir=run_dir.parent)
 
     return PendingHandoffProjection(
         status=status,
@@ -440,9 +468,11 @@ def project_pending_handoff(
         round_label=_round_label(phase, round_n, loop_max_rounds),
         available_actions=actions,
         last_output=last_output,
-        decision_artifact_exists=decision_artifact_exists,
+        decision_artifact_exists=decision.exists,
+        decision_state=decision.state,
+        decision_degraded_reason=decision.reason,
         suggested_next_action=_suggested_next_action(
-            decision_artifact_exists, actions,
+            decision.state, actions,
         ),
     )
 
@@ -922,14 +952,18 @@ class RetryStateProjection:
     pending_operator_decision: bool
 
 
-def _load_handoff_decisions(run_id: str) -> list[object]:
+def _load_handoff_decisions(run_id: str, *, runs_dir: Path) -> list[object]:
     """Load persisted handoff decisions, swallowing read errors to ``[]``.
 
     Defensive: a missing / corrupt decisions directory must never break a
     status read that only wants the retry-lifecycle hint.
     """
     try:
-        return list(_sdk_load_phase_handoff_decisions(run_id, cwd=None))
+        return list(
+            _sdk_load_phase_handoff_decisions(
+                run_id, runs_dir=runs_dir, cwd=None,
+            ),
+        )
     except Exception:
         return []
 
@@ -991,7 +1025,7 @@ def project_retry_state(
     active = meta.get("phase_handoff") if isinstance(meta, dict) else None
     active = active if isinstance(active, dict) else None
 
-    decisions = _load_handoff_decisions(run_id)
+    decisions = _load_handoff_decisions(run_id, runs_dir=run_dir.parent)
     retry_decisions = [
         d for d in decisions
         if getattr(d, "action", None) == _RETRY_FEEDBACK_ACTION
@@ -1283,6 +1317,8 @@ class RunDiagnosisProjection:
     # diagnose / live_status / summary never diverge). ``True`` flips the
     # diagnose routing from decide verbs to a ready resume.
     decision_artifact_exists: bool = False
+    decision_state: Literal["recorded", "missing", "degraded"] = "missing"
+    decision_degraded_reason: str | None = None
     # Recovery-lineage enrichment (composed from ``project_recovery_lineage``).
     # ``continuation_subject`` / ``recommended_next_action`` are the typed
     # continuation vocabulary; ``source_run_id`` / ``missing_facts`` carry the
@@ -1568,7 +1604,7 @@ def project_run_diagnosis(run_id: str) -> RunDiagnosisProjection:
     # ``$ORCHO_WORKSPACE`` exactly as MCP's ``find_run_dir`` does (the long-lived
     # server must never bind to whatever cwd it was launched from).
     diagnosis = _sdk_run_diagnosis(
-        run_id, cwd=None, meta=resolved_meta, source_meta=source_meta,
+        run_id, runs_dir=run_dir.parent, cwd=None, meta=resolved_meta, source_meta=source_meta,
     )
     proj = _project_run_diagnosis(run_id, run_dir, diagnosis, parent_run_id)
 
@@ -1601,9 +1637,9 @@ def _project_run_diagnosis(
     # (1) needs_decision — overlay decision_artifact_exists + the recorded reason.
     if cond == _CONDITION_NEEDS_DECISION:
         pending = _safe_pending_handoff(run_id)
-        decision_recorded = bool(
-            pending.decision_artifact_exists if pending else False
-        )
+        decision_state = pending.decision_state if pending else "degraded"
+        decision_reason = pending.decision_degraded_reason if pending else "decision_artifact_read_failed"
+        decision_recorded = decision_state == "recorded"
         reason = diagnosis.reason
         if decision_recorded:
             # The status stays awaiting_phase_handoff; the recorded artifact
@@ -1624,6 +1660,8 @@ def _project_run_diagnosis(
             available_actions=list(diagnosis.available_actions),
             parent_run_id=parent_run_id,
             decision_artifact_exists=decision_recorded,
+            decision_state=decision_state,
+            decision_degraded_reason=decision_reason,
             recovery_lineage=recovery_lineage,
         )
 

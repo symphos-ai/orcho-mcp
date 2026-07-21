@@ -33,6 +33,25 @@ def resolve_core_continuation(run_id: str):
     )
 
 
+def preflight_core_continuation(
+    run_id: str, *, intent: str, operator_comment: str | None = None,
+):
+    """Call core's canonical continuation reducer for one resolved parent.
+
+    MCP intentionally supplies only the resolved parent directory: terminal
+    ledger and continuation-subject predicates remain wholly core-owned.
+    """
+    from sdk import ContinuationRequest, preflight_continuation
+
+    parent_run_dir = find_run_dir(run_id)
+    return preflight_continuation(
+        ContinuationRequest(
+            run_id=run_id, intent=intent, operator_comment=operator_comment,
+        ),
+        parent_run_dir=parent_run_dir,
+    )
+
+
 def correction_resume_action(decision: Any) -> NextActionRecord | None:
     """The sole actionable record for an unblocked retained change."""
     if decision.continuation_subject != "retained_change" or decision.blocked:
@@ -55,4 +74,4 @@ def correction_resume_action(decision: Any) -> NextActionRecord | None:
     )
 
 
-__all__ = ["CORRECTION_RESUME_INPUT_SCHEMA", "correction_resume_action", "resolve_core_continuation"]
+__all__ = ["CORRECTION_RESUME_INPUT_SCHEMA", "correction_resume_action", "preflight_core_continuation", "resolve_core_continuation"]

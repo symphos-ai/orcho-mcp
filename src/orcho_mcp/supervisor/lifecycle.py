@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING
 from core.observability.events import append_event
 
 from orcho_mcp.supervisor.handle import RunHandle
-from orcho_mcp.supervisor.state import write_state
+from orcho_mcp.supervisor.state import read_meta_status, settle_launch
 
 if TYPE_CHECKING:
     from orcho_mcp.supervisor.manager import RunsSupervisor
@@ -69,9 +69,12 @@ async def reap(sup: RunsSupervisor, handle: RunHandle) -> None:
 
     handle.exit_code = rc
     if rc == 0:
-        handle.status = "done"
+        # Preserve a deliberate pipeline halt written before the clean exit.
+        handle.status = "halted" if read_meta_status(handle.run_dir) == "halted" else "done"
     elif rc == 4:
         handle.status = "awaiting_phase_handoff"
+    elif rc < 0:
+        handle.status = "interrupted"
     else:
         handle.status = "failed"
 
@@ -84,7 +87,7 @@ async def reap(sup: RunsSupervisor, handle: RunHandle) -> None:
     elif rc != 0 and rc != 4:
         handle.halt_reason = f"abnormal_exit:{rc}"
 
-    write_state(handle)
+    settle_launch(handle)
 
     # If the pipeline didn't emit run.end (it does on normal completion,
     # but a crashed pipeline might not), append a synthetic one. We can't

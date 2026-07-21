@@ -215,7 +215,7 @@ def test_delivery_reuses_implement_delivery_from_errors(
     )
     monkeypatch.setattr(
         _ERRORS_SEAM,
-        lambda run_id, cwd=None: ErrorsAndHalt(
+        lambda run_id, cwd=None, **_kwargs: ErrorsAndHalt(
             status="done", errors=rollup, halt_reason=None, halted_at=None,
             error_summary=None,
         ),

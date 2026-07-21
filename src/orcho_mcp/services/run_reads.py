@@ -46,12 +46,14 @@ from orcho_mcp.services.run_lineage import (
     RecoveryLineageProjection,
     project_recovery_lineage,
 )
+from orcho_mcp.services.run_lookup import find_run_dir
 from orcho_mcp.services.run_projection import (
     build_provider_pressure,
     merged_halt_reason_from_meta,
     merged_status_from_meta,
     project_auto_detect,
     project_followup_lineage,
+    project_pending_handoff,
     project_provider_pressure,
     project_worktree_continuity,
 )
@@ -103,7 +105,8 @@ def get_run_status(
     :func:`orcho_mcp.services.meta_summary.summarize_run_meta`.
     """
     with map_sdk_errors(run_id):
-        s = _sdk_load_status(run_id, cwd=None)
+        run_dir = find_run_dir(run_id)
+        s = _sdk_load_status(run_id, runs_dir=run_dir.parent, cwd=None)
 
     # Wire fidelity: MCP returns ``None`` (not ``{}``) when metrics.json
     # is missing. SDK normalises missing files to ``{}``.
@@ -230,6 +233,13 @@ def get_run_status(
         meta, include=frozenset(include or ()),
     )
 
+    pending = project_pending_handoff(s.run_ref.run_id)
+    status_actions = [a.to_dict() for a in s.next_actions]
+    if pending.is_pending_handoff:
+        if pending.decision_state == "recorded":
+            status_actions = [{"intent": "Apply the recorded phase-handoff decision.", "tool": "orcho_run_resume", "args": {"run_id": s.run_ref.run_id}, "optional": False, "kind": "ready_call"}]
+        elif pending.decision_state == "degraded":
+            status_actions = [{"intent": "Inspect the decision-read failure before attempting a mutation.", "tool": "orcho_run_diagnose", "args": {"run_id": s.run_ref.run_id}, "optional": False, "kind": "ready_call"}]
     return RunStatus(
         run_id=s.run_ref.run_id,
         run_dir=str(s.run_ref.run_dir),
@@ -245,7 +255,9 @@ def get_run_status(
         # RunStatus (see sdk.status.load_status). Pure pass-through —
         # no transformation, no enrichment — so the suggestions stay
         # consistent across consumers (CLI, MCP, future Web UI).
-        next_actions=[a.to_dict() for a in s.next_actions],
+        next_actions=status_actions,
+        decision_state=pending.decision_state if pending.is_pending_handoff else None,
+        decision_degraded_reason=pending.decision_degraded_reason if pending.is_pending_handoff else None,
         # SDK enumerates readable artefacts for a resolved run. Pure
         # pass-through to the wire model — ``kind`` narrows from SDK
         # ``str`` to wire ``Literal[...]`` via Pydantic validation,
@@ -276,7 +288,8 @@ def get_run_metrics(run_id: str) -> RunMetrics:
     natural ``get_run_metrics`` name without shadowing.
     """
     with map_sdk_errors(run_id):
-        m = _sdk_get_run_metrics(run_id, cwd=None)
+        run_dir = find_run_dir(run_id)
+        m = _sdk_get_run_metrics(run_id, runs_dir=run_dir.parent, cwd=None)
     if not m.raw:
         raise RunNotFoundError(f"no metrics.json for run {run_id}")
     return RunMetrics(run_id=run_id, metrics=m.raw)

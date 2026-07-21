@@ -409,6 +409,8 @@ def _resolve_next_actions(
         # live_status / summary projections already point at (single source of
         # truth: ``RunDiagnosisProjection.decision_artifact_exists``), never a
         # second round of decide verbs.
+        if proj.decision_state == "degraded":
+            return cond, [_status_action(run_id)]
         if proj.decision_artifact_exists:
             return cond, [
                 _resume_action(
@@ -571,6 +573,8 @@ def inspect_run_diagnosis(run_id: str) -> RunDiagnosis:
         recommended_run_id=proj.recommended_run_id,
         available_actions=list(proj.available_actions),
         decision_recorded=proj.decision_artifact_exists,
+        decision_state=proj.decision_state,
+        decision_degraded_reason=proj.decision_degraded_reason,
         next_actions=next_actions,
         continuation_subject=proj.continuation_subject,
         recommended_next_action=proj.recommended_next_action,

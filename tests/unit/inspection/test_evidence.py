@@ -28,6 +28,22 @@ def _errors_halt(errors: tuple[dict, ...]) -> ErrorsAndHalt:
     )
 
 
+def test_errors_slice_uses_settled_supervisor_projection(fake_workspace) -> None:
+    run_dir = write_run(
+        fake_workspace, "20260701_000001", meta=meta(status="running"),
+    )
+    (run_dir / "mcp_supervisor.json").write_text(
+        '{"run_id":"20260701_000001","pid":7,"status":"failed",'
+        '"exit_code":1,"halt_reason":"abnormal_exit:1"}',
+        encoding="utf-8",
+    )
+
+    result = inspect_run_evidence("20260701_000001", slice="errors")
+
+    assert result.errors.status == "failed"
+    assert result.errors.halt_reason == "abnormal_exit:1"
+
+
 def test_errors_slice_projects_waived_delivery(monkeypatch) -> None:
     """A rollup carrying ``implement_delivery`` + ``phase_handoff_waiver``
     breadcrumbs round-trips every field into ``ImplementDeliveryRecord``."""
@@ -43,7 +59,7 @@ def test_errors_slice_projects_waived_delivery(monkeypatch) -> None:
         },
         {"kind": "phase_handoff_waiver", "decided_by": "operator"},
     )
-    monkeypatch.setattr(_SEAM, lambda run_id, cwd=None: _errors_halt(rollup))
+    monkeypatch.setattr(_SEAM, lambda run_id, **kwargs: _errors_halt(rollup))
 
     result = inspect_run_evidence("rid", slice="errors")
 
@@ -67,7 +83,7 @@ def test_errors_slice_clean_delivery_is_none(monkeypatch) -> None:
     """A rollup with no ``implement_delivery`` breadcrumb (clean delivery)
     leaves ``implement_delivery`` as ``None``."""
     rollup = ({"kind": "error", "title": "some unrelated error"},)
-    monkeypatch.setattr(_SEAM, lambda run_id, cwd=None: _errors_halt(rollup))
+    monkeypatch.setattr(_SEAM, lambda run_id, **kwargs: _errors_halt(rollup))
 
     result = inspect_run_evidence("rid", slice="errors")
 
@@ -89,7 +105,7 @@ def test_errors_slice_auto_waiver_decided_by(monkeypatch) -> None:
             "incomplete_subtasks": ["T9"],
         },
     )
-    monkeypatch.setattr(_SEAM, lambda run_id, cwd=None: _errors_halt(rollup))
+    monkeypatch.setattr(_SEAM, lambda run_id, **kwargs: _errors_halt(rollup))
 
     result = inspect_run_evidence("rid", slice="errors")
 

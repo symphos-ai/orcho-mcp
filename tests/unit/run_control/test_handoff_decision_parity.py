@@ -8,6 +8,7 @@ not an opaque traceback), and that ``note`` / ``feedback`` thread through.
 """
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -54,6 +55,9 @@ def _install_fake_sdk(monkeypatch) -> list[dict[str, object]]:
     monkeypatch.setattr(
         "orcho_mcp.run_control.handoff._sdk_phase_handoff_decide", fake_decide,
     )
+    monkeypatch.setattr(
+        "orcho_mcp.run_control.handoff.find_run_dir", lambda run_id: Path("/runs") / run_id,
+    )
     return calls
 
 
@@ -74,6 +78,7 @@ def test_each_action_maps_to_sdk_and_result(action, monkeypatch):
     assert len(calls) == 1
     assert calls[0]["args"] == ("run1", "handoff1", action)
     assert calls[0]["kwargs"]["cwd"] is None
+    assert calls[0]["kwargs"]["runs_dir"] == Path("/runs")
     assert calls[0]["kwargs"]["feedback"] == feedback
     assert calls[0]["kwargs"]["note"] == "audit"
 
