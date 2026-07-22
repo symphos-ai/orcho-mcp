@@ -15,6 +15,7 @@ Two surfaces:
   * ``RunNotFound``            → ``RunNotFoundError("run not found: <run_id>")``
   * ``NoWorkspace``            → ``WorkspaceNotResolvedError(str(e))``
   * ``InvalidPhaseHandoffState`` → ``InvalidPlanError(str(e))``
+  * ``CrossExecutionGraphInvalid`` → ``InvalidPlanError(str(e))``
   * ``ValueError``             → ``InvalidPlanError(str(e))``
 
   Wrap only the SDK call itself, never the post-success domain checks
@@ -37,6 +38,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 
 from sdk import (
+    CrossExecutionGraphInvalid as _SDKCrossExecutionGraphInvalid,
     EvidenceInvalid as _SDKEvidenceInvalid,
     InvalidPhaseHandoffState as _SDKInvalidPhaseHandoffState,
     NoWorkspace as _SDKNoWorkspace,
@@ -72,6 +74,10 @@ def map_sdk_errors(run_id: str | None = None) -> Iterator[None]:
         # id, action not in available_actions, payload-divergence
         # conflict). Surfaced as InvalidPlanError so clients distinguish
         # missing-run from bad-request.
+        raise InvalidPlanError(str(e)) from e
+    except _SDKCrossExecutionGraphInvalid as e:
+        # A graph artifact that exists but cannot be decoded/validated is a
+        # bad durable plan contract, never optional status enrichment.
         raise InvalidPlanError(str(e)) from e
     except ValueError as e:
         # SDK-side input validation (bad action / severity / phase,

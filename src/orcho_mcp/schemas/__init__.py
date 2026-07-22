@@ -87,6 +87,11 @@ from orcho_mcp.schemas.observe import (
 from orcho_mcp.schemas.read import (
     ArtefactRefRecord,
     AutoDetectProjection,
+    CrossExecutionGraphCompileIdentityRecord,
+    CrossExecutionGraphExecutorPolicyRecord,
+    CrossExecutionGraphNodeRecord,
+    CrossExecutionGraphOperationRecord,
+    CrossExecutionGraphRecord,
     EventRecord,
     EventsTailResult,
     FollowupLineage,
@@ -166,6 +171,11 @@ __all__ = [
     # read
     "ArtefactRefRecord",
     "AutoDetectProjection",
+    "CrossExecutionGraphCompileIdentityRecord",
+    "CrossExecutionGraphExecutorPolicyRecord",
+    "CrossExecutionGraphNodeRecord",
+    "CrossExecutionGraphOperationRecord",
+    "CrossExecutionGraphRecord",
     "EventRecord",
     "EventsTailResult",
     "FollowupLineage",

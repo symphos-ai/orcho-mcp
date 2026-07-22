@@ -260,3 +260,68 @@ def test_evidence_schema_publishes_canonical_scheduled_gate_ledger():
     ):
         assert retired not in row["properties"]
         assert retired not in event["properties"]
+
+
+def test_run_status_schema_publishes_lossless_cross_execution_graph() -> None:
+    """Pin the additive cross-graph contract at the public catalog boundary."""
+    committed = _load_committed_schema()
+    status = next(
+        tool for tool in committed["tools"] if tool["name"] == "orcho_run_status"
+    )
+    defs = status["outputSchema"]["$defs"]
+    status_graph = status["outputSchema"]["properties"]["cross_execution_graph"]
+
+    assert status_graph["anyOf"][0]["$ref"] == "#/$defs/CrossExecutionGraphRecord"
+    assert status_graph["anyOf"][1] == {"type": "null"}
+    assert status_graph["default"] is None
+
+    graph = defs["CrossExecutionGraphRecord"]
+    assert set(graph["properties"]) == {"compile_identity", "nodes"}
+    assert graph["properties"]["compile_identity"] == {
+        "$ref": "#/$defs/CrossExecutionGraphCompileIdentityRecord",
+    }
+    assert graph["properties"]["nodes"]["items"] == {
+        "$ref": "#/$defs/CrossExecutionGraphNodeRecord",
+    }
+
+    node = defs["CrossExecutionGraphNodeRecord"]
+    assert set(node["properties"]) == {
+        "identity", "kind", "dependencies", "owner", "executor", "required",
+        "status", "reason", "alias", "operations",
+    }
+    assert node["properties"]["executor"] == {
+        "$ref": "#/$defs/CrossExecutionGraphExecutorPolicyRecord",
+    }
+    assert node["properties"]["operations"]["items"] == {
+        "$ref": "#/$defs/CrossExecutionGraphOperationRecord",
+    }
+
+    operation = defs["CrossExecutionGraphOperationRecord"]
+    assert set(operation["properties"]) == {
+        "alias", "executor", "phase", "hook", "command",
+    }
+    policy = defs["CrossExecutionGraphExecutorPolicyRecord"]
+    assert set(policy["properties"]) == {
+        "executor", "handler", "enabled", "run", "on_skip", "mode",
+    }
+
+    assert node["properties"]["kind"]["enum"] == [
+        "global_phase", "project", "contract_check", "cross_final_acceptance",
+    ]
+    assert node["properties"]["owner"]["enum"] == ["global", "project", "runner"]
+    assert policy["properties"]["executor"]["enum"] == [
+        "global_handler", "project_pipeline", "runner_gate",
+    ]
+    assert node["properties"]["status"]["enum"] == [
+        "pending", "ready", "running", "blocked", "completed", "skipped",
+    ]
+    assert node["properties"]["reason"]["enum"] == [
+        "global_already_completed", "child_completed", "child_running",
+        "child_paused", "child_failed", "child_inconsistent",
+        "optional_project_not_run", "dependency_pending", "dependency_blocked",
+        "runner_gate_completed", "runner_gate_skipped", "runner_gate_running",
+        "policy_disabled", "policy_never", "fact_mismatch",
+    ]
+    assert operation["properties"]["executor"]["enum"] == [
+        "child_phase", "child_scheduled_gate",
+    ]
