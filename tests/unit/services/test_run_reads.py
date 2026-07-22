@@ -44,6 +44,29 @@ def test_status_returns_meta_and_metrics(fake_workspace):
     assert s.sub_runs == []
 
 
+def test_status_does_not_compose_scheduled_gate_evidence(fake_workspace):
+    """Status remains available when a separate evidence artifact is unreadable.
+
+    ``orcho_run_status`` owns the durable meta/metrics snapshot. Scheduled-gate
+    ledger parsing belongs to the explicit evidence timeline slice, so a ledger
+    failure must not take down the high-frequency status surface.
+    """
+    run_dir = write_run(
+        fake_workspace, "20260101_000009",
+        meta=meta(status="done", project="/p/x", task="t"),
+        metrics=metrics(total_tokens=42),
+    )
+    (run_dir / "scheduled_gate_ledger.json").write_text(
+        '{"not": "the current ledger contract"}\n',
+        encoding="utf-8",
+    )
+
+    s = orcho_run_status("20260101_000009")
+
+    assert s.meta["status"] == "done"
+    assert s.metrics is not None and s.metrics["total_tokens"] == 42
+
+
 def test_status_current_subtask_none_without_active_subtask(fake_workspace):
     """A terminal run with no in-flight subtask returns
     ``current_subtask is None`` — the absence is not an error."""

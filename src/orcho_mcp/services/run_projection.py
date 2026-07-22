@@ -50,7 +50,7 @@ from sdk.run_control import run_diagnosis as _sdk_run_diagnosis
 
 from orcho_mcp.schemas.shared import NextActionRecord, ProviderPressure
 from orcho_mcp.services.delivery_gate import project_delivery_gate
-from orcho_mcp.services.errors import map_sdk_errors
+from orcho_mcp.services.errors import map_sdk_errors, read_optional_evidence
 from orcho_mcp.services.run_control_boundary import (
     RunControlProjection,
     project_run_control,
@@ -2396,7 +2396,11 @@ def project_provider_pressure(run_id: str) -> ProviderPressureProjection:
     failure stays generic — never a fabricated provider-pressure condition.
     """
     with map_sdk_errors(run_id):
-        eh = _sdk_get_errors_halt(run_id, cwd=None)
+        eh = read_optional_evidence(
+            lambda: _sdk_get_errors_halt(run_id, cwd=None),
+        )
+    if eh is None:
+        return ProviderPressureProjection(run_id=run_id, condition_present=False)
     return project_provider_pressure_from_errors_halt(run_id, eh)
 
 
