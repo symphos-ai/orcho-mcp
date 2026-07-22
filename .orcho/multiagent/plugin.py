@@ -52,7 +52,7 @@ PLUGIN = {
     },
     "verification": {
         "default_env": "mcp-local-core",
-        "delivery_policy": "warn",
+        "delivery_policy": "require",
         "required": [
             "env-provenance",
             "lint",
@@ -114,14 +114,22 @@ PLUGIN = {
             },
         },
         "gate_sets": {
-            "baseline": {
-                "commands": ["env-provenance", "lint"],
-                "default_policy": "warn",
+            "provenance": {
+                "commands": ["env-provenance"],
+                "default_policy": "require",
+                "default_action": "handoff",
+                "default_cheap": True,
+            },
+            "hygiene": {
+                "commands": ["lint"],
+                "default_policy": "require",
+                "default_action": "repair_loop",
                 "default_cheap": True,
             },
             "mcp-runtime": {
-                "commands": ["env-provenance", "lint", "run-control-unit"],
-                "default_policy": "warn",
+                "commands": ["run-control-unit"],
+                "default_policy": "require",
+                "default_action": "repair_loop",
                 "default_cheap": False,
             },
             "mcp-smoke": {
@@ -131,7 +139,7 @@ PLUGIN = {
             },
         },
         "selection": [
-            {"always": ["baseline"]},
+            {"always": ["provenance", "hygiene"]},
             {
                 "paths": [
                     "src/orcho_mcp/**",
@@ -152,25 +160,16 @@ PLUGIN = {
         ],
         "schedule": [
             {
-                "before_phase": "implement",
-                "gate_sets": ["baseline"],
-                "policy": "warn",
+                "after_phase": "implement",
+                "gate_sets": ["provenance"],
+                "policy": "require",
+                "action": "handoff",
             },
             {
                 "after_phase": "implement",
-                "gate_sets": ["baseline", "mcp-runtime", "mcp-smoke"],
+                "gate_sets": ["hygiene", "mcp-runtime", "mcp-smoke"],
                 "policy": "require",
                 "action": "repair_loop",
-            },
-            {
-                "before_phase": "final_acceptance",
-                "gate_sets": ["baseline", "mcp-runtime"],
-                "policy": "warn",
-            },
-            {
-                "before_delivery": True,
-                "gate_sets": ["baseline", "mcp-runtime", "mcp-smoke"],
-                "policy": "warn",
             },
         ],
     },
