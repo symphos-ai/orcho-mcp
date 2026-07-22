@@ -101,6 +101,7 @@ from orcho_mcp.services.delivery_gate import (
     _extract_delivery_branch,
     _extract_delivery_notices,
     _extract_pr_url,
+    _extract_published_commit_sha,
     _map_pr_intent,
     _map_release,
 )
@@ -700,6 +701,7 @@ def _project_delivery(
         applied=applied,
         committed=committed,
         commit_sha=commit_sha,
+        published_commit_sha=_extract_published_commit_sha(cd),
         skipped=skipped,
         failed=failed,
         halt_reason=halt_reason,

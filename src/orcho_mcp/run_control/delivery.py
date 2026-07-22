@@ -46,6 +46,7 @@ def decide_delivery(
         halt_reason=result.halt_reason,
         artifact_paths=list(result.artifact_paths),
         commit_sha=result.commit_sha,
+        published_commit_sha=getattr(result, "published_commit_sha", None),
         blocker=result.blocker,
         followup_run_id=result.followup_run_id,
         scope_disclosure=[str(p) for p in scope_disclosure if isinstance(p, str)],

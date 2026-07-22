@@ -985,6 +985,7 @@ The projection's authority comes from
 | `default_action` | Core's recommended default when one exists. |
 | `diff` | Retained change summary. Secondary artifact failures set `diff.degraded=true` but do not hide a decidable gate. |
 | `delivery_branch` | The published / publishable delivery branch. |
+| `published_commit_sha` | The commit created on that branch; `commit_sha` remains reserved for a commit landed in the target checkout. |
 | `pr_intent` | Durable pull-request intent — `branch` / `base` / `title` / `suggested_command` — for the client to turn into an actual PR. |
 | `next_actions` | One `ready_call` to `orcho_delivery_decide` per available action. |
 

@@ -97,7 +97,8 @@ The result mirrors core's `DeliveryDecisionResult`:
 | `blocker` | Typed refusal cause when `accepted=false`. |
 | `halt_reason` | Structured halt reason for halted outcomes. |
 | `artifact_paths` | Decision artifacts written by core. |
-| `commit_sha` | Commit id when `approve` created one. |
+| `commit_sha` | Commit id landed in the target checkout. |
+| `published_commit_sha` | Commit id created on the published delivery branch. |
 | `followup_run_id` | Correction follow-up id when core starts one; otherwise `null`. |
 
 Business refusals are data, not transport errors. For example, a stale direct

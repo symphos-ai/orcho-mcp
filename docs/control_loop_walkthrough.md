@@ -308,7 +308,7 @@ for f in result.findings:
 | `verification_cockpit` | the same canonical scheduled-gate ledger projection under the cockpit view name; rows and events are identical to `verification_timeline` |
 | `handoff_advice` | phase-handoff advisor records — handoff_id, phase, recommended vs applied action, confidence, resolved, outcome, token usage + cost, summary |
 | `scope_expansion` | scope-expansion audit — classification, category, evidence, has_blocker flag |
-| `delivery` | post-release commit-delivery outcome — release_verdict, decision_status, action, applied/committed/skipped/failed, commit_sha, halt_reason |
+| `delivery` | post-release commit-delivery outcome — release_verdict, decision_status, action, applied/committed/skipped/failed, commit_sha, published_commit_sha, halt_reason |
 | `correction` | correction fixed-point outcome — non_converging, repeated blockers, parent/child run_ids, suggested_actions |
 | `all` (default) | every slice in one response |
 

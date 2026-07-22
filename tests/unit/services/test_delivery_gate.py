@@ -21,6 +21,7 @@ from orcho_mcp.services.delivery_gate import (
     _extract_delivery_branch,
     _extract_delivery_notices,
     _extract_pr_url,
+    _extract_published_commit_sha,
     _map_pr_intent,
     project_delivery_gate,
 )
@@ -691,6 +692,16 @@ def test_extract_pr_url_defensive():
     )
 
 
+def test_extract_published_commit_sha_defensive():
+    assert _extract_published_commit_sha(None) is None
+    assert _extract_published_commit_sha({}) is None
+    assert _extract_published_commit_sha({"published_commit_sha": ""}) is None
+    assert (
+        _extract_published_commit_sha({"published_commit_sha": "feed123"})
+        == "feed123"
+    )
+
+
 def test_extract_delivery_notices_defensive():
     """None / non-dict / absent / non-list → []; a present list is coerced."""
     assert _extract_delivery_notices(None) == []
@@ -714,6 +725,7 @@ def test_committed_with_pr_is_published_delivery_completed(fake_workspace):
                 action="approve",
                 release_verdict="APPROVED",
                 commit_sha="abc123",
+                published_commit_sha="feed123",
                 delivery_branch="orcho/deliver/20260619-slug",
                 pr_url="https://example.test/pr/42",
                 delivery_notices=["PR opened: https://example.test/pr/42"],
@@ -734,6 +746,7 @@ def test_committed_with_pr_is_published_delivery_completed(fake_workspace):
     assert proj.pr_url == "https://example.test/pr/42"
     assert proj.delivery_notices == ["PR opened: https://example.test/pr/42"]
     assert proj.delivery_branch == "orcho/deliver/20260619-slug"
+    assert proj.published_commit_sha == "feed123"
     assert proj.available_actions == []
     assert proj.next_actions == []
     # The stale "open a PR" command is suppressed — the live link is pr_url.
