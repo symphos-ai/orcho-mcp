@@ -1242,9 +1242,9 @@ def orcho_run_evidence(
     The full evidence bundle (``collect_evidence``) is exhaustive; this
     tool surfaces narrow projections control-loop clients actually
     need: what the plan said, which findings blocked the run, which
-    commands the pipeline shelled out to, what artifacts landed, why
-    the run halted, and the cross-run alias linkage for cross-project
-    parents.
+    commands the pipeline shelled out to, durable managed-command lifecycle
+    records, what artifacts landed, why the run halted, and the cross-run alias
+    linkage for cross-project parents.
 
     ``slice``:
       - ``"all"`` (default) — every slice populated in one response.
@@ -1257,7 +1257,9 @@ def orcho_run_evidence(
         isolates only that subset — findings are flattened across all attempts,
         so ``advisory=False`` still includes historical/resolved entries and is
         NOT the active-blocker set.
-      - ``"commands"`` — pipeline shell-outs.
+      - ``"commands"`` — pipeline shell-outs plus bounded managed-command
+        lifecycle records. Managed records do not expose raw arguments and do
+        not satisfy scheduled verification.
       - ``"artifacts"`` — files the run wrote.
       - ``"errors"`` — errors + halt reason.
       - ``"sub_runs"`` — cross-run child alias links (empty for

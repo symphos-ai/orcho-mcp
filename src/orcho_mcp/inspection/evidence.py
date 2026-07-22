@@ -903,6 +903,15 @@ def inspect_run_evidence(
                     exit_code=c.exit_code,
                     duration_s=c.duration_s,
                     outcome=c.outcome,
+                    source=c.source,
+                    identity_digest=c.identity_digest,
+                    phase=c.phase,
+                    state=c.state,
+                    executable=c.executable,
+                    started_at=c.started_at,
+                    finished_at=c.finished_at,
+                    artifact_path=c.artifact_path,
+                    degraded_reason=c.degraded_reason,
                 )
                 for c in cmds
             ]
