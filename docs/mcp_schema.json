@@ -3787,7 +3787,7 @@
       }
     },
     {
-      "description": "What happened / what proves it?\n\n    Typed evidence slices for reconstructing why the run reached its current\n    state: plan contract, findings, commands, artifacts, errors, receipts,\n    verification, delivery, correction, and cross-run children. Use this for\n    audit / post-mortem / proof; use ``orcho_run_status`` for the live operator\n    snapshot, ``orcho_run_metrics`` for consumption, and ``orcho_run_diff`` for\n    patch content.\n\n    The full evidence bundle (``collect_evidence``) is exhaustive; this\n    tool surfaces narrow projections control-loop clients actually\n    need: what the plan said, which findings blocked the run, which\n    commands the pipeline shelled out to, what artifacts landed, why\n    the run halted, and the cross-run alias linkage for cross-project\n    parents.\n\n    ``slice``:\n      - ``\"all\"`` (default) — every slice populated in one response.\n      - ``\"plan\"`` — plan summary only, including the plan's declared\n        ``allowed_modifications`` globs (from the durable plan artifact).\n      - ``\"findings\"`` — flattened findings list (filterable). Each finding\n        carries an ``advisory`` flag: the latest non-approved ``validate_plan``\n        attempt's findings, forwarded into a successful whole-plan implement,\n        are advisory (visible, NOT an active release blocker). ``advisory``\n        isolates only that subset — findings are flattened across all attempts,\n        so ``advisory=False`` still includes historical/resolved entries and is\n        NOT the active-blocker set.\n      - ``\"commands\"`` — pipeline shell-outs.\n      - ``\"artifacts\"`` — files the run wrote.\n      - ``\"errors\"`` — errors + halt reason.\n      - ``\"sub_runs\"`` — cross-run child alias links (empty for\n        single-project runs).\n      - ``\"receipts\"`` — per-subtask delivery receipts for a\n        ``subtask_dag`` run: state (``done|incomplete|failed|skipped``)\n        plus the done-criteria self-attestation (``criteria_report``,\n        ``attestation_summary``, ``attestation_error``). A subtask that\n        executed but did not close its done-criteria is ``incomplete``\n        with the reason in ``attestation_error``. Empty for\n        ``whole_plan`` runs.\n      - ``\"verification_receipts\"`` — durable verification-environment\n        receipts for the developer-side phases: which\n        interpreter (``python``) and working directory (``cwd``) ran the\n        checks, the import checks (name / expected / actual / passed),\n        the exact commands + exit codes, the clean-tree note\n        (``temp_env_outside_checkout``), and the on-disk\n        ``artifact_path``. Empty when the run recorded no receipts.\n      - ``\"verification_timeline\"`` — the canonical scheduled-gate ledger.\n        Each row retains its full identity (``command`` / ``hook`` / ``phase``),\n        declaration and selection facts (``declared`` / ``selectable`` /\n        ``selected`` / ``selection_reason``), execution facts\n        (``execution_policy`` / ``consequence`` / ``executor`` / ``trigger``),\n        nullable terminal ``disposition``, and any ``receipt_evidence``.\n        Identity-scoped ``events`` retain their kind, outcome, reason, and\n        receipt evidence. MCP forwards these SDK facts without deriving a\n        command-level status or policy summary.\n      - ``\"verification_cockpit\"`` — the same canonical scheduled-gate ledger\n        projection under the cockpit view name. It has the identical rows and\n        identity-scoped events as ``verification_timeline`` and is built from\n        the same SDK read.\n      - ``\"handoff_advice\"`` — Stage 0/1 phase-handoff advisor evidence:\n        one record per advisor call (``handoff_id`` / ``phase`` /\n        ``recommended_action`` / ``applied_action`` / ``confidence`` /\n        ``resolved`` / ``repeated`` / ``outcome`` / ``finding_fingerprint`` /\n        token-usage + cost / ``advice_artifact``) plus an aggregate ``summary``\n        (``calls`` / ``applied_retries`` / ``resolved_retries`` / ``repeated`` /\n        ``stopped`` / ``unknown`` / ``usage``). ``resolved`` is tri-state\n        (True / False / None). A run with no advisor surface returns an empty\n        slice (``calls=[]``, zeroed summary), never an error.\n      - ``\"scope_expansion\"`` — the ADR 0110 scope-expansion audit recorded at\n        ``final_acceptance``: one item per out-of-plan path with its\n        ``classification`` (``notice`` / ``risk`` / ``blocker``), ``category``,\n        and supporting ``evidence``, plus the aggregate ``has_blocker``\n        decision-condition flag. A ``notice`` is informational ONLY — it never\n        forms an operator handoff / next_action; a ``blocker`` is surfaced via\n        ``has_blocker`` as the operator-decision condition. This is a SEPARATE\n        axis from the delivery ``scope_disclosure`` on ``orcho_delivery_gate``\n        (which names strict-mono sibling files behind a shipping block). Empty\n        slice (``items=[]``, ``has_blocker=False``) when the run recorded no\n        scope-expansion audit, never an error.\n      - ``\"delivery\"`` — the post-release commit-delivery outcome as typed\n        data: ``release_verdict`` (``approved`` / ``rejected`` / ``none``), the\n        raw ``decision_status`` + ``action``, and the distinguishable\n        ``applied`` / ``committed`` / ``skipped`` / ``failed`` booleans mapped\n        from the core ``CommitDeliveryStatus`` vocabulary, plus ``commit_sha`` /\n        ``halt_reason`` and the same ``implement_delivery`` audit as the\n        ``errors`` slice (single source). ``None`` when the run recorded no\n        commit-delivery decision. This is read-only evidence — NOT the\n        interactive ``orcho_delivery_gate``. The inherited-vs-current\n        verification receipts behind an approved gate-rerun child live in the\n        ``verification_timeline`` (``inherited`` + per-gate ``source_run_id``)\n        and ``receipts`` slices, not here.\n      - ``\"correction\"`` — the ADR 0098 correction fixed-point outcome:\n        ``non_converging`` (an operator-decision condition — the captain may\n        stop), the ``repeated`` blockers, ``parent_run_id`` / ``child_run_id``,\n        advisory ``suggested_actions`` (next-step hints, never auto-applied),\n        and ``reason``. ``None`` when core recorded no fixed-point block.\n\n    ``severity_min`` (only honoured when findings are returned):\n    minimum-criticality cutoff. ``\"P0\"`` returns only P0; ``\"P1\"``\n    returns P0 + P1; etc. ``None`` returns all severities.\n\n    ``phases`` (only honoured for findings): restrict to specific\n    finding-bearing phases (``plan_qa``, ``review``, ``final_qa``,\n    ``compliance_check``). ``None`` returns findings from all four.\n\n    Errors:\n      - RunNotFoundError — unknown run_id.\n      - InvalidPlanError — invalid ``slice`` value or invalid\n        ``severity_min`` value.\n    ",
+      "description": "What happened / what proves it?\n\n    Typed evidence slices for reconstructing why the run reached its current\n    state: plan contract, findings, commands, artifacts, errors, receipts,\n    verification, delivery, correction, and cross-run children. Use this for\n    audit / post-mortem / proof; use ``orcho_run_status`` for the live operator\n    snapshot, ``orcho_run_metrics`` for consumption, and ``orcho_run_diff`` for\n    patch content.\n\n    The full evidence bundle (``collect_evidence``) is exhaustive; this\n    tool surfaces narrow projections control-loop clients actually\n    need: what the plan said, which findings blocked the run, which\n    commands the pipeline shelled out to, durable managed-command lifecycle\n    records, what artifacts landed, why the run halted, and the cross-run alias\n    linkage for cross-project parents.\n\n    ``slice``:\n      - ``\"all\"`` (default) — every slice populated in one response.\n      - ``\"plan\"`` — plan summary only, including the plan's declared\n        ``allowed_modifications`` globs (from the durable plan artifact).\n      - ``\"findings\"`` — flattened findings list (filterable). Each finding\n        carries an ``advisory`` flag: the latest non-approved ``validate_plan``\n        attempt's findings, forwarded into a successful whole-plan implement,\n        are advisory (visible, NOT an active release blocker). ``advisory``\n        isolates only that subset — findings are flattened across all attempts,\n        so ``advisory=False`` still includes historical/resolved entries and is\n        NOT the active-blocker set.\n      - ``\"commands\"`` — pipeline shell-outs plus bounded managed-command\n        lifecycle records. Managed records do not expose raw arguments and do\n        not satisfy scheduled verification.\n      - ``\"artifacts\"`` — files the run wrote.\n      - ``\"errors\"`` — errors + halt reason.\n      - ``\"sub_runs\"`` — cross-run child alias links (empty for\n        single-project runs).\n      - ``\"receipts\"`` — per-subtask delivery receipts for a\n        ``subtask_dag`` run: state (``done|incomplete|failed|skipped``)\n        plus the done-criteria self-attestation (``criteria_report``,\n        ``attestation_summary``, ``attestation_error``). A subtask that\n        executed but did not close its done-criteria is ``incomplete``\n        with the reason in ``attestation_error``. Empty for\n        ``whole_plan`` runs.\n      - ``\"verification_receipts\"`` — durable verification-environment\n        receipts for the developer-side phases: which\n        interpreter (``python``) and working directory (``cwd``) ran the\n        checks, the import checks (name / expected / actual / passed),\n        the exact commands + exit codes, the clean-tree note\n        (``temp_env_outside_checkout``), and the on-disk\n        ``artifact_path``. Empty when the run recorded no receipts.\n      - ``\"verification_timeline\"`` — the canonical scheduled-gate ledger.\n        Each row retains its full identity (``command`` / ``hook`` / ``phase``),\n        declaration and selection facts (``declared`` / ``selectable`` /\n        ``selected`` / ``selection_reason``), execution facts\n        (``execution_policy`` / ``consequence`` / ``executor`` / ``trigger``),\n        nullable terminal ``disposition``, and any ``receipt_evidence``.\n        Identity-scoped ``events`` retain their kind, outcome, reason, and\n        receipt evidence. MCP forwards these SDK facts without deriving a\n        command-level status or policy summary.\n      - ``\"verification_cockpit\"`` — the same canonical scheduled-gate ledger\n        projection under the cockpit view name. It has the identical rows and\n        identity-scoped events as ``verification_timeline`` and is built from\n        the same SDK read.\n      - ``\"handoff_advice\"`` — Stage 0/1 phase-handoff advisor evidence:\n        one record per advisor call (``handoff_id`` / ``phase`` /\n        ``recommended_action`` / ``applied_action`` / ``confidence`` /\n        ``resolved`` / ``repeated`` / ``outcome`` / ``finding_fingerprint`` /\n        token-usage + cost / ``advice_artifact``) plus an aggregate ``summary``\n        (``calls`` / ``applied_retries`` / ``resolved_retries`` / ``repeated`` /\n        ``stopped`` / ``unknown`` / ``usage``). ``resolved`` is tri-state\n        (True / False / None). A run with no advisor surface returns an empty\n        slice (``calls=[]``, zeroed summary), never an error.\n      - ``\"scope_expansion\"`` — the ADR 0110 scope-expansion audit recorded at\n        ``final_acceptance``: one item per out-of-plan path with its\n        ``classification`` (``notice`` / ``risk`` / ``blocker``), ``category``,\n        and supporting ``evidence``, plus the aggregate ``has_blocker``\n        decision-condition flag. A ``notice`` is informational ONLY — it never\n        forms an operator handoff / next_action; a ``blocker`` is surfaced via\n        ``has_blocker`` as the operator-decision condition. This is a SEPARATE\n        axis from the delivery ``scope_disclosure`` on ``orcho_delivery_gate``\n        (which names strict-mono sibling files behind a shipping block). Empty\n        slice (``items=[]``, ``has_blocker=False``) when the run recorded no\n        scope-expansion audit, never an error.\n      - ``\"delivery\"`` — the post-release commit-delivery outcome as typed\n        data: ``release_verdict`` (``approved`` / ``rejected`` / ``none``), the\n        raw ``decision_status`` + ``action``, and the distinguishable\n        ``applied`` / ``committed`` / ``skipped`` / ``failed`` booleans mapped\n        from the core ``CommitDeliveryStatus`` vocabulary, plus ``commit_sha`` /\n        ``halt_reason`` and the same ``implement_delivery`` audit as the\n        ``errors`` slice (single source). ``None`` when the run recorded no\n        commit-delivery decision. This is read-only evidence — NOT the\n        interactive ``orcho_delivery_gate``. The inherited-vs-current\n        verification receipts behind an approved gate-rerun child live in the\n        ``verification_timeline`` (``inherited`` + per-gate ``source_run_id``)\n        and ``receipts`` slices, not here.\n      - ``\"correction\"`` — the ADR 0098 correction fixed-point outcome:\n        ``non_converging`` (an operator-decision condition — the captain may\n        stop), the ``repeated`` blockers, ``parent_run_id`` / ``child_run_id``,\n        advisory ``suggested_actions`` (next-step hints, never auto-applied),\n        and ``reason``. ``None`` when core recorded no fixed-point block.\n\n    ``severity_min`` (only honoured when findings are returned):\n    minimum-criticality cutoff. ``\"P0\"`` returns only P0; ``\"P1\"``\n    returns P0 + P1; etc. ``None`` returns all severities.\n\n    ``phases`` (only honoured for findings): restrict to specific\n    finding-bearing phases (``plan_qa``, ``review``, ``final_qa``,\n    ``compliance_check``). ``None`` returns findings from all four.\n\n    Errors:\n      - RunNotFoundError — unknown run_id.\n      - InvalidPlanError — invalid ``slice`` value or invalid\n        ``severity_min`` value.\n    ",
       "inputSchema": {
         "properties": {
           "phases": {
@@ -4183,13 +4183,49 @@
                 "title": "Argv Summary",
                 "type": "string"
               },
+              "artifact_path": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Artifact Path"
+              },
               "cwd": {
                 "title": "Cwd",
                 "type": "string"
               },
+              "degraded_reason": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Degraded Reason"
+              },
               "duration_s": {
                 "title": "Duration S",
                 "type": "number"
+              },
+              "executable": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Executable"
               },
               "exit_code": {
                 "anyOf": [
@@ -4203,9 +4239,74 @@
                 "default": null,
                 "title": "Exit Code"
               },
+              "finished_at": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Finished At"
+              },
+              "identity_digest": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Identity Digest"
+              },
               "outcome": {
                 "title": "Outcome",
                 "type": "string"
+              },
+              "phase": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Phase"
+              },
+              "source": {
+                "default": "event",
+                "title": "Source",
+                "type": "string"
+              },
+              "started_at": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Started At"
+              },
+              "state": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "State"
               }
             },
             "required": [
@@ -5698,7 +5799,7 @@
             "type": "object"
           }
         },
-        "description": "Returned by ``orcho_run_evidence``.\n\nThe ``slice`` field echoes back the requested view; the matching\nfield on the result is populated, others stay ``None``. ``slice=\"all\"``\npopulates every slice for one-shot inspection.\n\nSlices:\n  - ``\"plan\"`` — plan summary incl. ``allowed_modifications`` from the\n    durable plan (PlanSliceRecord)\n  - ``\"findings\"`` — flattened reviewer findings, each with an ``advisory``\n    flag: the latest non-approved ``validate_plan`` attempt's findings,\n    forwarded into a successful whole-plan implement, are advisory (visible,\n    not an active release blocker). ``advisory`` isolates only that subset;\n    because findings are flattened across all attempts, ``advisory=False``\n    still includes historical/resolved entries and must NOT be read as\n    \"active\" (list of FindingRecord)\n  - ``\"commands\"`` — pipeline shell-outs (list)\n  - ``\"artifacts\"`` — files the run wrote (list)\n  - ``\"errors\"`` — errors + halt reason (ErrorsHaltSliceRecord)\n  - ``\"sub_runs\"`` — cross-run child aliases (list)\n  - ``\"receipts\"`` — per-subtask delivery receipts incl. done-criteria\n    attestation (list of SubtaskReceiptRecord)\n  - ``\"verification_receipts\"`` — durable verification-environment\n    receipts (interpreter / cwd / import checks / commands / exit\n    codes / clean-tree note) (list of VerificationReceiptRecord)\n  - ``\"verification_timeline\"`` — canonical scheduled-gate ledger rows\n    and identity-scoped events from the SDK (VerificationTimelineRecord)\n  - ``\"verification_cockpit\"`` — the same canonical ledger projection\n    under the cockpit view name (VerificationTimelineRecord)\n  - ``\"handoff_advice\"`` — Stage 0/1 phase-handoff advisor evidence:\n    per-call records (handoff_id / phase / recommended_action /\n    applied_action / confidence / resolved / repeated / outcome /\n    finding_fingerprint / usage+cost / advice_artifact) plus an aggregate\n    summary (calls / applied_retries / resolved_retries / repeated /\n    stopped / unknown / usage). Empty slice when the run has no advisor\n    surface (HandoffAdviceSliceRecord)\n  - ``\"scope_expansion\"`` — ADR 0110 scope-expansion audit from\n    ``final_acceptance``: per-path items (path / classification\n    notice|risk|blocker / category / evidence) plus the aggregate\n    ``has_blocker`` decision-condition flag. A ``notice`` is informational\n    only and never forms an operator handoff. This is a SEPARATE axis from\n    the delivery ``scope_disclosure`` on ``DeliveryGateProjection`` (which\n    names strict-mono sibling files behind a shipping block). Empty slice\n    when the run recorded no scope-expansion audit (ScopeExpansionSliceRecord)\n  - ``\"delivery\"`` — post-release commit-delivery outcome as typed data:\n    ``release_verdict`` (approved / rejected / none), the raw\n    ``decision_status`` + ``action``, and the distinguishable\n    ``applied`` / ``committed`` / ``skipped`` / ``failed`` booleans (mapped\n    from the core CommitDeliveryStatus vocabulary), ``commit_sha`` /\n    ``halt_reason``, plus the same ``implement_delivery`` audit as the\n    ``errors`` slice. ``None`` when the run recorded no commit-delivery\n    decision. Inherited-vs-current receipts behind an approved gate-rerun\n    child live in the ``verification_timeline`` + ``receipts`` slices\n    (DeliverySummaryRecord)\n  - ``\"correction\"`` — ADR 0098 correction fixed-point / non-convergence:\n    ``non_converging`` (an operator-decision condition), ``repeated``\n    blockers, ``parent_run_id`` / ``child_run_id``, advisory\n    ``suggested_actions`` (never auto-applied), and ``reason``. ``None``\n    when core recorded no fixed-point block (CorrectionSliceRecord)\n  - ``\"all\"`` — every slice in one response",
+        "description": "Returned by ``orcho_run_evidence``.\n\nThe ``slice`` field echoes back the requested view; the matching\nfield on the result is populated, others stay ``None``. ``slice=\"all\"``\npopulates every slice for one-shot inspection.\n\nSlices:\n  - ``\"plan\"`` — plan summary incl. ``allowed_modifications`` from the\n    durable plan (PlanSliceRecord)\n  - ``\"findings\"`` — flattened reviewer findings, each with an ``advisory``\n    flag: the latest non-approved ``validate_plan`` attempt's findings,\n    forwarded into a successful whole-plan implement, are advisory (visible,\n    not an active release blocker). ``advisory`` isolates only that subset;\n    because findings are flattened across all attempts, ``advisory=False``\n    still includes historical/resolved entries and must NOT be read as\n    \"active\" (list of FindingRecord)\n  - ``\"commands\"`` — pipeline shell-outs plus bounded managed-command\n    lifecycle records (list)\n  - ``\"artifacts\"`` — files the run wrote (list)\n  - ``\"errors\"`` — errors + halt reason (ErrorsHaltSliceRecord)\n  - ``\"sub_runs\"`` — cross-run child aliases (list)\n  - ``\"receipts\"`` — per-subtask delivery receipts incl. done-criteria\n    attestation (list of SubtaskReceiptRecord)\n  - ``\"verification_receipts\"`` — durable verification-environment\n    receipts (interpreter / cwd / import checks / commands / exit\n    codes / clean-tree note) (list of VerificationReceiptRecord)\n  - ``\"verification_timeline\"`` — canonical scheduled-gate ledger rows\n    and identity-scoped events from the SDK (VerificationTimelineRecord)\n  - ``\"verification_cockpit\"`` — the same canonical ledger projection\n    under the cockpit view name (VerificationTimelineRecord)\n  - ``\"handoff_advice\"`` — Stage 0/1 phase-handoff advisor evidence:\n    per-call records (handoff_id / phase / recommended_action /\n    applied_action / confidence / resolved / repeated / outcome /\n    finding_fingerprint / usage+cost / advice_artifact) plus an aggregate\n    summary (calls / applied_retries / resolved_retries / repeated /\n    stopped / unknown / usage). Empty slice when the run has no advisor\n    surface (HandoffAdviceSliceRecord)\n  - ``\"scope_expansion\"`` — ADR 0110 scope-expansion audit from\n    ``final_acceptance``: per-path items (path / classification\n    notice|risk|blocker / category / evidence) plus the aggregate\n    ``has_blocker`` decision-condition flag. A ``notice`` is informational\n    only and never forms an operator handoff. This is a SEPARATE axis from\n    the delivery ``scope_disclosure`` on ``DeliveryGateProjection`` (which\n    names strict-mono sibling files behind a shipping block). Empty slice\n    when the run recorded no scope-expansion audit (ScopeExpansionSliceRecord)\n  - ``\"delivery\"`` — post-release commit-delivery outcome as typed data:\n    ``release_verdict`` (approved / rejected / none), the raw\n    ``decision_status`` + ``action``, and the distinguishable\n    ``applied`` / ``committed`` / ``skipped`` / ``failed`` booleans (mapped\n    from the core CommitDeliveryStatus vocabulary), ``commit_sha`` /\n    ``halt_reason``, plus the same ``implement_delivery`` audit as the\n    ``errors`` slice. ``None`` when the run recorded no commit-delivery\n    decision. Inherited-vs-current receipts behind an approved gate-rerun\n    child live in the ``verification_timeline`` + ``receipts`` slices\n    (DeliverySummaryRecord)\n  - ``\"correction\"`` — ADR 0098 correction fixed-point / non-convergence:\n    ``non_converging`` (an operator-decision condition), ``repeated``\n    blockers, ``parent_run_id`` / ``child_run_id``, advisory\n    ``suggested_actions`` (never auto-applied), and ``reason``. ``None``\n    when core recorded no fixed-point block (CorrectionSliceRecord)\n  - ``\"all\"`` — every slice in one response",
         "properties": {
           "artifacts": {
             "anyOf": [

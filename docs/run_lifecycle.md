@@ -735,7 +735,7 @@ fit the answer in its context window.
 | `"all"` (default) | every slice in one response |
 | `"plan"` | `PlanSliceRecord` — source, short_summary, planning_context, subtask_count, has_contract, goal, acceptance_criteria, owned_files, commands_to_run, risks, review_focus |
 | `"findings"` | `list[FindingRecord]` — flattened reviewer findings across `plan_qa` / `review` / `final_qa` / `compliance_check`. Each carries `severity` (P0..P3), `phase`, `attempt`, optional `file` + `line`. |
-| `"commands"` | `list[EvidenceCommandSliceRecord]` — pipeline shell-outs (argv summary, cwd, exit_code, duration, outcome). |
+| `"commands"` | `list[EvidenceCommandSliceRecord]` — pipeline shell-outs plus durable agent-managed command lifecycle records. Managed records carry `source="managed"`, `state`, identity digest, phase, bounded executable, timestamps, and a run-relative artifact path; raw arguments are not projected and these records do not satisfy scheduled verification. |
 | `"artifacts"` | `list[EvidenceArtifactSliceRecord]` — files the run wrote (path, kind, size_bytes). |
 | `"errors"` | `ErrorsHaltSliceRecord` — status, errors[], halt_reason, halted_at, error_summary, and `implement_delivery` (typed delivery/waiver audit; `None` for a clean delivery). See [Delivery / waiver audit](#delivery--waiver-audit-implement_delivery). |
 | `"sub_runs"` | `list[SubRunLinkRecord]` — cross-run child aliases (name, status, run_dir). Empty for single-project runs. |

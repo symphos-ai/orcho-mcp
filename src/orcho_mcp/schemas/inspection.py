@@ -82,6 +82,15 @@ class EvidenceCommandSliceRecord(BaseModel):
     exit_code: int | None = None
     duration_s: float
     outcome: str
+    source: str = "event"
+    identity_digest: str | None = None
+    phase: str | None = None
+    state: str | None = None
+    executable: str | None = None
+    started_at: str | None = None
+    finished_at: str | None = None
+    artifact_path: str | None = None
+    degraded_reason: str | None = None
 
 
 class EvidenceArtifactSliceRecord(BaseModel):
@@ -674,7 +683,8 @@ class EvidenceResult(BaseModel):
         because findings are flattened across all attempts, ``advisory=False``
         still includes historical/resolved entries and must NOT be read as
         "active" (list of FindingRecord)
-      - ``"commands"`` — pipeline shell-outs (list)
+      - ``"commands"`` — pipeline shell-outs plus bounded managed-command
+        lifecycle records (list)
       - ``"artifacts"`` — files the run wrote (list)
       - ``"errors"`` — errors + halt reason (ErrorsHaltSliceRecord)
       - ``"sub_runs"`` — cross-run child aliases (list)
