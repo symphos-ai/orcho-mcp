@@ -45,6 +45,28 @@ class HistoryResult(BaseModel):
 # ── orcho_run_status ─────────────────────────────────────────────────────────
 
 
+CrossExecutionGraphNodeKindLiteral = Literal[
+    "global_phase", "project", "contract_check", "cross_final_acceptance",
+]
+CrossExecutionGraphNodeOwnerLiteral = Literal["global", "project", "runner"]
+CrossExecutionGraphExecutorLiteral = Literal[
+    "global_handler", "project_pipeline", "runner_gate",
+]
+CrossExecutionGraphStatusLiteral = Literal[
+    "pending", "ready", "running", "blocked", "completed", "skipped",
+]
+CrossExecutionGraphReasonLiteral = Literal[
+    "global_already_completed", "child_completed", "child_running",
+    "child_paused", "child_failed", "child_inconsistent",
+    "optional_project_not_run", "dependency_pending", "dependency_blocked",
+    "runner_gate_completed", "runner_gate_skipped", "runner_gate_running",
+    "policy_disabled", "policy_never", "fact_mismatch",
+]
+CrossExecutionGraphOperationExecutorLiteral = Literal[
+    "child_phase", "child_scheduled_gate",
+]
+
+
 class ArtefactRefRecord(BaseModel):
     """Wire model for one readable artefact of a run.
 
@@ -73,6 +95,56 @@ class ArtefactRefRecord(BaseModel):
         description="Physical artefact size from ``os.stat``. ``None`` for "
                     "composable resources assembled at read time (evidence).",
     )
+
+
+class CrossExecutionGraphCompileIdentityRecord(BaseModel):
+    """Immutable compilation identity for a persisted cross-run graph."""
+
+    schema_version: int
+    fingerprint: str
+
+
+class CrossExecutionGraphExecutorPolicyRecord(BaseModel):
+    """Complete structural executor assignment for one graph node."""
+
+    executor: CrossExecutionGraphExecutorLiteral
+    handler: str | None = None
+    enabled: bool
+    run: str | None = None
+    on_skip: str | None = None
+    mode: str | None = None
+
+
+class CrossExecutionGraphOperationRecord(BaseModel):
+    """One canonical operation currently associated with a graph node."""
+
+    alias: str
+    executor: CrossExecutionGraphOperationExecutorLiteral
+    phase: str
+    hook: str | None = None
+    command: list[str] = Field(default_factory=list)
+
+
+class CrossExecutionGraphNodeRecord(BaseModel):
+    """Structural graph node joined to its canonical derived state."""
+
+    identity: str
+    kind: CrossExecutionGraphNodeKindLiteral
+    dependencies: list[str] = Field(default_factory=list)
+    owner: CrossExecutionGraphNodeOwnerLiteral
+    executor: CrossExecutionGraphExecutorPolicyRecord
+    required: bool
+    status: CrossExecutionGraphStatusLiteral
+    reason: CrossExecutionGraphReasonLiteral
+    alias: str | None = None
+    operations: list[CrossExecutionGraphOperationRecord] = Field(default_factory=list)
+
+
+class CrossExecutionGraphRecord(BaseModel):
+    """Lossless read-only view of a persisted cross execution graph."""
+
+    compile_identity: CrossExecutionGraphCompileIdentityRecord
+    nodes: list[CrossExecutionGraphNodeRecord] = Field(default_factory=list)
 
 
 class FollowupLineage(BaseModel):
@@ -480,6 +552,12 @@ class RunStatus(BaseModel):
     sub_runs: list[str] = Field(
         default_factory=list,
         description="Child run aliases for cross-project runs (empty for single-project).",
+    )
+    cross_execution_graph: CrossExecutionGraphRecord | None = Field(
+        default=None,
+        description="Immutable cross execution graph joined with its canonical "
+                    "derived node state. ``None`` for mono-project runs and "
+                    "cross runs before the graph artifact exists.",
     )
     lineage: FollowupLineage | None = Field(
         default=None,

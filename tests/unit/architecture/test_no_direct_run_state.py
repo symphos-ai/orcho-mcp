@@ -149,8 +149,9 @@ def test_sdk_sentinel_symbols_present_in_approved_surface() -> None:
     union check is what matters.
     """
     expected = {
-        "find_run", "find_runs_dir", "get_run_metrics",
-        "read_run_events", "list_history", "load_meta", "load_status",
+    "find_run", "find_runs_dir", "get_run_metrics",
+        "read_run_events", "list_history", "load_cross_execution_graph",
+        "load_cross_execution_graph_state", "load_meta", "load_status",
     }
     seen: set[str] = set()
     for path in APPROVED_SDK_SENTINEL_SURFACE:

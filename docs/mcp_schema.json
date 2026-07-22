@@ -7966,7 +7966,7 @@
       }
     },
     {
-      "description": "Durable status snapshot for one run — not the live-progress view.\n\n    Summary snapshot for a single run: status, phase progress, metrics summary,\n    lineage, attention signals, available artifacts, and ready next actions. For\n    live progress — where the run is right now and the subtask position\n    (index/total) — use ``orcho_run_live_status``. Reach for this tool for the\n    durable meta + gate snapshot and pause/delivery checks; use\n    ``orcho_run_evidence`` for proof, ``orcho_run_metrics`` for consumption, and\n    ``orcho_run_diff`` for patch content.\n\n    Raises RunNotFoundError if ``run_id`` doesn't exist on disk.\n\n    Merges supervisor truth into ``meta.status`` when the pipeline exits\n    before it can update ``meta.json``. The pipeline owns ``meta.json``;\n    the supervisor owns ``mcp_supervisor.json``. When meta status is\n    missing or stuck on ``running`` while the supervisor knows the\n    process is dead, this tool surfaces the supervisor's terminal\n    status so wire consumers see one consistent value.\n\n    **Summary-only by default.** This tool is the supervisor's\n    highest-frequency poll, so ``meta`` is projected to a bounded shape:\n    top-level scalars and gate verdicts pass through, but the heavy phase\n    *bodies* are elided. Inside ``meta.phases`` you get size / count\n    markers instead of full text — e.g. ``plan[i].output_chars`` (not the\n    plan markdown), ``implement.output_chars``, ``validate_plan[i]``\n    keeps ``verdict`` + ``findings_count`` (not the critique), and\n    implementation receipts collapse to ``subtask_id`` + ``state``. The\n    long task text remains in ``meta.task`` but is truncated there, with\n    ``task_chars`` / ``task_truncated`` markers. Per-attempt observability dicts\n    (``prompt_render``, ``context_*``) are dropped.\n\n    The full bodies are never lost — they live on disk under ``run_dir``\n    and are reachable via ``orcho_run_evidence`` (plan / findings /\n    receipts slices), ``orcho_run_metrics`` (per-phase token/duration\n    breakdown), or a direct read of ``runspace/runs/<run_id>/``.\n\n    ``auto_detect`` is a typed projection of the run's profile-selector\n    decision, present only when the run started via\n    ``profile=\"auto-detect\"`` (else ``None``). It carries\n    ``requested_selector`` (the ``auto-detect`` token), the selected /\n    recommended profile + mode, ``detection_state`` / ``disposition`` /\n    ``trusted``, and a deterministic ``next_action``: ``None`` for a\n    trusted recommendation, otherwise an ``operator_input_required``\n    pointer to re-run with an explicit profile.\n\n    Args:\n        run_id: the run to inspect.\n        include: opt back in to full phase bodies. Tokens — ``\"task\"``,\n            ``\"plan\"`` (plan markdown + file lists), ``\"output\"`` (implement\n            agent output), ``\"critiques\"`` (validate_plan / repair /\n            final_acceptance critiques + findings), ``\"receipts\"`` (full\n            implementation / repair receipts), ``\"all\"`` (identity — the\n            pre-summary payload, for callers that relied on it).\n            Unrecognised tokens are ignored. Default ``None`` = summary.\n\n    ``current_subtask`` is an optional typed projection on the response,\n    present only while a ``subtask_dag`` subtask is in flight (else\n    ``None``): it carries the active subtask ``index`` / ``total`` /\n    ``goal``, consistent with ``orcho_run_live_status``. For continuous\n    live progress prefer ``orcho_run_live_status``.\n    ",
+      "description": "Durable status snapshot for one run — not the live-progress view.\n\n    Summary snapshot for a single run: status, phase progress, metrics summary,\n    lineage, immutable cross-execution graph/state (when present), attention\n    signals, available artifacts, and ready next actions. For\n    live progress — where the run is right now and the subtask position\n    (index/total) — use ``orcho_run_live_status``. Reach for this tool for the\n    durable meta + gate snapshot and pause/delivery checks; use\n    ``orcho_run_evidence`` for proof, ``orcho_run_metrics`` for consumption, and\n    ``orcho_run_diff`` for patch content.\n\n    Raises RunNotFoundError if ``run_id`` doesn't exist on disk.\n\n    Merges supervisor truth into ``meta.status`` when the pipeline exits\n    before it can update ``meta.json``. The pipeline owns ``meta.json``;\n    the supervisor owns ``mcp_supervisor.json``. When meta status is\n    missing or stuck on ``running`` while the supervisor knows the\n    process is dead, this tool surfaces the supervisor's terminal\n    status so wire consumers see one consistent value.\n\n    **Summary-only by default.** This tool is the supervisor's\n    highest-frequency poll, so ``meta`` is projected to a bounded shape:\n    top-level scalars and gate verdicts pass through, but the heavy phase\n    *bodies* are elided. Inside ``meta.phases`` you get size / count\n    markers instead of full text — e.g. ``plan[i].output_chars`` (not the\n    plan markdown), ``implement.output_chars``, ``validate_plan[i]``\n    keeps ``verdict`` + ``findings_count`` (not the critique), and\n    implementation receipts collapse to ``subtask_id`` + ``state``. The\n    long task text remains in ``meta.task`` but is truncated there, with\n    ``task_chars`` / ``task_truncated`` markers. Per-attempt observability dicts\n    (``prompt_render``, ``context_*``) are dropped.\n\n    The full bodies are never lost — they live on disk under ``run_dir``\n    and are reachable via ``orcho_run_evidence`` (plan / findings /\n    receipts slices), ``orcho_run_metrics`` (per-phase token/duration\n    breakdown), or a direct read of ``runspace/runs/<run_id>/``.\n\n    ``auto_detect`` is a typed projection of the run's profile-selector\n    decision, present only when the run started via\n    ``profile=\"auto-detect\"`` (else ``None``). It carries\n    ``requested_selector`` (the ``auto-detect`` token), the selected /\n    recommended profile + mode, ``detection_state`` / ``disposition`` /\n    ``trusted``, and a deterministic ``next_action``: ``None`` for a\n    trusted recommendation, otherwise an ``operator_input_required``\n    pointer to re-run with an explicit profile.\n\n    Args:\n        run_id: the run to inspect.\n        include: opt back in to full phase bodies. Tokens — ``\"task\"``,\n            ``\"plan\"`` (plan markdown + file lists), ``\"output\"`` (implement\n            agent output), ``\"critiques\"`` (validate_plan / repair /\n            final_acceptance critiques + findings), ``\"receipts\"`` (full\n            implementation / repair receipts), ``\"all\"`` (identity — the\n            pre-summary payload, for callers that relied on it).\n            Unrecognised tokens are ignored. Default ``None`` = summary.\n\n    ``current_subtask`` is an optional typed projection on the response,\n    present only while a ``subtask_dag`` subtask is in flight (else\n    ``None``): it carries the active subtask ``index`` / ``total`` /\n    ``goal``, consistent with ``orcho_run_live_status``. For continuous\n    live progress prefer ``orcho_run_live_status``.\n\n    ``cross_execution_graph`` is ``None`` for mono-project and pre-graph\n    runs. When persisted, it preserves the graph's compile identity and node\n    order, joins each structural node to the canonical SDK-derived status and\n    reason, and includes any child phase/scheduled-gate operations without\n    reconstructing graph semantics in MCP.\n    ",
       "inputSchema": {
         "properties": {
           "include": {
@@ -8315,6 +8315,269 @@
               }
             },
             "title": "AutoDetectProjection",
+            "type": "object"
+          },
+          "CrossExecutionGraphCompileIdentityRecord": {
+            "description": "Immutable compilation identity for a persisted cross-run graph.",
+            "properties": {
+              "fingerprint": {
+                "title": "Fingerprint",
+                "type": "string"
+              },
+              "schema_version": {
+                "title": "Schema Version",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "schema_version",
+              "fingerprint"
+            ],
+            "title": "CrossExecutionGraphCompileIdentityRecord",
+            "type": "object"
+          },
+          "CrossExecutionGraphExecutorPolicyRecord": {
+            "description": "Complete structural executor assignment for one graph node.",
+            "properties": {
+              "enabled": {
+                "title": "Enabled",
+                "type": "boolean"
+              },
+              "executor": {
+                "enum": [
+                  "global_handler",
+                  "project_pipeline",
+                  "runner_gate"
+                ],
+                "title": "Executor",
+                "type": "string"
+              },
+              "handler": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Handler"
+              },
+              "mode": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Mode"
+              },
+              "on_skip": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "On Skip"
+              },
+              "run": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Run"
+              }
+            },
+            "required": [
+              "executor",
+              "enabled"
+            ],
+            "title": "CrossExecutionGraphExecutorPolicyRecord",
+            "type": "object"
+          },
+          "CrossExecutionGraphNodeRecord": {
+            "description": "Structural graph node joined to its canonical derived state.",
+            "properties": {
+              "alias": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Alias"
+              },
+              "dependencies": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Dependencies",
+                "type": "array"
+              },
+              "executor": {
+                "$ref": "#/$defs/CrossExecutionGraphExecutorPolicyRecord"
+              },
+              "identity": {
+                "title": "Identity",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "global_phase",
+                  "project",
+                  "contract_check",
+                  "cross_final_acceptance"
+                ],
+                "title": "Kind",
+                "type": "string"
+              },
+              "operations": {
+                "items": {
+                  "$ref": "#/$defs/CrossExecutionGraphOperationRecord"
+                },
+                "title": "Operations",
+                "type": "array"
+              },
+              "owner": {
+                "enum": [
+                  "global",
+                  "project",
+                  "runner"
+                ],
+                "title": "Owner",
+                "type": "string"
+              },
+              "reason": {
+                "enum": [
+                  "global_already_completed",
+                  "child_completed",
+                  "child_running",
+                  "child_paused",
+                  "child_failed",
+                  "child_inconsistent",
+                  "optional_project_not_run",
+                  "dependency_pending",
+                  "dependency_blocked",
+                  "runner_gate_completed",
+                  "runner_gate_skipped",
+                  "runner_gate_running",
+                  "policy_disabled",
+                  "policy_never",
+                  "fact_mismatch"
+                ],
+                "title": "Reason",
+                "type": "string"
+              },
+              "required": {
+                "title": "Required",
+                "type": "boolean"
+              },
+              "status": {
+                "enum": [
+                  "pending",
+                  "ready",
+                  "running",
+                  "blocked",
+                  "completed",
+                  "skipped"
+                ],
+                "title": "Status",
+                "type": "string"
+              }
+            },
+            "required": [
+              "identity",
+              "kind",
+              "owner",
+              "executor",
+              "required",
+              "status",
+              "reason"
+            ],
+            "title": "CrossExecutionGraphNodeRecord",
+            "type": "object"
+          },
+          "CrossExecutionGraphOperationRecord": {
+            "description": "One canonical operation currently associated with a graph node.",
+            "properties": {
+              "alias": {
+                "title": "Alias",
+                "type": "string"
+              },
+              "command": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Command",
+                "type": "array"
+              },
+              "executor": {
+                "enum": [
+                  "child_phase",
+                  "child_scheduled_gate"
+                ],
+                "title": "Executor",
+                "type": "string"
+              },
+              "hook": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Hook"
+              },
+              "phase": {
+                "title": "Phase",
+                "type": "string"
+              }
+            },
+            "required": [
+              "alias",
+              "executor",
+              "phase"
+            ],
+            "title": "CrossExecutionGraphOperationRecord",
+            "type": "object"
+          },
+          "CrossExecutionGraphRecord": {
+            "description": "Lossless read-only view of a persisted cross execution graph.",
+            "properties": {
+              "compile_identity": {
+                "$ref": "#/$defs/CrossExecutionGraphCompileIdentityRecord"
+              },
+              "nodes": {
+                "items": {
+                  "$ref": "#/$defs/CrossExecutionGraphNodeRecord"
+                },
+                "title": "Nodes",
+                "type": "array"
+              }
+            },
+            "required": [
+              "compile_identity"
+            ],
+            "title": "CrossExecutionGraphRecord",
             "type": "object"
           },
           "CurrentSubtaskRecord": {
@@ -9011,6 +9274,18 @@
             ],
             "default": null,
             "description": "Typed projection of the persisted ``meta.auto_detect`` decision (requested selector + detector outcome + a deterministic next_action). ``None`` for a run that did not start through the ``auto-detect`` selector."
+          },
+          "cross_execution_graph": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/CrossExecutionGraphRecord"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Immutable cross execution graph joined with its canonical derived node state. ``None`` for mono-project runs and cross runs before the graph artifact exists."
           },
           "current_subtask": {
             "anyOf": [

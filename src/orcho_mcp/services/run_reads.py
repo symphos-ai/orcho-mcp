@@ -14,10 +14,13 @@ path through the core SDK event surface.
 """
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from sdk import (
     get_run_metrics as _sdk_get_run_metrics,
+    load_cross_execution_graph as _sdk_load_cross_execution_graph,
+    load_cross_execution_graph_state as _sdk_load_cross_execution_graph_state,
     load_status as _sdk_load_status,
 )
 
@@ -27,6 +30,11 @@ from orcho_mcp.observe.summary import build_latest_run_events_summary
 from orcho_mcp.schemas import (
     ArtefactRefRecord,
     AutoDetectProjection,
+    CrossExecutionGraphCompileIdentityRecord,
+    CrossExecutionGraphExecutorPolicyRecord,
+    CrossExecutionGraphNodeRecord,
+    CrossExecutionGraphOperationRecord,
+    CrossExecutionGraphRecord,
     EventRecord,
     EventsTailResult,
     FollowupLineage,
@@ -58,6 +66,77 @@ from orcho_mcp.services.run_projection import (
     project_worktree_continuity,
 )
 from orcho_mcp.workspace_state import read_workspace_state
+
+
+def _enum_value(value: object) -> str:
+    """Return a public SDK enum's stable wire value without importing core types."""
+    return str(getattr(value, "value", value))
+
+
+def _project_cross_execution_graph(
+    run_id: str,
+    run_dir: Path,
+) -> CrossExecutionGraphRecord | None:
+    """Join immutable graph structure to SDK-derived state without reconstruction.
+
+    The artifact-presence check deliberately does not open or decode the file:
+    no graph means a normal mono/pre-graph status, while an existing malformed
+    artifact is delegated to the SDK and mapped as ``InvalidPlanError``.
+    """
+    if not (run_dir / "cross_execution_graph.json").exists():
+        return None
+
+    with map_sdk_errors(run_id):
+        graph = _sdk_load_cross_execution_graph(
+            run_id, runs_dir=run_dir.parent, cwd=None,
+        )
+        state = _sdk_load_cross_execution_graph_state(
+            run_id, runs_dir=run_dir.parent, cwd=None,
+        )
+        graph_identities = tuple(node.identity for node in graph.nodes)
+        state_identities = tuple(node.identity for node in state.nodes)
+        if graph_identities != state_identities:
+            raise ValueError(
+                "cross execution graph structure/state identity mismatch"
+            )
+
+        return CrossExecutionGraphRecord(
+            compile_identity=CrossExecutionGraphCompileIdentityRecord(
+                schema_version=graph.compile_identity.schema_version,
+                fingerprint=graph.compile_identity.fingerprint,
+            ),
+            nodes=[
+                CrossExecutionGraphNodeRecord(
+                    identity=node.identity,
+                    kind=_enum_value(node.kind),
+                    dependencies=list(node.dependencies),
+                    owner=_enum_value(node.owner),
+                    executor=CrossExecutionGraphExecutorPolicyRecord(
+                        executor=_enum_value(node.executor.executor),
+                        handler=node.executor.handler,
+                        enabled=node.executor.enabled,
+                        run=node.executor.run,
+                        on_skip=node.executor.on_skip,
+                        mode=node.executor.mode,
+                    ),
+                    required=node.required,
+                    status=_enum_value(node_state.status),
+                    reason=_enum_value(node_state.reason),
+                    alias=node_state.alias,
+                    operations=[
+                        CrossExecutionGraphOperationRecord(
+                            alias=operation.alias,
+                            executor=_enum_value(operation.executor),
+                            phase=operation.phase,
+                            hook=operation.hook,
+                            command=list(operation.command),
+                        )
+                        for operation in node_state.operations
+                    ],
+                )
+                for node, node_state in zip(graph.nodes, state.nodes, strict=True)
+            ],
+        )
 
 
 def _recovery_recommendation(
@@ -111,6 +190,10 @@ def get_run_status(
     # Wire fidelity: MCP returns ``None`` (not ``{}``) when metrics.json
     # is missing. SDK normalises missing files to ``{}``.
     metrics = s.raw_metrics if s.raw_metrics else None
+
+    cross_execution_graph = _project_cross_execution_graph(
+        s.run_ref.run_id, s.run_ref.run_dir,
+    )
 
     meta = dict(s.raw_meta or {})
     merged = merged_status_from_meta(meta, s.run_ref.run_dir)
@@ -246,6 +329,7 @@ def get_run_status(
         meta=meta_wire,
         metrics=metrics,
         sub_runs=sorted(sp.name for sp in s.sub_projects),
+        cross_execution_graph=cross_execution_graph,
         lineage=lineage,
         worktree_continuity=worktree_continuity,
         auto_detect=auto_detect,

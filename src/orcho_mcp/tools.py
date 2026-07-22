@@ -300,7 +300,8 @@ def orcho_run_status(
     """Durable status snapshot for one run — not the live-progress view.
 
     Summary snapshot for a single run: status, phase progress, metrics summary,
-    lineage, attention signals, available artifacts, and ready next actions. For
+    lineage, immutable cross-execution graph/state (when present), attention
+    signals, available artifacts, and ready next actions. For
     live progress — where the run is right now and the subtask position
     (index/total) — use ``orcho_run_live_status``. Reach for this tool for the
     durable meta + gate snapshot and pause/delivery checks; use
@@ -357,6 +358,12 @@ def orcho_run_status(
     ``None``): it carries the active subtask ``index`` / ``total`` /
     ``goal``, consistent with ``orcho_run_live_status``. For continuous
     live progress prefer ``orcho_run_live_status``.
+
+    ``cross_execution_graph`` is ``None`` for mono-project and pre-graph
+    runs. When persisted, it preserves the graph's compile identity and node
+    order, joins each structural node to the canonical SDK-derived status and
+    reason, and includes any child phase/scheduled-gate operations without
+    reconstructing graph semantics in MCP.
     """
     return get_run_status(run_id, include=include)
 
