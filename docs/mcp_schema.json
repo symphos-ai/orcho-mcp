@@ -640,6 +640,19 @@
             "default": null,
             "title": "Halt Reason"
           },
+          "published_commit_sha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Commit created on the published delivery branch. It did not land in the target checkout and therefore does not populate commit_sha.",
+            "title": "Published Commit Sha"
+          },
           "run_id": {
             "title": "Run Id",
             "type": "string"
@@ -1065,6 +1078,19 @@
             "description": "True on a ``delivery_completed`` gate whose delivery opened a pull request (``pr_url`` is present). ``False`` for every other kind and for a completed delivery that only wrote a commit without a PR.",
             "title": "Published",
             "type": "boolean"
+          },
+          "published_commit_sha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Commit created on the published delivery branch. Distinct from commit_sha, which means a commit landed in the target checkout.",
+            "title": "Published Commit Sha"
           },
           "recommended_next_action": {
             "anyOf": [
@@ -4055,6 +4081,19 @@
                 "default": null,
                 "description": "The live pull-request URL from meta ``commit_delivery.pr_url`` (ADR 0119). Present when the delivery opened a pull request; ``None`` when no PR was opened or on a stale core. The authoritative link — prefer it over ``pr_intent.suggested_command``.",
                 "title": "Pr Url"
+              },
+              "published_commit_sha": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Commit created on the published delivery branch. Distinct from commit_sha, which means a commit landed in the target checkout.",
+                "title": "Published Commit Sha"
               },
               "release_verdict": {
                 "description": "Release outcome from meta ``release_verdict``: 'approved' | 'rejected' | 'none'.",

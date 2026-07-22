@@ -591,6 +591,13 @@ class DeliverySummaryRecord(BaseModel):
     applied: bool = False
     committed: bool = False
     commit_sha: str | None = None
+    published_commit_sha: str | None = Field(
+        default=None,
+        description=(
+            "Commit created on the published delivery branch. Distinct from "
+            "commit_sha, which means a commit landed in the target checkout."
+        ),
+    )
     skipped: bool = False
     failed: bool = False
     halt_reason: str | None = None
@@ -964,6 +971,13 @@ class DeliveryGateProjection(BaseModel):
             "The published / publishable delivery branch (ADR 0119). Present "
             "for a branch-policy delivery (e.g. a publish-only "
             "``worktree_branch``); ``None`` when core emitted no branch."
+        ),
+    )
+    published_commit_sha: str | None = Field(
+        default=None,
+        description=(
+            "Commit created on the published delivery branch. Distinct from "
+            "commit_sha, which means a commit landed in the target checkout."
         ),
     )
     pr_intent: PrIntentRecord | None = Field(

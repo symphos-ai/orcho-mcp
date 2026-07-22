@@ -156,6 +156,18 @@ def _extract_delivery_branch(cd: dict | None) -> str | None:
     return _optional_str(cd.get("delivery_branch"))
 
 
+def _extract_published_commit_sha(cd: dict | None) -> str | None:
+    """Commit created on the published delivery branch.
+
+    This is distinct from ``commit_sha``, which means a commit landed in the
+    target checkout. The value is produced by core and is never inferred from
+    the branch name, pull-request URL, or audit artifact.
+    """
+    if not isinstance(cd, dict):
+        return None
+    return _optional_str(cd.get("published_commit_sha"))
+
+
 def _map_pr_intent(cd: dict | None) -> PrIntentRecord | None:
     """Map the durable ``pr_intent`` block to a typed :class:`PrIntentRecord`.
 
@@ -534,6 +546,7 @@ def project_delivery_gate(run_id: str) -> DeliveryGateProjection:
                 pr_url=pr_url,
                 delivery_notices=_extract_delivery_notices(cd),
                 delivery_branch=delivery_branch,
+                published_commit_sha=_extract_published_commit_sha(cd),
                 pr_intent=_published_pr_intent(pr_intent, published),
                 message=_completed_message(status, pr_url),
                 next_actions=[],

@@ -147,6 +147,7 @@ def test_delivery_publish_branch_carries_branch_and_pr_intent(fake_workspace) ->
                 "action": "approve",
                 "release_verdict": "approved",
                 # Publish-only: no commit was written to the target checkout.
+                "published_commit_sha": "feed123",
                 "delivery_branch": "orcho/deliver/20260202_000010-add-widget",
                 "pr_intent": {
                     "branch": "orcho/deliver/20260202_000010-add-widget",
@@ -169,6 +170,7 @@ def test_delivery_publish_branch_carries_branch_and_pr_intent(fake_workspace) ->
     assert d.pr_intent.suggested_command == "gh pr create --fill"
     # No fabricated sha for a publish-only branch.
     assert d.commit_sha is None
+    assert d.published_commit_sha == "feed123"
     assert d.release_verdict == "approved"
 
 
@@ -199,6 +201,7 @@ def test_delivery_commit_case_carries_branch_and_sha(fake_workspace) -> None:
     d = inspect_run_evidence("20260202_000011", slice="delivery").delivery
     assert d is not None
     assert d.commit_sha == "deadbee"
+    assert d.published_commit_sha is None
     assert d.committed is True
     assert d.applied is True
     assert d.skipped is False

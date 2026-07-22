@@ -52,6 +52,7 @@ import pytest
 pytestmark = pytest.mark.mcp_integration
 
 _RUN_ID = "20260101_000119"
+_PUBLISH_RUN_ID = "20260101_000120"
 
 
 def _init_repo(repo: Path) -> None:
@@ -256,3 +257,86 @@ def test_mcp_delivery_surface_projects_core_produced_branch_policy(
     assert all_result.delivery.delivery_branch == core_branch
     assert all_result.delivery.pr_intent is not None
     assert all_result.delivery.pr_intent.branch == d.pr_intent.branch
+
+
+@pytest.mark.serial
+def test_mcp_delivery_surface_projects_core_published_commit_sha(
+    tmp_path, monkeypatch,
+):
+    """A publish-only worktree delivery keeps target and published SHAs distinct."""
+    from pipeline.engine.commit_delivery import (
+        apply_commit_delivery,
+        resolve_commit_delivery,
+    )
+
+    from orcho_mcp.tools import orcho_delivery_gate, orcho_run_evidence
+
+    ws = tmp_path / "ws"
+    repo = tmp_path / "demo_project"
+    worktree = tmp_path / "run_worktree"
+    _init_repo(repo)
+    target_head = _head(repo)
+    subprocess.run(
+        ["git", "worktree", "add", "-q", "-b", "orcho/run/publish-smoke", str(worktree)],
+        cwd=repo,
+        check=True,
+    )
+    (worktree / "app.txt").write_text("base\npublished change\n", encoding="utf-8")
+
+    monkeypatch.setenv("ORCHO_WORKSPACE", str(ws))
+    monkeypatch.delenv("ORCHO_RUNSPACE", raising=False)
+    run_dir = ws / "runspace" / "runs" / _PUBLISH_RUN_ID
+    run_dir.mkdir(parents=True)
+    session = {
+        "status": "done",
+        "phases": {
+            "final_acceptance": {
+                "verdict": "APPROVED",
+                "short_summary": "publish branch identity",
+            },
+        },
+    }
+    commit_config = {
+        "enabled": True,
+        "auto_in_ci": "approve",
+        "add_untracked": True,
+        "default_strategy": "release_summary",
+        "branch_policy": "worktree_branch",
+    }
+    decision = resolve_commit_delivery(
+        project_dir=repo,
+        source_worktree=worktree,
+        run_dir=run_dir,
+        run_id=_PUBLISH_RUN_ID,
+        session=session,
+        commit_config=commit_config,
+        no_interactive=True,
+        baseline_ref=target_head,
+    )
+    applied = apply_commit_delivery(
+        decision,
+        run_dir=run_dir,
+        commit_config=commit_config,
+        no_interactive=True,
+    )
+    cd = applied.to_dict()
+    assert cd.get("commit_sha") is None
+    assert cd.get("published_commit_sha") == _head(worktree)
+    assert _head(repo) == target_head
+
+    (run_dir / "meta.json").write_text(
+        json.dumps({
+            "status": "done",
+            "project": str(repo),
+            "commit_delivery": cd,
+        }),
+        encoding="utf-8",
+    )
+
+    evidence = orcho_run_evidence(_PUBLISH_RUN_ID, slice="delivery").delivery
+    assert evidence is not None
+    assert evidence.commit_sha is None
+    assert evidence.published_commit_sha == cd["published_commit_sha"]
+    gate = orcho_delivery_gate(_PUBLISH_RUN_ID)
+    assert gate.kind == "delivery_completed"
+    assert gate.published_commit_sha == cd["published_commit_sha"]

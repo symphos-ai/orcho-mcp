@@ -531,6 +531,13 @@ class DeliveryDecideResult(BaseModel):
     halt_reason: str | None = None
     artifact_paths: list[str] = Field(default_factory=list)
     commit_sha: str | None = None
+    published_commit_sha: str | None = Field(
+        default=None,
+        description=(
+            "Commit created on the published delivery branch. It did not land "
+            "in the target checkout and therefore does not populate commit_sha."
+        ),
+    )
     blocker: str | None = None
     followup_run_id: str | None = None
     scope_disclosure: list[str] = Field(
