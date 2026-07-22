@@ -17,6 +17,12 @@ def _decision(*, blocked: bool = False):
     )
 
 
+def _followup_preflight():
+    return SimpleNamespace(
+        resolution=SimpleNamespace(operation="start_followup", blocker=None),
+    )
+
+
 @pytest.mark.asyncio
 async def test_bare_correction_resume_requires_operator_input(monkeypatch) -> None:
     monkeypatch.setattr(
@@ -62,6 +68,14 @@ async def test_correction_followup_launches_child(monkeypatch, tmp_path: Path) -
         "orcho_mcp.services.continuation.resolve_core_continuation",
         lambda _run_id: _decision(),
     )
+    preflight_calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        "orcho_mcp.services.continuation.preflight_core_continuation",
+        lambda run_id, **kwargs: (
+            preflight_calls.append({"run_id": run_id, **kwargs})
+            or _followup_preflight()
+        ),
+    )
     calls: list[tuple[str, str]] = []
     handle = SimpleNamespace(
         run_id="child", run_dir=tmp_path / "child", pid=42, started_at="now",
@@ -82,6 +96,46 @@ async def test_correction_followup_launches_child(monkeypatch, tmp_path: Path) -
     assert result.parent_run_id == "parent"
     assert result.run_id == "child"
     assert calls == [("parent", "fix test")]
+    assert preflight_calls == [{
+        "run_id": "parent", "intent": "followup", "operator_comment": "fix test",
+    }]
+
+
+@pytest.mark.asyncio
+async def test_checkpoint_followup_uses_core_blocker_without_same_run_resume(monkeypatch) -> None:
+    """Explicit followup never silently degrades to checkpoint resume."""
+    monkeypatch.setattr(
+        "orcho_mcp.services.continuation.resolve_core_continuation",
+        lambda _run_id: SimpleNamespace(
+            continuation_subject="checkpoint", blocked=False, diff_source=None,
+            reason="checkpoint resumable",
+        ),
+    )
+    preflight_calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        "orcho_mcp.services.continuation.preflight_core_continuation",
+        lambda run_id, **kwargs: (
+            preflight_calls.append({"run_id": run_id, **kwargs})
+            or SimpleNamespace(resolution=SimpleNamespace(
+                operation="blocked", blocker="follow-up requires a retained-change continuation subject",
+            ))
+        ),
+    )
+    monkeypatch.setattr(
+        "orcho_mcp.supervisor.get_supervisor",
+        lambda: pytest.fail("blocked followup must not call supervisor.resume"),
+    )
+
+    result = await resume_run(
+        "checkpoint-parent", operator_intent="followup", operator_comment="continue separately",
+    )
+
+    assert result.resume_outcome == "blocked"
+    assert preflight_calls == [{
+        "run_id": "checkpoint-parent",
+        "intent": "followup",
+        "operator_comment": "continue separately",
+    }]
 
 
 @pytest.mark.asyncio
@@ -124,6 +178,10 @@ async def test_native_elicitation_accepts_then_launches_followup(monkeypatch, tm
     monkeypatch.setattr(
         "orcho_mcp.services.continuation.resolve_core_continuation",
         lambda _run_id: _decision(),
+    )
+    monkeypatch.setattr(
+        "orcho_mcp.services.continuation.preflight_core_continuation",
+        lambda *_args, **_kwargs: _followup_preflight(),
     )
     monkeypatch.setattr(
         "orcho_mcp.run_control.handoff._client_supports_form_elicitation",

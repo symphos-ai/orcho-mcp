@@ -114,6 +114,10 @@ from orcho_mcp.services.run_projection import (
     build_provider_pressure,
     project_provider_pressure_from_errors_halt,
 )
+from orcho_mcp.services.status_merge import (
+    merged_halt_reason_from_meta,
+    merged_status_from_meta,
+)
 
 # Verification-environment receipts live under
 # ``<run_dir>/verification_receipts/<phase>_round<N>.json``. The SDK
@@ -797,6 +801,16 @@ def inspect_run_evidence(
 
     want = {slice} if slice != "all" else valid_slices - {"all"}
     out: dict[str, Any] = {"run_id": run_id, "slice": slice}
+    try:
+        run_dir = find_run_dir(run_id)
+    except (RunNotFoundError, WorkspaceNotResolvedError):
+        # Keep the SDK-error seam usable for narrow evidence projections; a
+        # real resolved run still receives the settled-supervisor overlay.
+        run_dir = None
+    try:
+        evidence_meta = _get_run_meta_raw(run_id)
+    except (RunNotFoundError, WorkspaceNotResolvedError):
+        evidence_meta = {}
 
     # Capability precondition (deterministic, slice-order-independent): the
     # ``verification_timeline`` AND the derived ``verification_cockpit`` slices
@@ -910,14 +924,17 @@ def inspect_run_evidence(
         # needs it, then share it with both.
         errors_list: list[dict[str, Any]] = []
         if want & {"errors", "delivery"}:
-            eh = _sdk_get_errors_halt(run_id, cwd=None)
+            eh_kwargs = {"cwd": None}
+            if run_dir is not None:
+                eh_kwargs["runs_dir"] = run_dir.parent
+            eh = _sdk_get_errors_halt(run_id, **eh_kwargs)
             errors_list = list(eh.errors)
 
         if "errors" in want:
             out["errors"] = ErrorsHaltSliceRecord(
-                status=eh.status,
+                status=(merged_status_from_meta(evidence_meta, run_dir) if run_dir else None) or eh.status,
                 errors=errors_list,
-                halt_reason=eh.halt_reason,
+                halt_reason=(merged_halt_reason_from_meta(evidence_meta, run_dir) if run_dir else None) or eh.halt_reason,
                 halted_at=eh.halted_at,
                 error_summary=eh.error_summary,
                 implement_delivery=_project_implement_delivery(errors_list),

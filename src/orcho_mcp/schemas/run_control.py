@@ -193,6 +193,7 @@ class ResumeBlockedResult(BaseModel):
         "rejected_terminal",
         "superseded_by_child",
         "recover_via_source_run",
+        "preflight_blocked",
     ] = Field(
         description="Typed reason the resume was refused before spawning.",
     )
@@ -799,6 +800,12 @@ class RunDiagnosis(BaseModel):
                     "this: a ready resume instead of decide verbs. ``False`` "
                     "(default) for every other condition and for a pending "
                     "handoff with no decision yet.",
+    )
+    decision_state: Literal["recorded", "missing", "degraded"] = Field(
+        default="missing", description="Typed decision-artifact read outcome; degraded is not absence.",
+    )
+    decision_degraded_reason: str | None = Field(
+        default=None, description="Stable reason when the decision artifact could not be read.",
     )
     next_actions: list[NextActionRecord] = Field(
         default_factory=list,

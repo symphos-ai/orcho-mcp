@@ -127,3 +127,22 @@ def test_handoff_read_model_carries_new_operator_fields(fake_workspace):
     assert rm.loop_max_rounds == 1
     assert rm.last_output == "Plan is missing acceptance criteria."
     assert rm.decision_artifact_exists is False
+
+
+def test_decision_read_failure_is_degraded_not_missing(fake_workspace, monkeypatch):
+    write_run(fake_workspace, "20260101_000006", meta=_paused_meta())
+
+    def _broken(*args, **kwargs):
+        raise OSError("artifact unavailable")
+
+    monkeypatch.setattr(
+        "orcho_mcp.services.run_projection._sdk_load_phase_handoff_decision",
+        _broken,
+    )
+
+    pending = project_pending_handoff("20260101_000006")
+
+    assert pending.decision_state == "degraded"
+    assert pending.decision_degraded_reason == "decision_artifact_read_failed"
+    assert pending.decision_artifact_exists is False
+    assert "orcho_phase_handoff_decide" not in pending.suggested_next_action

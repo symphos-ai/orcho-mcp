@@ -205,6 +205,8 @@ def _build_live_handoff(
         verdict=pending.verdict,
         findings_summary=findings_summary,
         recommended_action=pending.suggested_next_action,
+        decision_state=pending.decision_state,
+        decision_degraded_reason=pending.decision_degraded_reason,
     )
 
 

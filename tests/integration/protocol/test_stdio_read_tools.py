@@ -935,9 +935,9 @@ async def test_stdio_run_evidence_handoff_advice_slice(fake_workspace):
         fake_workspace, "20260101_000010",
         meta={
             "project": "/p", "status": "done", "task": "advice evidence smoke",
-            # A review round whose blank-vs-nonblank critique drives the
-            # resolved/repeated classifier; the run reached terminal ``done``.
-            "phases": {"rounds": [{"round": 1, "critique": "P1: broken"}]},
+            # The post-advice review round has a blank critique, the durable
+            # approval signal for a resolved retry.
+            "phases": {"rounds": [{"round": 2, "critique": ""}]},
         },
         events=[_ev(1, kind="run.start"), _ev(2, kind="run.end")],
     )

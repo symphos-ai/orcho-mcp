@@ -37,6 +37,8 @@ The important consequence is that combinations are expected:
   a valid parked delivery state, not a contradiction;
 - `status="awaiting_phase_handoff"` plus `decision_recorded=true` means the
   decision exists and the next action is resume, not another decision;
+- settlement writes the same PID/status to MCP and core supervisor artifacts;
+  a disconnected watcher recovers this durable outcome on its next read;
 - a terminal parent plus an active child means the child is the continuation
   subject;
 - a CLI-started paused run can be fully observable while
@@ -218,7 +220,7 @@ Decision rules:
 | No decision artifact | Call `orcho_phase_handoff_decide` with an action present in `available_actions`. |
 | `retry_feedback` offered | Require non-empty operator feedback. |
 | `continue_with_waiver` offered | Require non-empty waiver rationale. |
-| Decision artifact already exists | Call `orcho_run_resume`; do not decide again. |
+| Decision artifact already exists | Call `orcho_run_resume`; do not decide again. Status, live, diagnosis, inbox, and reconnecting watch all preserve this routing. |
 | `halt` chosen | Core writes the settled halt synchronously; do not resume. |
 
 Bare `continue` is not a universal capability. It is valid only when the active
@@ -414,6 +416,10 @@ Contributors must preserve these properties:
 9. `inspect_only` refuses mutation before side effects.
 10. Typed inconsistencies are surfaced; MCP does not silently normalize a
     contradictory terminal state into success.
+11. A finalized same-run continuation is refused by core preflight before the
+    supervisor or spawner; a valid `followup` receives a new child identity.
+12. Reaping an exit settles both supervisor artifacts only for their matching
+    PID, so observer loss and stale handles cannot publish a running result.
 
 ## Executable contract
 

@@ -2574,11 +2574,35 @@
             "description": "One-line factual reason behind ``control`` (e.g. the resolved durable project_dir, or that no ``mcp_supervisor.json`` exists). ``None`` when ``control`` is ``None``.",
             "title": "Control Reason"
           },
+          "decision_degraded_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Stable reason when the decision artifact could not be read.",
+            "title": "Decision Degraded Reason"
+          },
           "decision_recorded": {
             "default": false,
             "description": "For ``needs_decision`` only: ``True`` when a phase-handoff decision artifact already exists for the active handoff. The run stays ``awaiting_phase_handoff`` (continue / retry_feedback / continue_with_waiver do not flip the status), so the next step is ``orcho_run_resume`` to apply the recorded decision — NOT a second ``orcho_phase_handoff_decide``. ``next_actions`` reflects this: a ready resume instead of decide verbs. ``False`` (default) for every other condition and for a pending handoff with no decision yet.",
             "title": "Decision Recorded",
             "type": "boolean"
+          },
+          "decision_state": {
+            "default": "missing",
+            "description": "Typed decision-artifact read outcome; degraded is not absence.",
+            "enum": [
+              "recorded",
+              "missing",
+              "degraded"
+            ],
+            "title": "Decision State",
+            "type": "string"
           },
           "next_actions": {
             "description": "Typed follow-up tool calls for this condition. Each record carries an unambiguous ``kind`` (``ready_call`` vs ``operator_input_required``).",
@@ -3127,6 +3151,30 @@
                 "description": "True when a phase-handoff decision artifact already exists for this handoff (the operator has decided and only ``orcho_run_resume`` remains).",
                 "title": "Decision Artifact Exists",
                 "type": "boolean"
+              },
+              "decision_degraded_reason": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Stable safe reason when decision_state is degraded.",
+                "title": "Decision Degraded Reason"
+              },
+              "decision_state": {
+                "default": "missing",
+                "description": "Typed decision-artifact read outcome; degraded never means missing.",
+                "enum": [
+                  "recorded",
+                  "missing",
+                  "degraded"
+                ],
+                "title": "Decision State",
+                "type": "string"
               },
               "handoff_id": {
                 "anyOf": [
@@ -6293,6 +6341,28 @@
                 "title": "Available Actions",
                 "type": "array"
               },
+              "decision_degraded_reason": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Decision Degraded Reason"
+              },
+              "decision_state": {
+                "default": "missing",
+                "enum": [
+                  "recorded",
+                  "missing",
+                  "degraded"
+                ],
+                "title": "Decision State",
+                "type": "string"
+              },
               "default_action": {
                 "anyOf": [
                   {
@@ -7220,7 +7290,8 @@
                 "enum": [
                   "rejected_terminal",
                   "superseded_by_child",
-                  "recover_via_source_run"
+                  "recover_via_source_run",
+                  "preflight_blocked"
                 ],
                 "title": "Resume Outcome",
                 "type": "string"
@@ -8813,6 +8884,37 @@
             "default": null,
             "description": "Live progress coordinate for the in-flight ``subtask_dag`` subtask (index / total / goal / state), derived from the SAME observe walk (``build_latest_run_events_summary``) that backs ``orcho_run_live_status`` — so status and live_status report the same subtask position for a run. ``None`` when no subtask is currently in flight (terminal run, or a phase with no active subtask); the absence is not an error. For continuous live progress prefer ``orcho_run_live_status``."
           },
+          "decision_degraded_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Stable reason when decision_state is degraded.",
+            "title": "Decision Degraded Reason"
+          },
+          "decision_state": {
+            "anyOf": [
+              {
+                "enum": [
+                  "recorded",
+                  "missing",
+                  "degraded"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Typed active-handoff decision read outcome, when applicable.",
+            "title": "Decision State"
+          },
           "lineage": {
             "anyOf": [
               {
@@ -9635,6 +9737,30 @@
                 "description": "True when a phase-handoff decision artifact already exists for this handoff (the operator has decided and only ``orcho_run_resume`` remains).",
                 "title": "Decision Artifact Exists",
                 "type": "boolean"
+              },
+              "decision_degraded_reason": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Stable safe reason when decision_state is degraded.",
+                "title": "Decision Degraded Reason"
+              },
+              "decision_state": {
+                "default": "missing",
+                "description": "Typed decision-artifact read outcome; degraded never means missing.",
+                "enum": [
+                  "recorded",
+                  "missing",
+                  "degraded"
+                ],
+                "title": "Decision State",
+                "type": "string"
               },
               "handoff_id": {
                 "anyOf": [
@@ -10753,6 +10879,25 @@
                 "description": "``True`` when a phase-handoff decision artifact already exists for ``handoff_id`` — the run stays paused, so the next step is resume, not a second decide.",
                 "title": "Decision Artifact Exists",
                 "type": "boolean"
+              },
+              "decision_degraded_reason": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Stable reason for a degraded decision read.",
+                "title": "Decision Degraded Reason"
+              },
+              "decision_state": {
+                "default": "missing",
+                "description": "Typed decision-artifact outcome: recorded, missing, or degraded.",
+                "title": "Decision State",
+                "type": "string"
               },
               "handoff_id": {
                 "anyOf": [
