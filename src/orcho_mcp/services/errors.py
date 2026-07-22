@@ -33,10 +33,11 @@ Two surfaces:
 """
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 
 from sdk import (
+    EvidenceInvalid as _SDKEvidenceInvalid,
     InvalidPhaseHandoffState as _SDKInvalidPhaseHandoffState,
     NoWorkspace as _SDKNoWorkspace,
     RunNotFound as _SDKRunNotFound,
@@ -79,6 +80,20 @@ def map_sdk_errors(run_id: str | None = None) -> Iterator[None]:
         raise InvalidPlanError(str(e)) from e
 
 
+def read_optional_evidence[T](reader: Callable[[], T]) -> T | None:
+    """Return one evidence-derived enrichment, or ``None`` when unavailable.
+
+    High-frequency status reads must not fail because an optional evidence
+    projection cannot be composed. Explicit evidence tools still surface the
+    original typed SDK error; only callers that deliberately use this helper
+    opt into absence semantics.
+    """
+    try:
+        return reader()
+    except _SDKEvidenceInvalid:
+        return None
+
+
 @contextmanager
 def map_command_errors() -> Iterator[None]:
     """Translate run-control delegation leaks into the canonical hierarchy.
@@ -101,4 +116,4 @@ def map_command_errors() -> Iterator[None]:
         raise PipelineSpawnError(str(e)) from e
 
 
-__all__ = ["map_command_errors", "map_sdk_errors"]
+__all__ = ["map_command_errors", "map_sdk_errors", "read_optional_evidence"]
