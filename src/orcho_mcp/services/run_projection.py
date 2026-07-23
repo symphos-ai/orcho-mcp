@@ -1829,10 +1829,12 @@ def _project_run_diagnosis(
             recovery_lineage=recovery_lineage,
         )
 
-    # (10) residual resumable — the status itself is the condition. Core sets a
-    # ``none`` continuation_subject here; the pre-migration projection left it
-    # ``None`` (a resumable run continues itself), so we do not carry core's
-    # sentinel — the run simply resumes itself.
+    # (10) residual stopped status. Preserve a core-selected plan-artifact
+    # continuation verbatim; otherwise keep the historical ``None`` sentinel
+    # for an ordinary checkpoint-resumable run.
+    plan_artifact = (
+        diagnosis.recommended_next_action == "plan_artifact_continuation"
+    )
     return RunDiagnosisProjection(
         condition=cond,
         reason=diagnosis.reason,
@@ -1840,6 +1842,15 @@ def _project_run_diagnosis(
         status=status,
         halt_reason=halt_reason,
         parent_run_id=parent_run_id,
+        continuation_subject=(
+            diagnosis.continuation_subject if plan_artifact else None
+        ),
+        recommended_next_action=(
+            diagnosis.recommended_next_action if plan_artifact else None
+        ),
+        recommended_run_id=(
+            diagnosis.recommended_run_id if plan_artifact else None
+        ),
         recovery_lineage=recovery_lineage,
     )
 

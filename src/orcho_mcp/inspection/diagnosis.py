@@ -494,6 +494,9 @@ def _resolve_next_actions(
     if cond == "active":
         return cond, [_watch_action(run_id), _status_action(run_id)]
 
+    if proj.recommended_next_action == "plan_artifact_continuation":
+        return cond, _plan_artifact_continuation_actions(run_id)
+
     if cond in _RESUMABLE_CONDITIONS:
         return cond, [
             _resume_action(

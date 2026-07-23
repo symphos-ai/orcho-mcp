@@ -15,9 +15,10 @@ from sdk.run_control import RecoveryLineage, RunDiagnosis
 
 from orcho_mcp.errors import RunNotFoundError
 from orcho_mcp.services import run_projection
+from orcho_mcp.services.continuation import preflight_core_continuation
 from orcho_mcp.services.run_projection import project_run_diagnosis
 from orcho_mcp.tools import orcho_run_diagnose
-from tests.fixtures.mcp_workspace import meta, supervisor_state, write_run
+from tests.fixtures.mcp_workspace import event, meta, supervisor_state, write_run
 
 _RETAINED_WORKTREE = {"isolation": "worktree", "path": "/tmp/wt/source"}
 _PARSED_PLAN = {"tasks": [{"id": "T1", "spec": "do the thing"}]}
@@ -290,6 +291,94 @@ def test_residual_resumable_branch(fake_workspace, status, halt_reason):
     assert d.condition == status
     assert d.status == status
     assert "resumable" in d.reason
+
+
+def test_interrupted_in_flight_phase_forwards_plan_continuation(
+    fake_workspace,
+):
+    run_id = "20260101_000001"
+    write_run(
+        fake_workspace,
+        run_id,
+        meta=meta(status="interrupted", project="/p/x", task="t"),
+        events=[
+            event(
+                1,
+                "phase.start",
+                phase="implement",
+                payload={"phase": "implement"},
+            ),
+        ],
+        parsed_plan=_PARSED_PLAN,
+    )
+
+    projected = project_run_diagnosis(run_id)
+    diagnosis = orcho_run_diagnose(run_id)
+
+    assert projected.condition == "interrupted"
+    assert projected.continuation_subject == "plan_artifact"
+    assert (
+        projected.recommended_next_action
+        == "plan_artifact_continuation"
+    )
+    assert not any(
+        action.tool == "orcho_run_resume"
+        for action in diagnosis.next_actions
+    )
+    start = next(
+        action
+        for action in diagnosis.next_actions
+        if action.tool == "orcho_run_start"
+    )
+    assert start.kind == "ready_call"
+    assert start.args == {
+        "from_run_plan": run_id,
+        "profile": "feature",
+    }
+
+
+def test_forwarded_checkpoint_resume_passes_same_core_preflight(
+    fake_workspace,
+):
+    run_id = "20260101_000001"
+    write_run(
+        fake_workspace,
+        run_id,
+        meta=meta(status="running", project="/p/x", task="t"),
+        supervisor_state=supervisor_state(
+            run_id=run_id,
+            status="interrupted",
+            halt_reason="interrupted_orphan",
+        ),
+        events=[
+            event(
+                1,
+                "phase.start",
+                phase="plan",
+                payload={"phase": "plan"},
+            ),
+            event(
+                2,
+                "phase.end",
+                phase="plan",
+                payload={"phase": "plan", "outcome": "ok"},
+            ),
+        ],
+    )
+
+    diagnosis = orcho_run_diagnose(run_id)
+    resume = next(
+        action
+        for action in diagnosis.next_actions
+        if action.tool == "orcho_run_resume"
+    )
+    preflight = preflight_core_continuation(
+        resume.args["run_id"],
+        intent="resume",
+    )
+
+    assert resume.kind == "ready_call"
+    assert preflight.resolution.operation == "resume_checkpoint"
 
 
 def test_missing_run_propagates(fake_workspace):

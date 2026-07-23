@@ -44,11 +44,14 @@ def preflight_core_continuation(
     from sdk import ContinuationRequest, preflight_continuation
 
     parent_run_dir = find_run_dir(run_id)
+    raw = get_run_meta_raw(run_id) or {}
+    meta = merged_meta(raw, parent_run_dir) if isinstance(raw, dict) else None
     return preflight_continuation(
         ContinuationRequest(
             run_id=run_id, intent=intent, operator_comment=operator_comment,
         ),
         parent_run_dir=parent_run_dir,
+        meta=meta,
     )
 
 
