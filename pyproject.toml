@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "orcho-mcp"
-version = "0.4.0"
+version = "0.5.0"
 description = "Orcho — Model Context Protocol server for Claude Code, Cursor, Zed, and other MCP-speaking clients"
 requires-python = ">=3.12"
 readme = "README.md"
@@ -17,7 +17,7 @@ dependencies = [
     #   - pipeline.argv.build_orch_argv (public argv builder)
     #   - ORCHO_RUN_ID env / --run-id flag
     #   - core.observability.events.append_event (cross-process append)
-    "orcho-core>=0.4.0,<0.5",
+    "orcho-core>=0.5.0,<0.6",
     # Anthropic's MCP SDK — server + client primitives.
     "mcp>=1.2",
     # JSON Schema generation for tool I/O.
