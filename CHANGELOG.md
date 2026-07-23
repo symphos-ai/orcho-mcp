@@ -2,6 +2,41 @@
 
 ## Unreleased
 
+## 0.5.0 - 2026-07-23
+
+### Added
+
+- Typed live status exposes engine-owned scheduled-gate execution and
+  cross-project execution-graph state.
+- Evidence inspection exposes the managed lifecycle and durable receipts of
+  provider-owned commands.
+- Run status projects the canonical scheduled-gate ledger, including repair
+  and rerun history.
+
+### Changed
+
+- Run diagnosis, resume, correction follow-up, and handoff settlement delegate
+  continuation semantics to the public `orcho-core` SDK.
+- Workflow recipes use typed live status for progress instead of relying on a
+  long-lived watch call.
+- Requires `orcho-core>=0.5.0,<0.6`.
+
+### Fixed
+
+- A recorded retry or continue decision survives resume and is not
+  misclassified as missing or as an implicit waiver.
+- Interrupted runs no longer advertise a same-run resume call when the
+  canonical core preflight requires a fresh implementation from the persisted
+  plan.
+- Optional evidence failures no longer break authoritative status reads.
+- Delivery status exposes the published commit identity and reports the actual
+  branch disposition.
+- Project verification configuration requires provenance and lint gates.
+
+### Documentation
+
+- Documented the complete MCP control state machine and its decision graph.
+
 ## 0.4.0 - 2026-07-08
 
 ### Changed
