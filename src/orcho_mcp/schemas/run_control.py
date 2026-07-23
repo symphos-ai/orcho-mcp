@@ -126,6 +126,43 @@ class RunResumeResult(RunStartedResult):
     )
 
 
+class CorrectionFollowupStartedResult(RunStartedResult):
+    """A retained-change correction child launched through MCP."""
+
+    resume_outcome: Literal["followup_started"] = "followup_started"
+    parent_run_id: str
+    suggested_next_action: NextActionRecord
+
+
+class CorrectionOperatorInputRequiredResult(BaseModel):
+    """A correction resume needs an explicit operator decision before spawn."""
+
+    kind: Literal["operator_input_required"] = "operator_input_required"
+    resume_outcome: Literal["operator_input_required"] = "operator_input_required"
+    run_id: str
+    reason: str
+    next_actions: list[NextActionRecord]
+
+
+class CorrectionExitResult(BaseModel):
+    """The operator deliberately declined a retained-change follow-up."""
+
+    resume_outcome: Literal["exit"] = "exit"
+    run_id: str
+    message: str
+
+
+class CorrectionBlockedResult(BaseModel):
+    """A retained-change correction cannot launch because continuity failed."""
+
+    kind: Literal["correction_blocked"] = "correction_blocked"
+    resume_outcome: Literal["blocked"] = "blocked"
+    run_id: str
+    blocked: Literal[True] = True
+    diff_source: Literal["worktree", "artifact", "none"] | None = None
+    reason: str
+
+
 class ResumeBlockedResult(BaseModel):
     """Returned by ``orcho_run_resume`` when resume is refused before spawn.
 
@@ -156,6 +193,7 @@ class ResumeBlockedResult(BaseModel):
         "rejected_terminal",
         "superseded_by_child",
         "recover_via_source_run",
+        "preflight_blocked",
     ] = Field(
         description="Typed reason the resume was refused before spawning.",
     )
@@ -493,6 +531,13 @@ class DeliveryDecideResult(BaseModel):
     halt_reason: str | None = None
     artifact_paths: list[str] = Field(default_factory=list)
     commit_sha: str | None = None
+    published_commit_sha: str | None = Field(
+        default=None,
+        description=(
+            "Commit created on the published delivery branch. It did not land "
+            "in the target checkout and therefore does not populate commit_sha."
+        ),
+    )
     blocker: str | None = None
     followup_run_id: str | None = None
     scope_disclosure: list[str] = Field(
@@ -638,11 +683,10 @@ class RunDiagnosis(BaseModel):
     - ``correction_followup_required`` — the release was rejected and a
       correction was already requested (only ``halt`` remains on the gate);
       resuming this run is inert and a repeated ``fix`` is a no-op, so the typed
-      next step is an ``orcho_run_start`` from_run_plan follow-up carrying the
-      parent's plan + retained ``diff.patch`` (``recommended_next_action=
-      'start_followup'``).
+      next step is the ``orcho_run_resume`` operator-input requirement for a
+      retained-change correction (``recommended_next_action='start_followup'``).
     - ``closed_by_followup`` — this run is a rejected-FA / correction parent
-      that a successful ``from_run_plan`` follow-up CLOSED (orcho-core
+      that a successful correction follow-up CLOSED (orcho-core
       finalization stamped ``superseded_by_followup`` and settled it to
       ``done``). It is terminal/settled, never an active correction: its old
       release_blockers are NOT authoritative, resume is inert, and the
@@ -763,6 +807,12 @@ class RunDiagnosis(BaseModel):
                     "this: a ready resume instead of decide verbs. ``False`` "
                     "(default) for every other condition and for a pending "
                     "handoff with no decision yet.",
+    )
+    decision_state: Literal["recorded", "missing", "degraded"] = Field(
+        default="missing", description="Typed decision-artifact read outcome; degraded is not absence.",
+    )
+    decision_degraded_reason: str | None = Field(
+        default=None, description="Stable reason when the decision artifact could not be read.",
     )
     next_actions: list[NextActionRecord] = Field(
         default_factory=list,

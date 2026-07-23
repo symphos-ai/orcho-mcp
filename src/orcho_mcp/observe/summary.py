@@ -180,10 +180,17 @@ def _subtask_record(evt, *, state: str) -> CurrentSubtaskRecord:
     )
 
 
-def _summary_next_actions(status: str | None) -> list[str]:
+def _summary_next_actions(
+    status: str | None, pending: PendingHandoffSummary | None = None,
+) -> list[str]:
     """Return short imperative next-action strings for the resolved status."""
     if status is None:
         return []
+    if status == _PENDING_HANDOFF_STATUS and pending is not None:
+        if pending.decision_state == "recorded":
+            return ["resume via orcho_run_resume to apply the recorded decision"]
+        if pending.decision_state == "degraded":
+            return ["inspect orcho_run_diagnose; the handoff decision could not be read"]
     if status in _NEXT_ACTIONS_BY_STATUS:
         return list(_NEXT_ACTIONS_BY_STATUS[status])
     if status in _TERMINAL_FAILURE_STATES:
@@ -220,6 +227,8 @@ def _build_pending_handoff(
             pending.last_output, _PENDING_HANDOFF_LAST_OUTPUT_MAX,
         ),
         decision_artifact_exists=pending.decision_artifact_exists,
+        decision_state=pending.decision_state,
+        decision_degraded_reason=pending.decision_degraded_reason,
         suggested_next_action=pending.suggested_next_action,
     )
 
@@ -375,6 +384,7 @@ def build_run_events_summary(
         if status in _TERMINAL_FAILURE_STATES else None
     )
 
+    pending_handoff = _build_pending_handoff(run_id, status, current_phase)
     result = RunEventsSummary(
         run_id=run_id,
         total_count=len(windowed),
@@ -386,8 +396,8 @@ def build_run_events_summary(
         by_phase=by_phase,
         by_kind=by_kind_counts,
         last_n=last_n_records,
-        next_actions=_summary_next_actions(status),
-        pending_handoff=_build_pending_handoff(run_id, status, current_phase),
+        next_actions=_summary_next_actions(status, pending_handoff),
+        pending_handoff=pending_handoff,
         provider_session_fallbacks=provider_session_fallbacks,
         retry_state=_build_retry_state(run_id, current_phase),
         provider_pressure=provider_pressure,

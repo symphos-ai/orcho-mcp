@@ -1,5 +1,10 @@
 # Orcho MCP — Run Lifecycle
 
+For the complete state and decision graph across lifecycle, supervisor,
+handoff, delivery, lineage, and control-authority axes, see
+[MCP Control State Machine](architecture/control_state_machine.md). This
+document remains the per-tool wire contract.
+
 Canonical contract for how runs are started, observed, resumed, and
 cancelled through the MCP wire. The naming convention is
 **`orcho_run_<verb>`** for everything that operates on a run. The
@@ -11,17 +16,26 @@ name.
 
 ## Tool naming
 
-The seven run-lifecycle tools share a `orcho_run_` prefix:
+The seven process-control tools share a `orcho_run_` prefix:
 
 | Tool | Verb | Purpose |
 |---|---|---|
 | `orcho_run_start` | start | Spawn a new pipeline subprocess. Returns immediately. |
 | `orcho_run_resume` | resume | Re-spawn a subprocess against an existing run dir, loading checkpoint. |
 | `orcho_run_cancel` | cancel | Signal the run's process group (graceful or hard). |
-| `orcho_run_status` | status | Summary snapshot for one run (status / metrics / lineage / next steps). Phase bodies elided by default; `include` opts back in. |
+| `orcho_run_status` | status | What is happening / what should I do next? Summary snapshot for one run (status / phase progress / metrics summary / lineage / attention signals / next actions). Phase bodies elided by default; `include` opts back in. |
 | `orcho_run_history` | history | List recent runs, newest first. |
-| `orcho_run_metrics` | metrics | Raw `metrics.json` for one run. |
+| `orcho_run_metrics` | metrics | How much did it consume? Raw `metrics.json` for tokens, durations, phase breakdown, attempts / retries, and cost-reference fields when available. |
 | `orcho_run_events_tail` | events_tail | Stream events with seq-based pagination. |
+
+Observation tools share the same prefix but never touch the process:
+
+| Tool | Purpose |
+|---|---|
+| `orcho_run_watch` | Long-poll a live run; emits `notifications/progress` when the request carries a `progressToken`. A watch timeout is observer loss, not run failure. |
+| `orcho_run_live_status` | Lightweight live-progress projection for a running pipeline. |
+| `orcho_run_events_summary` | Aggregated event-stream projection (counts per kind/phase). |
+| `orcho_run_diff` | What changed? File stats, bounded preview, or full patch from the run's retained diff, optionally scoped to a path or phase. |
 
 The phase-handoff decision is a separate concern — it's a state
 transition, not a process action — so it sits beside the run-lifecycle
@@ -30,6 +44,7 @@ group with its own name:
 | Tool | Purpose |
 |---|---|
 | `orcho_phase_handoff_decide` | Resolve a paused phase handoff (`awaiting_phase_handoff`). Writes a decision artifact under `<run_dir>/phase_handoff_decisions/{safe_handoff_id}.json`. `continue` / `retry_feedback` / `continue_with_waiver` leave `meta.status` paused for a follow-up `orcho_run_resume`; `halt` flips `meta.status` to `halted` synchronously. Pure state transition; never spawns. |
+| `orcho_handoff_advice` | LLM advisor for a paused handoff: recommends the smallest honest next action and writes a durable advice artifact. Advice, never a decision. |
 | `orcho_delivery_decide` | Resolve a parked post-release delivery / correction gate. Delegates to orcho-core's SDK decision entrypoint; the SDK owns all delivery guards and state mutation. Pure state transition; never spawns. |
 
 The inspection surface is also a separate concern — it reads
@@ -38,7 +53,7 @@ involved:
 
 | Tool | Purpose |
 |---|---|
-| `orcho_run_evidence` | Inspect a run via typed slices: plan summary, findings (severity-filterable), commands, artifacts, errors+halt reason, cross-run sub-aliases, per-subtask delivery receipts (`subtask_dag`), and verification-environment receipts (interpreter / cwd / import checks / commands / clean-tree note). Replaces raw log/event-jsonl reads for control-loop clients. |
+| `orcho_run_evidence` | What happened / what proves it? Typed slices for plan summary, findings (severity-filterable), commands, artifacts, errors+halt reason, cross-run sub-aliases, per-subtask delivery receipts (`subtask_dag`), verification-environment receipts, and the canonical scheduled-gate ledger (`verification_timeline` / `verification_cockpit`). Ledger rows retain identity, declaration, selection, execution, disposition, and receipt-evidence facts; events stay identity-scoped. Replaces raw log/event-jsonl reads for control-loop clients. |
 | `orcho_run_diagnose` | Read-only resume-situation verdict: a typed `condition`, a one-line `reason`, and call-readiness-typed `next_actions`. Call before any risky `orcho_run_resume`. See [Diagnosing a run](#diagnosing-a-run--orcho_run_diagnose). |
 | `orcho_delivery_gate` | Read-only projection of a post-release delivery / correction gate: SDK-derived kind, available actions, blocked actions, diff summary, and ready calls to `orcho_delivery_decide`. |
 
@@ -47,6 +62,22 @@ specific run:
 
 `orcho_workspace_info`, `orcho_plan_validate`, `orcho_skills_list`,
 `orcho_prompts_resolve`, `orcho_profiles_list`.
+
+## Inspection Questions
+
+The read tools deliberately answer different questions:
+
+| Question | MCP tool | Leads with |
+|---|---|---|
+| What is happening / what should I do next? | `orcho_run_status` | Current state, phase progress, attention signals, lineage, artifacts, and ready next actions. |
+| What happened / what proves it? | `orcho_run_evidence` | Typed proof slices: plan, findings, commands, artifacts, errors, receipts, verification, delivery, correction, and child runs. |
+| How much did it consume? | `orcho_run_metrics` | Tokens, duration, per-phase breakdown, attempts / retries, and cost-reference fields when available. |
+| What changed? | `orcho_run_diff` | File stats, bounded preview, or full patch from the retained diff. |
+
+Use `orcho_run_status` for the live operator loop. Use
+`orcho_run_evidence` when explaining or auditing a completed / halted run. Use
+`orcho_run_metrics` for consumption analysis. Use `orcho_run_diff` when the
+question is specifically about patch content.
 
 ---
 
@@ -60,10 +91,30 @@ specific run:
 | **Resume** | Re-spawn a pipeline subprocess against an existing `run_dir`, loading the on-disk checkpoint. *Not* a smart "skip already-done phases" — it is a fresh process that respects whichever profile the caller picks. |
 | **Cancel** | Signal the run's process group. Graceful (`SIGTERM`) lets the pipeline flush the checkpoint and emit `run.interrupted`; hard (`SIGKILL`) drops in-flight work. |
 
-Deliberately **not** vocabulary in v0.1.0a:
+### Decision, continuation, and settlement
+
+A recorded phase-handoff decision is idempotent: replay returns the original
+decision timestamp, action, and UTF-8 feedback without rewriting the artifact.
+Status, live status, diagnosis, the workspace inbox, and a reconnecting watch
+then offer only resume; a decision-read failure is explicitly degraded and
+offers read-only diagnosis. Resume and follow-up are preflighted by core before
+any subprocess launch: a finalized same-run parent is refused without a spawn,
+while an explicit retained-change follow-up creates a distinct child with
+parent lineage.
+When a launch exits, MCP writes the matching terminal status to both
+`mcp_supervisor.json` and core's `run_supervisor.json`; reconnecting after a
+watch/transport loss reads that durable settlement rather than assuming
+running. This includes abnormal exits: an rc=1 is settled as `failed` with
+`halt_reason="abnormal_exit:1"` across status, live status, diagnosis, and
+errors evidence.
+
+Deliberately **not** vocabulary:
 
 - "Continue from where it stopped, automatically picking the next phase" — this is *not* what resume does.
-- "Pause and unpause" — runs do not pause arbitrarily; they finish, fail, get cancelled, or pause **only** when a phase's declared `handoff` policy fires. The declarative pause point is `orcho_phase_handoff_decide` over `meta.status="awaiting_phase_handoff"`.
+- "Pause and unpause" — there is no generic process-pause toggle. Runs park at
+  explicit durable decision points: a phase handoff, a runner-owned cross
+  gate, a plan-review tail, or a post-release delivery/correction gate. Each
+  has its own typed read and command contract.
 
 ---
 
@@ -168,11 +219,13 @@ particular [Resilient observation loop](architecture/observation_delivery.md#res
 
 ### `orcho_run_status(run_id, include=None)`
 
-Summary snapshot. Use as the primary "is this done yet?" check:
+Summary snapshot. Use as the primary "what is happening / what should I do
+next?" check:
 
 - `meta.status` walks through the pipeline-defined values
   (`running` → `done` / `failed` / `interrupted` / `halted` /
-  `awaiting_phase_handoff`).
+  `awaiting_phase_handoff`; cross runs also use
+  `awaiting_gate_decision` / `awaiting_human_review`).
 - `metrics` is `null` until the pipeline writes its first metrics
   flush; populated incrementally per phase.
 - `sub_runs` is empty for single-project runs; populated for cross-
@@ -250,7 +303,9 @@ polling until the run state changes.
 
 ### `orcho_run_metrics(run_id)`
 
-Raw `metrics.json` for token / duration / per-phase breakdown.
+Raw `metrics.json` for the "how much did it consume?" question: tokens,
+duration, per-phase breakdown, attempts / retries, and cost-reference fields
+when available.
 Returns `RunNotFoundError` when the run dir doesn't exist *or* when
 metrics haven't been written yet. Use `orcho_run_status` first if you
 need a "metrics may not exist" branch.
@@ -543,7 +598,8 @@ orcho_run_status(run_id)   ← caller reads meta.phase_handoff
        ↓
 orcho_phase_handoff_decide(run_id, handoff_id, action, feedback?, note?)
        │
-       ├── action="continue"          → writes the decision artifact;
+       ├── action="continue"          → when present in available_actions,
+       │                                writes the decision artifact;
        │                                meta.status STAYS awaiting_phase_handoff.
        │                                Caller follows up with:
        │                                    orcho_run_resume(run_id)
@@ -580,7 +636,7 @@ orcho_phase_handoff_decide(run_id, handoff_id, action, feedback?, note?)
 |---|---|---|
 | `run_id` | `str` | Run to decide on. |
 | `handoff_id` | `str` | Must equal `meta.phase_handoff.id` (e.g. `"validate_plan:plan_round:2"`). Stale UI cannot decide on a fresh handoff. |
-| `action` | `"continue"` \| `"retry_feedback"` \| `"continue_with_waiver"` \| `"halt"` | Must be in the active handoff's `available_actions`. |
+| `action` | `"continue"` \| `"retry_feedback"` \| `"continue_with_waiver"` \| `"halt"` | Must be in the active handoff's `available_actions`. Bare `continue` is not universal; incomplete implement offers only retry, explicit waiver, or halt. |
 | `feedback` | `str \| None` | Human direction injected into the next round. Required (non-empty) for `retry_feedback` and `continue_with_waiver`; rejected for the other actions. |
 | `note` | `str \| None` | Free-form audit comment. Persisted in the artifact, never required. |
 
@@ -605,6 +661,23 @@ Each handoff in a run lives at its own `safe_handoff_id` path —
 deterministic, collision-resistant (slug + short SHA-256 hash). Audit
 consumers read them to understand *why* each paused handoff was
 resolved.
+
+### Unattended runs never reach this tool
+
+The pause-for-decision model above assumes someone is there to decide. A
+CLI run started with `--no-interactive` sets the engine-level `unattended`
+signal (a CLI-only flag — MCP-started runs never set it): advisory
+handoffs auto-continue with a recorded decision, and authoritative or
+safety handoffs become terminal halts with
+`halt_reason="phase_handoff_unattended_halt"` plus a compact
+`phase_handoff_unattended` block in `meta.json`. When an MCP client
+inspects such a run, there is no pending decision to make — the halt
+record explains what an operator would have been asked.
+
+MCP-started runs are the opposite: they run with TTY prompts suppressed
+but are NOT unattended — they park on `awaiting_phase_handoff` and wait
+for this tool. Do not infer auto-decide behavior from the absence of a
+terminal.
 
 ### Idempotency and transition discipline
 
@@ -649,8 +722,8 @@ Raising keeps this tool's success `outputSchema` unchanged.
 
 ## Inspection — `orcho_run_evidence`
 
-**Goal:** *Control-loop clients should understand a run without reading
-raw logs.* The full evidence bundle
+**Goal:** *Control-loop clients should answer "what happened / what proves it?"
+without reading raw logs.* The full evidence bundle
 (`collect_evidence`) is exhaustive and audit-grade; `orcho_run_evidence`
 exposes narrow typed slices over the same data so an LLM client can
 fit the answer in its context window.
@@ -662,11 +735,14 @@ fit the answer in its context window.
 | `"all"` (default) | every slice in one response |
 | `"plan"` | `PlanSliceRecord` — source, short_summary, planning_context, subtask_count, has_contract, goal, acceptance_criteria, owned_files, commands_to_run, risks, review_focus |
 | `"findings"` | `list[FindingRecord]` — flattened reviewer findings across `plan_qa` / `review` / `final_qa` / `compliance_check`. Each carries `severity` (P0..P3), `phase`, `attempt`, optional `file` + `line`. |
-| `"commands"` | `list[EvidenceCommandSliceRecord]` — pipeline shell-outs (argv summary, cwd, exit_code, duration, outcome). |
+| `"commands"` | `list[EvidenceCommandSliceRecord]` — pipeline shell-outs plus durable agent-managed command lifecycle records. Managed records carry `source="managed"`, `state`, identity digest, phase, bounded executable, timestamps, and a run-relative artifact path; raw arguments are not projected and these records do not satisfy scheduled verification. |
 | `"artifacts"` | `list[EvidenceArtifactSliceRecord]` — files the run wrote (path, kind, size_bytes). |
 | `"errors"` | `ErrorsHaltSliceRecord` — status, errors[], halt_reason, halted_at, error_summary, and `implement_delivery` (typed delivery/waiver audit; `None` for a clean delivery). See [Delivery / waiver audit](#delivery--waiver-audit-implement_delivery). |
 | `"sub_runs"` | `list[SubRunLinkRecord]` — cross-run child aliases (name, status, run_dir). Empty for single-project runs. |
 | `"receipts"` | `list[SubtaskReceiptRecord]` — per-subtask delivery receipts for a `subtask_dag` run. Each carries `subtask_id`, `state` (`done` / `incomplete` / `failed` / `skipped`), `runtime`, `model`, `skill`, `depends_on`, `done_criteria`, `duration`, `error`, and the done-criteria self-attestation: `criteria_report` (`list[CriterionReportRecord]` of index/criterion/met/evidence), `attestation_summary`, `attestation_error`. An `incomplete` subtask executed but did not close its done-criteria; the reason is in `attestation_error`. Empty for `whole_plan` runs. |
+| `"verification_receipts"` | `list[VerificationReceiptRecord]` — durable verification-environment receipts: interpreter, cwd, import checks, commands, clean-tree note, and artifact path. |
+| `"verification_timeline"` | `VerificationTimelineRecord` — canonical scheduled-gate ledger rows and identity-scoped events. Rows preserve `(command, hook, phase)`, declaration/selection facts, execution policy/consequence/executor/trigger, nullable disposition, and `receipt_evidence`. |
+| `"verification_cockpit"` | `VerificationTimelineRecord` — the same canonical scheduled-gate ledger projection under the cockpit view name; its rows and events are identical to `verification_timeline`. |
 
 ### Filters
 
@@ -903,12 +979,24 @@ The projection's authority comes from
 
 | Field | Meaning |
 |---|---|
-| `kind` | `delivery_decision_required`, `correction_decision_required`, or `direct_checkout_or_running`. |
-| `available_actions` | Actions core currently allows. Each has `action`, `effect`, and `creates_commit`. |
+| `kind` | `delivery_decision_required` (approved release, diff retained and waiting to ship), `correction_decision_required` (rejected release, choose fix/skip/halt), `delivery_completed` (an Orcho-managed delivery already landed — terminal, no decision; carries `published` / `pr_url` / `delivery_notices`), or `direct_checkout_or_running` (nothing was delivered — no retained worktree gate, a direct checkout edit, or the run is still live). |
+| `available_actions` | Actions core currently allows. Each has `action`, `effect`, and `creates_commit` — only `approve` sets `creates_commit=true`. |
 | `blocked_actions` | Actions core currently refuses, such as `approve` / `apply` on a rejected release or blocked verification. |
 | `default_action` | Core's recommended default when one exists. |
 | `diff` | Retained change summary. Secondary artifact failures set `diff.degraded=true` but do not hide a decidable gate. |
+| `delivery_branch` | The published / publishable delivery branch. |
+| `published_commit_sha` | The commit created on that branch; `commit_sha` remains reserved for a commit landed in the target checkout. |
+| `pr_intent` | Durable pull-request intent — `branch` / `base` / `title` / `suggested_command` — for the client to turn into an actual PR. |
 | `next_actions` | One `ready_call` to `orcho_delivery_decide` per available action. |
+
+The branch mechanics behind those last two fields: `approve` never
+auto-commits onto the project's default branch. Under the default
+`worktree_branch` policy the commit lands on a local delivery branch
+(rebased onto the target; conflicts are non-fatal and reported), and
+`pr_intent` records how to publish it. Alternative policy modes
+(`protect_default`, `named`, `bypass`) change where that commit is
+allowed to land; the engine emits the intent, and pushing or opening the
+PR stays with the client or a git-provider plugin.
 
 `orcho_delivery_decide(run_id, action, note?)` resolves the gate through the
 SDK. It never spawns a process and MCP never applies a patch directly.

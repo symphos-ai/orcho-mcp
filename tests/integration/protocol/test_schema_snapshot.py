@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from orcho_mcp import tools
 from orcho_mcp.discovery import collect_catalog
 
 _REPO_ROOT = Path(__file__).parent.parent.parent.parent.resolve()
@@ -110,3 +111,217 @@ def test_committed_snapshot_has_expected_shape():
     tool_names = {t["name"] for t in committed["tools"]}
     assert "orcho_delivery_gate" in tool_names
     assert "orcho_delivery_decide" in tool_names
+
+
+def test_run_inspection_tools_explain_their_operator_questions():
+    """The public MCP catalog tells clients which read tool to choose."""
+    committed = _load_committed_schema()
+    descriptions = {
+        tool["name"]: tool.get("description") or ""
+        for tool in committed["tools"]
+    }
+
+    # run_status is the durable snapshot and routes live-progress questions to
+    # orcho_run_live_status rather than positioning itself as the progress view.
+    assert (
+        "Durable status snapshot for one run"
+        in descriptions["orcho_run_status"]
+    )
+    assert "orcho_run_live_status" in descriptions["orcho_run_status"]
+    assert (
+        "What happened / what proves it?"
+        in descriptions["orcho_run_evidence"]
+    )
+    assert "How much did it consume?" in descriptions["orcho_run_metrics"]
+    assert "What changed?" in descriptions["orcho_run_diff"]
+
+
+def test_live_catalog_pins_progress_navigation_and_tool_exports() -> None:
+    """Catalog introspection, rather than source docstrings, is the contract.
+
+    The first description line is what clients see while choosing a tool.  Pin
+    the short intent labels here, and make ``tools.__all__`` an exact manifest
+    of the tools actually registered on the shared FastMCP instance.
+    """
+    live = collect_catalog()
+    descriptions = {
+        tool["name"]: tool.get("description") or ""
+        for tool in live["tools"]
+    }
+    first_line = {
+        name: description.splitlines()[0]
+        for name, description in descriptions.items()
+    }
+
+    assert first_line["orcho_run_status"] == (
+        "Durable status snapshot for one run — not the live-progress view."
+    )
+    assert first_line["orcho_run_live_status"] == (
+        "Where is this run right now, and what do I do next? "
+        "(subtask progress index/total)"
+    )
+    assert first_line["orcho_run_start"] == (
+        "Start a real run (mock or live) in a detached subprocess; "
+        "return run_id now."
+    )
+    assert first_line["orcho_run_project_typed"] == (
+        "Mock-only, in-process typed run (blocking); for real runs use "
+        "orcho_run_start."
+    )
+    assert first_line["orcho_run_project_typed_async"] == (
+        "Mock-only, in-process typed run (non-blocking); for real runs use "
+        "orcho_run_start."
+    )
+    assert "current_subtask" in descriptions["orcho_run_events_summary"]
+
+    registered = {tool["name"] for tool in live["tools"]}
+    exported = set(tools.__all__)
+    assert exported == registered, (
+        "tools.__all__ must exactly match the FastMCP catalog; "
+        f"missing exports: {sorted(registered - exported)}; "
+        f"extra exports: {sorted(exported - registered)}"
+    )
+
+
+def test_evidence_schema_publishes_canonical_scheduled_gate_ledger():
+    """The evidence tool exposes ledger rows/events, not the retired cockpit."""
+    committed = _load_committed_schema()
+    evidence = next(
+        tool for tool in committed["tools"] if tool["name"] == "orcho_run_evidence"
+    )
+    defs = evidence["outputSchema"]["$defs"]
+
+    assert {
+        "ReceiptEvidenceRecord",
+        "ScheduledGateRowRecord",
+        "ScheduledGateEventRecord",
+        "VerificationTimelineRecord",
+    } <= set(defs)
+    assert not {
+        "VerificationAutorunEventRecord",
+        "VerificationCockpit",
+        "VerificationGateCockpitRow",
+        "VerificationTimelineGateRecord",
+    } & set(defs)
+
+    row = defs["ScheduledGateRowRecord"]
+    assert set(row["properties"]) == {
+        "command",
+        "hook",
+        "phase",
+        "declared",
+        "selectable",
+        "selected",
+        "execution_policy",
+        "consequence",
+        "disposition",
+        "selection_reason",
+        "executor",
+        "trigger",
+        "receipt_evidence",
+    }
+    assert row["properties"]["execution_policy"]["enum"] == [
+        "manual", "suggest", "warn", "require", "unknown",
+    ]
+    assert row["properties"]["consequence"]["enum"] == [
+        "none", "warning", "required_action",
+    ]
+    assert row["properties"]["disposition"]["anyOf"][0]["enum"] == [
+        "not_selected",
+        "manual_available",
+        "suggested",
+        "skipped_fresh",
+        "executed_pass",
+        "executed_fail",
+        "residual_missing",
+        "residual_stale",
+        "residual_failed",
+    ]
+    assert row["properties"]["selected"]["anyOf"][0]["type"] == "boolean"
+    assert row["properties"]["disposition"]["anyOf"][1]["type"] == "null"
+
+    event = defs["ScheduledGateEventRecord"]
+    assert event["properties"]["kind"]["enum"] == [
+        "selection", "execution", "reuse", "receipt",
+    ]
+    timeline = defs["VerificationTimelineRecord"]
+    assert set(timeline["properties"]) == {
+        "schema_version", "run_id", "project", "finalized", "rows", "events",
+    }
+    for retired in (
+        "status",
+        "manual_only",
+        "required",
+        "gate_class",
+        "class_source",
+        "policy_summary",
+        "autorun_events",
+        "scheduled_trail_available",
+    ):
+        assert retired not in row["properties"]
+        assert retired not in event["properties"]
+
+
+def test_run_status_schema_publishes_lossless_cross_execution_graph() -> None:
+    """Pin the additive cross-graph contract at the public catalog boundary."""
+    committed = _load_committed_schema()
+    status = next(
+        tool for tool in committed["tools"] if tool["name"] == "orcho_run_status"
+    )
+    defs = status["outputSchema"]["$defs"]
+    status_graph = status["outputSchema"]["properties"]["cross_execution_graph"]
+
+    assert status_graph["anyOf"][0]["$ref"] == "#/$defs/CrossExecutionGraphRecord"
+    assert status_graph["anyOf"][1] == {"type": "null"}
+    assert status_graph["default"] is None
+
+    graph = defs["CrossExecutionGraphRecord"]
+    assert set(graph["properties"]) == {"compile_identity", "nodes"}
+    assert graph["properties"]["compile_identity"] == {
+        "$ref": "#/$defs/CrossExecutionGraphCompileIdentityRecord",
+    }
+    assert graph["properties"]["nodes"]["items"] == {
+        "$ref": "#/$defs/CrossExecutionGraphNodeRecord",
+    }
+
+    node = defs["CrossExecutionGraphNodeRecord"]
+    assert set(node["properties"]) == {
+        "identity", "kind", "dependencies", "owner", "executor", "required",
+        "status", "reason", "alias", "operations",
+    }
+    assert node["properties"]["executor"] == {
+        "$ref": "#/$defs/CrossExecutionGraphExecutorPolicyRecord",
+    }
+    assert node["properties"]["operations"]["items"] == {
+        "$ref": "#/$defs/CrossExecutionGraphOperationRecord",
+    }
+
+    operation = defs["CrossExecutionGraphOperationRecord"]
+    assert set(operation["properties"]) == {
+        "alias", "executor", "phase", "hook", "command",
+    }
+    policy = defs["CrossExecutionGraphExecutorPolicyRecord"]
+    assert set(policy["properties"]) == {
+        "executor", "handler", "enabled", "run", "on_skip", "mode",
+    }
+
+    assert node["properties"]["kind"]["enum"] == [
+        "global_phase", "project", "contract_check", "cross_final_acceptance",
+    ]
+    assert node["properties"]["owner"]["enum"] == ["global", "project", "runner"]
+    assert policy["properties"]["executor"]["enum"] == [
+        "global_handler", "project_pipeline", "runner_gate",
+    ]
+    assert node["properties"]["status"]["enum"] == [
+        "pending", "ready", "running", "blocked", "completed", "skipped",
+    ]
+    assert node["properties"]["reason"]["enum"] == [
+        "global_already_completed", "child_completed", "child_running",
+        "child_paused", "child_failed", "child_inconsistent",
+        "optional_project_not_run", "dependency_pending", "dependency_blocked",
+        "runner_gate_completed", "runner_gate_skipped", "runner_gate_running",
+        "policy_disabled", "policy_never", "fact_mismatch",
+    ]
+    assert operation["properties"]["executor"]["enum"] == [
+        "child_phase", "child_scheduled_gate",
+    ]

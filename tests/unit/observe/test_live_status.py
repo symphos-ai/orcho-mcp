@@ -450,7 +450,7 @@ def test_resume_meaningful_matches_diagnosis_delivery_gate(fake_workspace):
     )
 
     diag = project_run_diagnosis("run_correction_gate")
-    assert diag.condition == "correction_followup_required"
+    assert diag.condition == "blocked_worktree"
     assert _resume_meaningful_from_diagnosis(diag) is False
 
 
@@ -515,3 +515,106 @@ def test_live_status_superseded_parent_is_closed(fake_workspace):
     assert card.terminal.resume_meaningful is False
     assert "superseded" in card.next_action
     assert "20260101_000002" in card.next_action
+
+
+# ── delivery disposition on a terminal_success card ──────────────────────────
+#
+# A committed / published terminal success carries the cheap delivery
+# disposition (committed / published / pr_url) read ONLY on the terminal branch,
+# and its next_action points at the PR + evidence delivery slice instead of the
+# generic inspect-findings/diff pointer.
+
+
+def test_terminal_success_delivered_run_carries_disposition_and_pr(fake_workspace):
+    """A committed+published terminal success carries the delivery disposition
+    and its next_action points at the PR and the evidence delivery slice."""
+    write_run(
+        fake_workspace, "run_delivered",
+        meta=meta(
+            status="done", project="/p/x", task="t",
+            phases={"final_acceptance": _final_acceptance("APPROVED", True)},
+            commit_delivery={
+                "status": "committed",
+                "action": "approve",
+                "release_verdict": "APPROVED",
+                "commit_sha": "abc123",
+                "pr_url": "https://example.test/pr/42",
+                "delivery_notices": ["PR opened: https://example.test/pr/42"],
+            },
+        ),
+        events=[event(1, "run.end", payload={"status": "done"})],
+    )
+
+    card = orcho_run_live_status("run_delivered")
+
+    assert card.state_class == "terminal_success"
+    term = card.terminal
+    assert term is not None
+    assert term.delivery_committed is True
+    assert term.delivery_published is True
+    assert term.delivery_pr_url == "https://example.test/pr/42"
+    # next_action names the PR and the read-only evidence delivery slice.
+    assert "https://example.test/pr/42" in card.next_action
+    assert "slice='delivery'" in card.next_action
+    # NOT the generic inspect-findings/diff pointer.
+    assert "for findings and orcho_run_diff for" not in card.next_action
+
+
+def test_terminal_success_committed_no_pr_points_at_delivery_slice(fake_workspace):
+    """A committed-but-unpublished terminal success reads
+    delivery_committed=True with no pr_url; next_action points at the delivery
+    record, not a PR link."""
+    write_run(
+        fake_workspace, "run_committed_nopr",
+        meta=meta(
+            status="done", project="/p/x", task="t",
+            phases={"final_acceptance": _final_acceptance("APPROVED", True)},
+            commit_delivery={
+                "status": "committed",
+                "action": "approve",
+                "release_verdict": "APPROVED",
+                "commit_sha": "abc123",
+            },
+        ),
+        events=[event(1, "run.end", payload={"status": "done"})],
+    )
+
+    card = orcho_run_live_status("run_committed_nopr")
+
+    term = card.terminal
+    assert term is not None
+    assert term.delivery_committed is True
+    assert term.delivery_published is False
+    assert term.delivery_pr_url is None
+    assert "slice='delivery'" in card.next_action
+
+
+def test_running_path_does_not_read_delivery_disposition(
+    fake_workspace, monkeypatch,
+):
+    """The hot running poll must NOT read the delivery disposition — only the
+    terminal branch does. The helper is monkeypatched to explode; a running
+    card must still build without ever calling it."""
+    calls: list[str] = []
+
+    def _boom(run_id: str):
+        calls.append(run_id)
+        raise AssertionError("delivery_disposition must not run on the hot path")
+
+    monkeypatch.setattr(
+        "orcho_mcp.observe.live_status.delivery_disposition", _boom,
+    )
+    write_run(
+        fake_workspace, "run_hot",
+        meta=meta(status="running", project="/p/x", task="t"),
+        events=[
+            event(1, "run.start"),
+            event(2, "phase.start", phase="implement"),
+        ],
+    )
+
+    card = orcho_run_live_status("run_hot")
+
+    assert card.state_class in ("running_phase", "running_subtask")
+    assert card.terminal is None
+    assert calls == []

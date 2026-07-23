@@ -22,6 +22,7 @@ etc.) keep working without churn. Domain modules can also be imported
 directly when a caller wants the narrower surface
 (``from orcho_mcp.schemas.read import RunStatus``).
 """
+
 from __future__ import annotations
 
 from orcho_mcp.schemas.authoring import (
@@ -31,10 +32,12 @@ from orcho_mcp.schemas.authoring import (
     SubTaskRecord,
 )
 from orcho_mcp.schemas.inspection import (
+    CorrectionSliceRecord,
     CriterionReportRecord,
     DeliveryActionRecord,
     DeliveryGateDiffSummary,
     DeliveryGateProjection,
+    DeliverySummaryRecord,
     ErrorsHaltSliceRecord,
     EvidenceArtifactSliceRecord,
     EvidenceCommandSliceRecord,
@@ -46,17 +49,18 @@ from orcho_mcp.schemas.inspection import (
     HandoffAdviceUsageRecord,
     ImplementDeliveryRecord,
     PlanSliceRecord,
+    ReceiptEvidenceRecord,
     RunDiffFile,
     RunDiffResult,
+    ScheduledGateEventRecord,
+    ScheduledGateRowRecord,
+    ScopeExpansionItemRecord,
+    ScopeExpansionSliceRecord,
     SubRunLinkRecord,
     SubtaskReceiptRecord,
-    VerificationAutorunEventRecord,
     VerificationCheckRecord,
-    VerificationCockpit,
     VerificationCommandRecord,
-    VerificationGateCockpitRow,
     VerificationReceiptRecord,
-    VerificationTimelineGateRecord,
     VerificationTimelineRecord,
 )
 from orcho_mcp.schemas.observe import (
@@ -83,6 +87,11 @@ from orcho_mcp.schemas.observe import (
 from orcho_mcp.schemas.read import (
     ArtefactRefRecord,
     AutoDetectProjection,
+    CrossExecutionGraphCompileIdentityRecord,
+    CrossExecutionGraphExecutorPolicyRecord,
+    CrossExecutionGraphNodeRecord,
+    CrossExecutionGraphOperationRecord,
+    CrossExecutionGraphRecord,
     EventRecord,
     EventsTailResult,
     FollowupLineage,
@@ -101,6 +110,10 @@ from orcho_mcp.schemas.read import (
 )
 from orcho_mcp.schemas.run_control import (
     CancelResult,
+    CorrectionBlockedResult,
+    CorrectionExitResult,
+    CorrectionFollowupStartedResult,
+    CorrectionOperatorInputRequiredResult,
     DeliveryDecideResult,
     HandoffAdviceResult,
     HandoffAdviceSafetyRecord,
@@ -141,6 +154,10 @@ from orcho_mcp.schemas.workspace import (
 __all__ = [
     # shared
     "ContinuationSubjectLiteral",
+    "CorrectionExitResult",
+    "CorrectionBlockedResult",
+    "CorrectionFollowupStartedResult",
+    "CorrectionOperatorInputRequiredResult",
     "NextActionRecord",
     "ProviderPressure",
     "RecommendedNextActionLiteral",
@@ -154,6 +171,11 @@ __all__ = [
     # read
     "ArtefactRefRecord",
     "AutoDetectProjection",
+    "CrossExecutionGraphCompileIdentityRecord",
+    "CrossExecutionGraphExecutorPolicyRecord",
+    "CrossExecutionGraphNodeRecord",
+    "CrossExecutionGraphOperationRecord",
+    "CrossExecutionGraphRecord",
     "EventRecord",
     "EventsTailResult",
     "FollowupLineage",
@@ -210,10 +232,12 @@ __all__ = [
     "TypedRunResult",
     "TypedRunStartedResult",
     # inspection
+    "CorrectionSliceRecord",
     "CriterionReportRecord",
     "DeliveryActionRecord",
     "DeliveryGateDiffSummary",
     "DeliveryGateProjection",
+    "DeliverySummaryRecord",
     "ErrorsHaltSliceRecord",
     "EvidenceArtifactSliceRecord",
     "EvidenceCommandSliceRecord",
@@ -227,15 +251,16 @@ __all__ = [
     "PlanSliceRecord",
     "RunDiffFile",
     "RunDiffResult",
+    "ScopeExpansionItemRecord",
+    "ScopeExpansionSliceRecord",
     "SubRunLinkRecord",
     "SubtaskReceiptRecord",
-    "VerificationAutorunEventRecord",
     "VerificationCheckRecord",
-    "VerificationCockpit",
     "VerificationCommandRecord",
-    "VerificationGateCockpitRow",
     "VerificationReceiptRecord",
-    "VerificationTimelineGateRecord",
+    "ReceiptEvidenceRecord",
+    "ScheduledGateEventRecord",
+    "ScheduledGateRowRecord",
     "VerificationTimelineRecord",
     # workflows
     "RecipeBranchStep",

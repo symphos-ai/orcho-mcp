@@ -67,6 +67,10 @@ from orcho_mcp.run_control.typed_pilot import (
 )
 from orcho_mcp.schemas import (
     CancelResult,
+    CorrectionBlockedResult,
+    CorrectionExitResult,
+    CorrectionFollowupStartedResult,
+    CorrectionOperatorInputRequiredResult,
     DeliveryDecideResult,
     DeliveryGateProjection,
     EventsTailResult,
@@ -293,7 +297,16 @@ def orcho_run_status(
     run_id: str,
     include: list[str] | None = None,
 ) -> RunStatus:
-    """Summary snapshot for a single run — status, metrics, lineage, next steps.
+    """Durable status snapshot for one run — not the live-progress view.
+
+    Summary snapshot for a single run: status, phase progress, metrics summary,
+    lineage, immutable cross-execution graph/state (when present), attention
+    signals, available artifacts, and ready next actions. For
+    live progress — where the run is right now and the subtask position
+    (index/total) — use ``orcho_run_live_status``. Reach for this tool for the
+    durable meta + gate snapshot and pause/delivery checks; use
+    ``orcho_run_evidence`` for proof, ``orcho_run_metrics`` for consumption, and
+    ``orcho_run_diff`` for patch content.
 
     Raises RunNotFoundError if ``run_id`` doesn't exist on disk.
 
@@ -339,6 +352,18 @@ def orcho_run_status(
             implementation / repair receipts), ``"all"`` (identity — the
             pre-summary payload, for callers that relied on it).
             Unrecognised tokens are ignored. Default ``None`` = summary.
+
+    ``current_subtask`` is an optional typed projection on the response,
+    present only while a ``subtask_dag`` subtask is in flight (else
+    ``None``): it carries the active subtask ``index`` / ``total`` /
+    ``goal``, consistent with ``orcho_run_live_status``. For continuous
+    live progress prefer ``orcho_run_live_status``.
+
+    ``cross_execution_graph`` is ``None`` for mono-project and pre-graph
+    runs. When persisted, it preserves the graph's compile identity and node
+    order, joins each structural node to the canonical SDK-derived status and
+    reason, and includes any child phase/scheduled-gate operations without
+    reconstructing graph semantics in MCP.
     """
     return get_run_status(run_id, include=include)
 
@@ -347,7 +372,13 @@ def orcho_run_status(
 
 @mcp.tool()
 def orcho_run_metrics(run_id: str) -> RunMetrics:
-    """Raw metrics.json for a single run (token counts, durations, per-phase breakdown)."""
+    """How much did it consume?
+
+    Raw ``metrics.json`` for one run: token counts, durations, per-phase
+    breakdown, attempts / retries, and cost-reference fields when the runtime
+    recorded or Orcho estimated them. Use ``orcho_run_status`` first when
+    metrics may not exist yet.
+    """
     return get_run_metrics(run_id)
 
 
@@ -412,7 +443,11 @@ def orcho_run_events_summary(
     limit)`` window; ``current_phase`` is computed over the *full*
     event stream up to ``next_seq`` so polling-style callers don't
     lose phase context when the window misses the original
-    ``phase.start``. ``status`` mirrors what ``orcho_run_status``
+    ``phase.start``. Alongside those, the payload carries a typed
+    ``current_subtask`` (active-subtask ``index`` / ``total`` / ``goal``
+    / ``state``, or ``None`` when no ``subtask_dag`` subtask is in
+    flight) — the same subtask position surfaced by
+    ``orcho_run_live_status``. ``status`` mirrors what ``orcho_run_status``
     returns (meta + supervisor merge). ``next_actions`` are short
     imperative strings derived conservatively from status only.
 
@@ -445,12 +480,15 @@ def orcho_run_events_summary(
 
 @mcp.tool()
 def orcho_run_live_status(run_id: str) -> RunLiveStatusCard:
-    """Return a bounded operator-safe live status card for a mono run.
+    """Where is this run right now, and what do I do next? (subtask progress index/total)
 
     One typed snapshot that answers "where is this run right now, and
-    what should I do?" in a single bounded payload — built for
-    high-frequency polling, with every embedded preview truncated and no
-    full phase bodies, critiques, or raw logs ever riding along. It
+    what should I do?" — including live subtask position (index/total) —
+    in a single bounded payload. This is the go-to view for live
+    progress and where-is-the-run. It is a bounded operator-safe live
+    status card for a mono run: built for high-frequency polling, with
+    every embedded preview truncated and no full phase bodies, critiques,
+    or raw logs ever riding along. It
     unites the durable meta status (with supervisor terminal fallback),
     the live phase/subtask position, the last significant activity, any
     pending phase-handoff, and terminal consistency — without scraping
@@ -706,7 +744,12 @@ async def orcho_run_start(
     attach_binary: list[str] | None = None,
     from_run_plan: str | None = None,
 ) -> RunStartedResult:
-    """Spawn an orcho pipeline run in the background; return run_id immediately.
+    """Start a real run (mock or live) in a detached subprocess; return run_id now.
+
+    This is the production run entrypoint: real-provider or mock, spawned
+    as a detached subprocess with ``progressToken`` notifications,
+    ``orcho_run_watch``, and ``orcho_run_cancel``. (For in-process
+    mock-only smokes see the ``orcho_run_project_typed`` pair.)
 
     The run executes asynchronously in a detached subprocess. For live
     status, prefer ``orcho_run_watch`` — it holds the request open and
@@ -814,9 +857,10 @@ def orcho_run_project_typed(
     mock: bool = True,
     max_rounds: int = 1,
 ) -> TypedRunResult:
-    """Drive a single-project pipeline run as a foreground library call.
+    """Mock-only, in-process typed run (blocking); for real runs use orcho_run_start.
 
-    Pilot tool that calls orcho-core's typed silent boundary
+    Drives a single-project pipeline run as a foreground library call —
+    no subprocess. Pilot tool that calls orcho-core's typed silent boundary
     (``run_project_pipeline`` with
     ``presentation=PresentationPolicy.SILENT, no_interactive=True``)
     in-process instead of spawning a subprocess. **Blocks until the
@@ -886,8 +930,10 @@ async def orcho_run_project_typed_async(
     mock: bool = True,
     max_rounds: int = 1,
 ) -> TypedRunStartedResult:
-    """Spawn a typed silent run in the background; return run_id immediately.
+    """Mock-only, in-process typed run (non-blocking); for real runs use orcho_run_start.
 
+    Spawns a typed silent run in the background and returns run_id
+    immediately — in-process (no subprocess), mock provider only.
     Non-blocking sibling to ``orcho_run_project_typed``. The pipeline
     body executes inside ``asyncio.to_thread`` so the MCP server's
     event loop stays responsive while the run is in flight. Returns
@@ -940,7 +986,10 @@ async def orcho_run_resume(
     run_id: str,
     profile: str | None = None,
     runtime_override: RuntimeOverrideArg | None = None,
-) -> RunResumeResult | ResumeBlockedResult | ResumePendingDecisionResult:
+    operator_intent: Literal["followup", "exit"] | None = None,
+    operator_comment: str | None = None,
+    ctx: Context | None = None,
+) -> RunResumeResult | ResumeBlockedResult | ResumePendingDecisionResult | CorrectionFollowupStartedResult | CorrectionOperatorInputRequiredResult | CorrectionExitResult | CorrectionBlockedResult:
     """Continue an interrupted run by spawning a new pipeline subprocess
     that loads the existing checkpoint via ``--resume``.
 
@@ -970,6 +1019,13 @@ async def orcho_run_resume(
     ``profile="<name>"`` is a deliberate profile switch — e.g. pass
     ``"small_task"`` for a lean scoped continuation, or ``"planning"``
     to refine the plan only.
+
+    For a retained-change correction, use ``operator_intent='followup'`` with
+    a non-empty ``operator_comment`` to launch the correction child, or
+    ``operator_intent='exit'`` to decline without mutating the parent. A bare
+    correction request returns (or elicits) this same typed input. Its distinct
+    outcomes are ``operator_input_required``, ``followup_started``, ``exit``,
+    and ``blocked``; profile and runtime overrides do not alter that child.
 
     A pre-flight guard classifies the run before spawning, so the typed
     ``resume_outcome`` carries one of these outcomes (the success
@@ -1012,7 +1068,12 @@ async def orcho_run_resume(
         raised).
     """
     return await resume_run(
-        run_id, profile=profile, runtime_override=runtime_override,
+        run_id,
+        profile=profile,
+        runtime_override=runtime_override,
+        operator_intent=operator_intent,
+        operator_comment=operator_comment,
+        ctx=ctx,
     )
 
 
@@ -1176,20 +1237,36 @@ def orcho_run_evidence(
     severity_min: str | None = None,
     phases: list[str] | None = None,
 ) -> EvidenceResult:
-    """Inspect a run via typed slices — no raw log scraping required.
+    """What happened / what proves it?
+
+    Typed evidence slices for reconstructing why the run reached its current
+    state: plan contract, findings, commands, artifacts, errors, receipts,
+    verification, delivery, correction, and cross-run children. Use this for
+    audit / post-mortem / proof; use ``orcho_run_status`` for the live operator
+    snapshot, ``orcho_run_metrics`` for consumption, and ``orcho_run_diff`` for
+    patch content.
 
     The full evidence bundle (``collect_evidence``) is exhaustive; this
     tool surfaces narrow projections control-loop clients actually
     need: what the plan said, which findings blocked the run, which
-    commands the pipeline shelled out to, what artifacts landed, why
-    the run halted, and the cross-run alias linkage for cross-project
-    parents.
+    commands the pipeline shelled out to, durable managed-command lifecycle
+    records, what artifacts landed, why the run halted, and the cross-run alias
+    linkage for cross-project parents.
 
     ``slice``:
       - ``"all"`` (default) — every slice populated in one response.
-      - ``"plan"`` — plan summary only.
-      - ``"findings"`` — flattened findings list (filterable).
-      - ``"commands"`` — pipeline shell-outs.
+      - ``"plan"`` — plan summary only, including the plan's declared
+        ``allowed_modifications`` globs (from the durable plan artifact).
+      - ``"findings"`` — flattened findings list (filterable). Each finding
+        carries an ``advisory`` flag: the latest non-approved ``validate_plan``
+        attempt's findings, forwarded into a successful whole-plan implement,
+        are advisory (visible, NOT an active release blocker). ``advisory``
+        isolates only that subset — findings are flattened across all attempts,
+        so ``advisory=False`` still includes historical/resolved entries and is
+        NOT the active-blocker set.
+      - ``"commands"`` — pipeline shell-outs plus bounded managed-command
+        lifecycle records. Managed records do not expose raw arguments and do
+        not satisfy scheduled verification.
       - ``"artifacts"`` — files the run wrote.
       - ``"errors"`` — errors + halt reason.
       - ``"sub_runs"`` — cross-run child alias links (empty for
@@ -1208,29 +1285,19 @@ def orcho_run_evidence(
         the exact commands + exit codes, the clean-tree note
         (``temp_env_outside_checkout``), and the on-disk
         ``artifact_path``. Empty when the run recorded no receipts.
-      - ``"verification_timeline"`` — the official verification-gate
-        timeline as typed data: per-gate ``status`` (exactly one of
-        ``PASS`` / ``FAIL`` / ``MISSING`` / ``STALE`` / ``SKIPPED`` /
-        ``FRESH`` — a manual/operator-only gate is ``SKIPPED`` with
-        ``policy='manual_only'``), each missing/stale/failed required gate
-        carrying its own ``rerun_hint`` + ``searched_run_dirs``, plus the
-        residual / manual-only / inherited aggregates and the auto-run
-        events. ``has_contract=False`` when the project declares no
-        verification contract.
-      - ``"verification_cockpit"`` — the SAME verification gates as a typed
-        cockpit (built from one shared SDK read, never hiding the timeline):
-        a header (``has_contract`` / ``mode`` / ``envs`` / ``policy_summary``
-        / ``effect``) plus one row per gate. Each row keeps the command name
-        AND its planning properties visible together — ``hook``/phase,
-        ``trigger``, ``policy``, ``required``, ``gate_class`` + ``class_source``,
-        the same six-value ``status``, ``env``, and the deciding-receipt
-        evidence (``receipt_path`` / ``inherited`` / ``source_run_id``) with
-        ``stale_reason`` / ``rerun_hint`` where applicable. ``trigger`` is
-        derived deterministically: ``operator_only`` for a manual-only gate
-        (membership or ``policy='manual_only'``) — present on purpose, NOT an
-        automation failure; ``auto`` when the run's automation acted on the
-        command; else ``manual``. ``has_contract=False`` when the project
-        declares no verification contract.
+      - ``"verification_timeline"`` — the canonical scheduled-gate ledger.
+        Each row retains its full identity (``command`` / ``hook`` / ``phase``),
+        declaration and selection facts (``declared`` / ``selectable`` /
+        ``selected`` / ``selection_reason``), execution facts
+        (``execution_policy`` / ``consequence`` / ``executor`` / ``trigger``),
+        nullable terminal ``disposition``, and any ``receipt_evidence``.
+        Identity-scoped ``events`` retain their kind, outcome, reason, and
+        receipt evidence. MCP forwards these SDK facts without deriving a
+        command-level status or policy summary.
+      - ``"verification_cockpit"`` — the same canonical scheduled-gate ledger
+        projection under the cockpit view name. It has the identical rows and
+        identity-scoped events as ``verification_timeline`` and is built from
+        the same SDK read.
       - ``"handoff_advice"`` — Stage 0/1 phase-handoff advisor evidence:
         one record per advisor call (``handoff_id`` / ``phase`` /
         ``recommended_action`` / ``applied_action`` / ``confidence`` /
@@ -1240,6 +1307,34 @@ def orcho_run_evidence(
         ``stopped`` / ``unknown`` / ``usage``). ``resolved`` is tri-state
         (True / False / None). A run with no advisor surface returns an empty
         slice (``calls=[]``, zeroed summary), never an error.
+      - ``"scope_expansion"`` — the ADR 0110 scope-expansion audit recorded at
+        ``final_acceptance``: one item per out-of-plan path with its
+        ``classification`` (``notice`` / ``risk`` / ``blocker``), ``category``,
+        and supporting ``evidence``, plus the aggregate ``has_blocker``
+        decision-condition flag. A ``notice`` is informational ONLY — it never
+        forms an operator handoff / next_action; a ``blocker`` is surfaced via
+        ``has_blocker`` as the operator-decision condition. This is a SEPARATE
+        axis from the delivery ``scope_disclosure`` on ``orcho_delivery_gate``
+        (which names strict-mono sibling files behind a shipping block). Empty
+        slice (``items=[]``, ``has_blocker=False``) when the run recorded no
+        scope-expansion audit, never an error.
+      - ``"delivery"`` — the post-release commit-delivery outcome as typed
+        data: ``release_verdict`` (``approved`` / ``rejected`` / ``none``), the
+        raw ``decision_status`` + ``action``, and the distinguishable
+        ``applied`` / ``committed`` / ``skipped`` / ``failed`` booleans mapped
+        from the core ``CommitDeliveryStatus`` vocabulary, plus ``commit_sha`` /
+        ``halt_reason`` and the same ``implement_delivery`` audit as the
+        ``errors`` slice (single source). ``None`` when the run recorded no
+        commit-delivery decision. This is read-only evidence — NOT the
+        interactive ``orcho_delivery_gate``. The inherited-vs-current
+        verification receipts behind an approved gate-rerun child live in the
+        ``verification_timeline`` (``inherited`` + per-gate ``source_run_id``)
+        and ``receipts`` slices, not here.
+      - ``"correction"`` — the ADR 0098 correction fixed-point outcome:
+        ``non_converging`` (an operator-decision condition — the captain may
+        stop), the ``repeated`` blockers, ``parent_run_id`` / ``child_run_id``,
+        advisory ``suggested_actions`` (next-step hints, never auto-applied),
+        and ``reason``. ``None`` when core recorded no fixed-point block.
 
     ``severity_min`` (only honoured when findings are returned):
     minimum-criticality cutoff. ``"P0"`` returns only P0; ``"P1"``
@@ -1267,7 +1362,12 @@ def orcho_run_diff(
     phase: str | None = None,
     max_bytes: int = 200_000,
 ) -> RunDiffResult:
-    """Read a captured ``diff.patch`` artifact for a run.
+    """What changed?
+
+    Read a captured ``diff.patch`` artifact for a run: file stats, bounded
+    preview, or full patch, optionally scoped to a path or phase. Use this for
+    the changed-file / patch-content question; use ``orcho_run_status`` for the
+    current run state and ``orcho_run_evidence`` for proof.
 
     The pipeline writes diff artifacts at run lifecycle time; this
     tool is the read side. Missing artifact is a typed
@@ -1387,9 +1487,18 @@ def orcho_delivery_gate(run_id: str) -> DeliveryGateProjection:
         rejected release and lists any refused actions in
         ``blocked_actions``. This is an available correction-flow state, NOT
         an executed delivery.
-      - ``direct_checkout_or_running`` — no pending commit-delivery gate
-        (terminal delivery, a direct checkout edit, or a still-running run);
-        no approve / apply / fix is offered.
+      - ``delivery_completed`` — an Orcho-managed delivery already ran and
+        landed (``committed`` / ``applied_uncommitted`` status); this is NOT
+        a ``direct_checkout_or_running`` state. There is no decision to make
+        and nothing to commit by hand. ``published`` is ``True`` when a pull
+        request is open, ``pr_url`` carries that PR's live link, and
+        ``delivery_notices`` carries the machine-readable delivery notes from
+        core. On a published delivery ``pr_intent.suggested_command`` is
+        omitted (``None``) — the push already happened, so ``pr_url`` is the
+        real link to follow instead of a stale ``git push`` hint.
+      - ``direct_checkout_or_running`` — no pending commit-delivery gate and
+        no completed delivery (a direct checkout edit, a still-running run, or
+        a superseded parent); no approve / apply / fix is offered.
 
     ``diff`` summarises the retained change (``files_changed`` +
     ``changed_paths`` + ``untracked_paths``). If a secondary artifact
@@ -1433,6 +1542,7 @@ __all__ = [
     "orcho_run_metrics",
     "orcho_run_events_tail",
     "orcho_run_events_summary",
+    "orcho_run_live_status",
     "orcho_run_watch",
     "orcho_plan_validate",
     "orcho_skills_list",
@@ -1440,9 +1550,12 @@ __all__ = [
     "orcho_profiles_list",
     "orcho_workflows_list",
     "orcho_run_start",
+    "orcho_run_project_typed",
+    "orcho_run_project_typed_async",
     "orcho_run_resume",
     "orcho_run_cancel",
     "orcho_phase_handoff_decide",
+    "orcho_handoff_advice",
     "orcho_delivery_decide",
     "orcho_run_evidence",
     "orcho_run_diff",

@@ -6,7 +6,9 @@ let an agent drive an Orcho run from spawn to terminal-with-audit
 without ever reading a raw log line.
 
 For the formal contract (vocabulary, error catalog, idempotency rules),
-see [`run_lifecycle.md`](run_lifecycle.md).
+see [`run_lifecycle.md`](run_lifecycle.md). For the complete multi-axis
+decision graph, see
+[`architecture/control_state_machine.md`](architecture/control_state_machine.md).
 
 ---
 
@@ -75,16 +77,25 @@ state; none make LLM calls.
 ```python
 import asyncio
 
+TERMINAL = {"done", "failed", "interrupted", "halted", "orphaned"}
+PAUSED = {"awaiting_phase_handoff", "awaiting_gate_decision",
+          "awaiting_human_review"}
+
 while True:
     snap = orcho_run_status(run_id)
     status = (snap.meta or {}).get("status")
-    if status in {"done", "failed", "interrupted", "halted",
-                  "awaiting_phase_handoff"}:
+    if status in TERMINAL or status in PAUSED:
         break
     await asyncio.sleep(0.5)
 
 print(f"final status: {status}")
 ```
+
+The two sets mean different things: a terminal run is over (`orphaned` is
+the supervisor's verdict for a dead pid whose `meta.json` still said
+`running`); a paused run is waiting for a decision — a phase handoff
+(`orcho_phase_handoff_decide`), a delivery/correction gate
+(`orcho_delivery_decide`), or a plan-only human review.
 
 For richer streaming progress (per-phase), use `orcho_run_events_tail`
 with `since_seq` pagination:
@@ -99,7 +110,8 @@ while True:
     if batch.eof:
         snap = orcho_run_status(run_id)
         if (snap.meta or {}).get("status") in {"done", "failed",
-                                                "interrupted", "halted"}:
+                                                "interrupted", "halted",
+                                                "orphaned"}:
             break
         await asyncio.sleep(0.5)
 ```
@@ -150,49 +162,51 @@ findings = orcho_run_evidence(
     phases=["validate_plan"],
 ).findings
 
-# Decide. Four outcomes:
-# (a) ``continue`` — manual override, write the artifact, then resume.
-result = orcho_phase_handoff_decide(
-    started.run_id,
-    handoff_id=handoff_id,
-    action="continue",
-    note="Plan addresses the data-model concern raised in F1.",
-)
-# meta.status STAYS awaiting_phase_handoff. Follow up with resume:
-await orcho_run_resume(started.run_id)  # inherits meta.profile
+# The operator chooses exactly ONE verb from ``available``.
+selected_action = await choose_action(available)
+feedback = None
+note = None
 
-# (b) ``retry_feedback`` — one extra human-directed plan round.
-result = orcho_phase_handoff_decide(
-    started.run_id,
-    handoff_id=handoff_id,
-    action="retry_feedback",
-    feedback="Add the auth-migration step before deployment.",
-    note="Plan missed auth migration; one more round.",
-)
-await orcho_run_resume(started.run_id)  # inherits meta.profile (feature)
+if selected_action == "retry_feedback":
+    feedback = "Add the auth-migration step before deployment."
+    note = "Plan missed auth migration; one more round."
+elif selected_action == "continue_with_waiver":
+    feedback = "F2 is a known false positive on generated code; accepted."
+    note = "Waiving the rejection; see feedback."
+elif selected_action == "continue":
+    note = "The concern is addressed; override and continue."
+elif selected_action == "halt":
+    note = "The current result is not acceptable."
 
-# (c) ``continue_with_waiver`` — accept the rejected verdict, recording
-#     why. ``feedback`` is required (non-empty) and persists the waiver.
 result = orcho_phase_handoff_decide(
     started.run_id,
     handoff_id=handoff_id,
-    action="continue_with_waiver",
-    feedback="F2 is a known false positive on generated code; accepted.",
-    note="Waiving validate_plan rejection; see feedback.",
+    action=selected_action,
+    feedback=feedback,
+    note=note,
 )
-# meta.status STAYS awaiting_phase_handoff. Follow up with resume:
-await orcho_run_resume(started.run_id)  # inherits meta.profile
 
-# (d) ``halt`` — terminal, no resume.
-result = orcho_phase_handoff_decide(
-    started.run_id,
-    handoff_id=handoff_id,
-    action="halt",
-    note="Plan misses the auth migration. Restart with revised task.",
-)
-# meta.status flips to "halted" synchronously and meta.phase_handoff
-# is cleared.
+if selected_action != "halt":
+    # Non-halt decisions leave meta.status awaiting_phase_handoff until
+    # resume applies the recorded decision.
+    await orcho_run_resume(started.run_id)  # inherits meta.profile
+# ``halt`` flips meta.status to "halted" synchronously and clears the
+# active meta.phase_handoff; do not resume it.
 ```
+
+The verb vocabulary is:
+
+| Verb | Effect |
+|---|---|
+| `continue` | When offered, record a plain override and advance on resume. |
+| `retry_feedback` | Require feedback and run one human-directed retry path. |
+| `continue_with_waiver` | Require an explicit waiver rationale and advance on resume. |
+| `halt` | Settle the run to `halted`; no resume follows. |
+
+This table is not a promise that every handoff offers all four verbs. The active
+payload is authoritative. In particular, an incomplete implement handoff
+offers `retry_feedback`, `continue_with_waiver`, and `halt`; it does not offer
+bare `continue`.
 
 Phase-handoff decisions are exact-payload idempotent. Replaying the
 same `(handoff_id, action, feedback, note)` returns the persisted
@@ -282,13 +296,20 @@ for f in result.findings:
 
 | Slice | What it surfaces |
 |---|---|
-| `plan` | `PlanSliceRecord` — short_summary, planning_context, subtask_count, has_contract, goal, acceptance_criteria, owned_files, commands_to_run, risks, review_focus |
-| `findings` | `list[FindingRecord]` — flattened reviewer findings (severity P0..P3, phase, attempt, optional file+line) |
+| `plan` | `PlanSliceRecord` — short_summary, planning_context, subtask_count, has_contract, goal, acceptance_criteria, owned_files, `allowed_modifications` globs, commands_to_run, risks, review_focus |
+| `findings` | `list[FindingRecord]` — flattened reviewer findings (severity P0..P3, phase, attempt, optional file+line). Each carries an `advisory` flag: findings from the latest non-approved `validate_plan` attempt forwarded into a successful whole-plan implement are advisory — visible, not an active release blocker. |
 | `commands` | `list[EvidenceCommandSliceRecord]` — pipeline shell-outs (argv summary, cwd, exit_code, duration_s, outcome) |
 | `artifacts` | `list[EvidenceArtifactSliceRecord]` — files written (path, kind, size_bytes) |
 | `errors` | `ErrorsHaltSliceRecord` — status, errors, halt_reason, halted_at, error_summary |
 | `sub_runs` | `list[SubRunLinkRecord]` — cross-run child aliases |
 | `receipts` | `list[SubtaskReceiptRecord]` — per-subtask delivery receipts (`subtask_dag`): state (`done`/`incomplete`/`failed`/`skipped`), done-criteria self-attestation (`criteria_report`, `attestation_summary`, `attestation_error`). An `incomplete` subtask did not close its done-criteria. |
+| `verification_receipts` | durable verification-environment receipts — interpreter, cwd, import checks, commands, clean-tree note, artifact_path |
+| `verification_timeline` | canonical scheduled-gate ledger: rows keyed by `command` / `hook` / `phase`, with declaration, selection, execution, disposition, receipt-evidence, and identity-scoped event facts |
+| `verification_cockpit` | the same canonical scheduled-gate ledger projection under the cockpit view name; rows and events are identical to `verification_timeline` |
+| `handoff_advice` | phase-handoff advisor records — handoff_id, phase, recommended vs applied action, confidence, resolved, outcome, token usage + cost, summary |
+| `scope_expansion` | scope-expansion audit — classification, category, evidence, has_blocker flag |
+| `delivery` | post-release commit-delivery outcome — release_verdict, decision_status, action, applied/committed/skipped/failed, commit_sha, published_commit_sha, halt_reason |
+| `correction` | correction fixed-point outcome — non_converging, repeated blockers, parent/child run_ids, suggested_actions |
 | `all` (default) | every slice in one response |
 
 ---
@@ -346,6 +367,80 @@ print(f"artifacts: {[a.path for a in ev.artifacts]}")
 
 ---
 
+## The second decision loop: the delivery gate
+
+A run that reaches its release state is not finished — the retained diff
+still needs a delivery decision. This is a separate pause from the phase
+handoff, with its own tools:
+
+```python
+gate = orcho_delivery_gate(run_id)   # read-only projection
+
+if gate.kind == "delivery_decision_required":
+    # approved release: diff retained, waiting to ship
+    diff = orcho_run_diff(run_id)
+    orcho_delivery_decide(run_id, action="apply",   # or approve/skip/halt
+                          note="draft into the checkout for review")
+elif gate.kind == "correction_decision_required":
+    # rejected release: choose fix (correction-ready) / skip / halt
+    orcho_delivery_decide(run_id, action="fix")
+elif gate.kind == "delivery_completed":
+    # an Orcho-managed delivery already landed — terminal, no decision.
+    # Follow gate.pr_url when gate.published; delivery notes in
+    # gate.delivery_notices. Do NOT re-run gate.pr_intent.suggested_command
+    # (it is None on a published delivery — the push already happened).
+    print(gate.pr_url or "delivered to checkout")
+# gate.kind == "direct_checkout_or_running" → nothing was delivered here
+```
+
+What to know before wiring this loop:
+
+- `available_actions` / `blocked_actions` on the gate are authoritative —
+  a hard guard (`target_dirty`, `verification_blocked`,
+  `delivery_scope_violation`, `patch_invalid`) blocks only the shipping
+  actions (`approve` / `apply`); `fix`, `skip`, `halt` stay available.
+- Only `approve` creates a commit. It never auto-commits onto the default
+  branch: the branch policy (default `worktree_branch`) publishes a
+  delivery branch, and the gate projection carries `delivery_branch` plus
+  a durable `pr_intent` (branch / base / title / suggested_command) for
+  the client to turn into a pull request.
+- A cross-project run can also pause on `status="awaiting_gate_decision"`
+  (a runner-owned manual cross gate). MCP observes this state, but the current
+  MCP catalog has no mutation tool for its `run` / `skip` decision. Resolve it
+  through a core-native control surface, then resume; do not send it to
+  `orcho_phase_handoff_decide` and do not blindly resume.
+
+---
+
+## Beyond the core loop
+
+Surfaces a production client should know exist, in one line each:
+
+- **`orcho_run_watch`** — the preferred long-poll when your MCP request
+  carries a `progressToken`; a watch timeout means *observer* loss, never
+  run failure.
+- **`orcho_handoff_advice`** — LLM advisor for a paused handoff; writes a
+  durable advice record (see the `handoff_advice` evidence slice), never
+  a decision.
+- **`orcho_run_resume(runtime_override={phase, runtime, model})`** —
+  operator-decided provider replacement after a terminal access failure.
+- **`orcho_run_start(profile="auto-detect")`** — pipeline classifies the
+  task and picks the profile; `orcho_run_status` exposes the typed
+  `auto_detect` projection (requested_selector, selected_profile,
+  detection_state, next_action).
+- **`orcho_run_start(from_run_plan=<parent_run_id>)`** — new run inherits
+  the parent's parsed plan and skips re-planning (distinct from resume).
+- **Attachments** — `attach`, `attach_text`, `attach_image`,
+  `attach_binary` inject context into the run.
+- **`session_mode`** (`auto` / `stateless` / `chain` / `hybrid`) —
+  controls implement → repair provider-session continuation.
+- **Unattended runs** — a CLI `--no-interactive` run auto-continues
+  advisory handoffs and turns authoritative ones into typed halts
+  (`halt_reason="phase_handoff_unattended_halt"`); MCP-started runs are
+  NOT unattended — they park on handoffs and wait for this loop.
+
+---
+
 ## What the loop deliberately doesn't do
 
 - **Push-style progress notifications are opt-in.** When the MCP
@@ -388,6 +483,7 @@ structural gate that enforces this.
 ## Pointers
 
 - `docs/run_lifecycle.md` — formal contract, vocabulary, error catalog
+- `docs/architecture/control_state_machine.md` — complete state and decision graph
 - `docs/mcp_schema.json` — the JSON-Schema snapshot of every tool
 - `docs/demos/demo-1b-single-project-mcp.md` — runnable single-project MCP proof
 - `../orcho-core/docs/reference/sdk_api.md` — SDK API reference

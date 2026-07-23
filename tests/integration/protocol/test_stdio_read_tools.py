@@ -24,6 +24,7 @@ pytest.importorskip("mcp.client.stdio")
 
 from tests.fixtures.mcp_workspace import (  # noqa: E402
     in_workspace_project,
+    init_git_repo,
     write_run,
 )
 from tests.fixtures.stdio import initialized_stdio_session  # noqa: E402
@@ -458,6 +459,196 @@ async def test_stdio_delivery_gate_correction_call_tool(fake_workspace):
 
 
 @pytest.mark.anyio
+async def test_stdio_retained_change_resume_requires_repeatable_input(fake_workspace):
+    """L3: no-elicitation clients receive the typed correction form to replay."""
+    worktree = fake_workspace / "retained"
+    init_git_repo(worktree)
+    (worktree / "retained.py").write_text("changed = True\n", encoding="utf-8")
+    write_run(
+        fake_workspace, "20260101_000099",
+        meta={
+            "project": "/repo/checkout", "status": "halted", "task": "fix",
+            "halt_reason": "commit_decision_fix",
+            "worktree": {"isolation": "worktree", "path": str(worktree)},
+            "commit_delivery": {
+                "status": "fix_requested", "action": "fix",
+                "release_verdict": "REJECTED", "changed_paths": ["retained.py"],
+            },
+        },
+        commit_decision={"action": "fix", "commit_status": "fix_requested"},
+    )
+
+    async with initialized_stdio_session(fake_workspace) as (session, _):
+        result = await session.call_tool("orcho_run_resume", {"run_id": "20260101_000099"})
+
+    assert result.isError is False
+    payload = result.structuredContent
+    assert payload is not None
+    payload = payload["result"]
+    assert payload["resume_outcome"] == "operator_input_required"
+    [action] = payload["next_actions"]
+    assert action["tool"] == "orcho_run_resume"
+    assert action["args"] == {"run_id": "20260101_000099"}
+    assert action["choices"] == ["followup", "exit"]
+    assert "from_run_plan" not in str(payload)
+
+
+@pytest.mark.anyio
+async def test_stdio_retained_change_elicitation_decline_returns_typed_input(fake_workspace):
+    """L3: a form-capable client receives the correction schema and may decline."""
+    from mcp import ClientSession, StdioServerParameters, types as mcp_types
+    from mcp.client.stdio import stdio_client
+
+    from tests.fixtures.stdio import _build_server_params
+
+    worktree = fake_workspace / "retained-elicitation"
+    init_git_repo(worktree)
+    (worktree / "retained.py").write_text("changed = True\n", encoding="utf-8")
+    write_run(
+        fake_workspace, "20260101_000100",
+        meta={
+            "project": "/repo/checkout", "status": "halted", "task": "fix",
+            "halt_reason": "commit_decision_fix",
+            "worktree": {"isolation": "worktree", "path": str(worktree)},
+            "commit_delivery": {"status": "fix_requested", "action": "fix", "release_verdict": "REJECTED"},
+        },
+        commit_decision={"action": "fix", "commit_status": "fix_requested"},
+    )
+    requests: list[mcp_types.ElicitRequestParams] = []
+
+    async def callback(_ctx, params):
+        requests.append(params)
+        return mcp_types.ElicitResult(action="decline")
+
+    params: StdioServerParameters = _build_server_params(fake_workspace)
+    async with stdio_client(params) as (read, write), ClientSession(
+        read, write, elicitation_callback=callback,
+    ) as session:
+        await session.initialize()
+        result = await session.call_tool("orcho_run_resume", {"run_id": "20260101_000100"})
+
+    assert result.isError is False
+    payload = result.structuredContent
+    assert payload is not None
+    assert payload["result"]["resume_outcome"] == "operator_input_required"
+    assert len(requests) == 1
+    schema = requests[0].requestedSchema
+    assert schema["properties"]["operator_intent"]["enum"] == ["followup", "exit"]
+    assert "operator_comment" in schema["properties"]
+
+
+@pytest.mark.anyio
+async def test_stdio_retained_change_elicitation_accepts_exit(fake_workspace):
+    """L3: form acceptance reaches the shared correction executor without spawn."""
+    from mcp import ClientSession, types as mcp_types
+    from mcp.client.stdio import stdio_client
+
+    from tests.fixtures.stdio import _build_server_params
+
+    worktree = fake_workspace / "retained-exit"
+    init_git_repo(worktree)
+    (worktree / "retained.py").write_text("changed = True\n", encoding="utf-8")
+    write_run(
+        fake_workspace, "20260101_000101",
+        meta={
+            "project": "/repo/checkout", "status": "halted", "task": "fix",
+            "halt_reason": "commit_decision_fix",
+            "worktree": {"isolation": "worktree", "path": str(worktree)},
+            "commit_delivery": {"status": "fix_requested", "action": "fix", "release_verdict": "REJECTED"},
+        },
+        commit_decision={"action": "fix", "commit_status": "fix_requested"},
+    )
+
+    async def callback(_ctx, _params):
+        return mcp_types.ElicitResult(action="accept", content={"operator_intent": "exit"})
+
+    async with stdio_client(_build_server_params(fake_workspace)) as (read, write), ClientSession(
+        read, write, elicitation_callback=callback,
+    ) as session:
+        await session.initialize()
+        result = await session.call_tool("orcho_run_resume", {"run_id": "20260101_000101"})
+
+    assert result.isError is False
+    assert result.structuredContent is not None
+    assert result.structuredContent["result"]["resume_outcome"] == "exit"
+
+
+@pytest.mark.anyio
+async def test_stdio_delivery_gate_completed_call_tool(fake_workspace):
+    """``orcho_delivery_gate`` round-trips a terminal ``delivery_completed``
+    projection over stdio, carrying the published PR facts.
+
+    Seeds a run whose Orcho-managed delivery already landed
+    (``commit_delivery.status == 'committed'``) and opened a pull request
+    (``pr_url`` + ``delivery_notices``). Calls the tool through a real
+    ``python -m orcho_mcp`` subprocess and asserts the structured response
+    parses as ``DeliveryGateProjection``, classifies as the terminal
+    ``delivery_completed`` kind (no decision offered), surfaces
+    ``published`` / ``pr_url`` / ``delivery_notices``, and suppresses the
+    stale ``pr_intent.suggested_command`` — the live link is ``pr_url``.
+    """
+    write_run(
+        fake_workspace, "20260101_000001",
+        meta={
+            "project": "/repo/checkout",
+            "status": "done",
+            "task": "delivery completed stdio smoke",
+            "commit_delivery": {
+                "status": "committed",
+                "action": "approve",
+                "release_verdict": "APPROVED",
+                "project_path": "/repo/checkout",
+                "source_path": "/repo/worktree",
+                "commit_sha": "abc123",
+                "changed_paths": ["src/a.py"],
+                "untracked_paths": [],
+                "delivery_branch": "orcho/deliver/20260101-slug",
+                "pr_url": "https://example.test/pr/7",
+                "delivery_notices": ["PR opened: https://example.test/pr/7"],
+                "pr_intent": {
+                    "branch": "orcho/deliver/20260101-slug",
+                    "base": "main",
+                    "title": "Deliver widget",
+                    "suggested_command": "gh pr create --fill",
+                },
+            },
+        },
+    )
+
+    async with initialized_stdio_session(fake_workspace) as (session, _):
+        result = await session.call_tool(
+            "orcho_delivery_gate",
+            {"run_id": "20260101_000001"},
+        )
+
+    assert result.isError is False
+    payload = result.structuredContent
+    assert payload is not None, "tool result must carry structuredContent"
+
+    from orcho_mcp.schemas import DeliveryGateProjection
+
+    proj = DeliveryGateProjection.model_validate(payload)
+    assert proj.run_id == "20260101_000001"
+    assert proj.kind == "delivery_completed"
+    # Terminal: the delivery already landed, so no decision is offered.
+    assert proj.available_actions == []
+    assert proj.next_actions == []
+    # Published PR facts ride the typed wire, not only terminal prose.
+    assert proj.published is True
+    assert proj.pr_url == "https://example.test/pr/7"
+    assert proj.delivery_notices == ["PR opened: https://example.test/pr/7"]
+    assert proj.delivery_branch == "orcho/deliver/20260101-slug"
+    # The durable "open a PR" command is stale once the PR is open; the live
+    # link is pr_url, so suggested_command is suppressed while the rest of the
+    # intent is preserved.
+    assert proj.pr_intent is not None
+    assert proj.pr_intent.suggested_command is None
+    assert proj.pr_intent.branch == "orcho/deliver/20260101-slug"
+    assert proj.pr_intent.base == "main"
+    assert "https://example.test/pr/7" in proj.message
+
+
+@pytest.mark.anyio
 async def test_stdio_workspace_state_after_summary(fake_workspace):
     """``orcho_run_events_summary`` updates the advisory MCP
     workspace state, and ``orcho_workspace_state`` exposes the same
@@ -744,9 +935,9 @@ async def test_stdio_run_evidence_handoff_advice_slice(fake_workspace):
         fake_workspace, "20260101_000010",
         meta={
             "project": "/p", "status": "done", "task": "advice evidence smoke",
-            # A review round whose blank-vs-nonblank critique drives the
-            # resolved/repeated classifier; the run reached terminal ``done``.
-            "phases": {"rounds": [{"round": 1, "critique": "P1: broken"}]},
+            # The post-advice review round has a blank critique, the durable
+            # approval signal for a resolved retry.
+            "phases": {"rounds": [{"round": 2, "critique": ""}]},
         },
         events=[_ev(1, kind="run.start"), _ev(2, kind="run.end")],
     )
@@ -818,6 +1009,112 @@ async def test_stdio_run_evidence_handoff_advice_empty_when_absent(fake_workspac
     assert payload["handoff_advice"] is not None
     assert payload["handoff_advice"]["calls"] == []
     assert payload["handoff_advice"]["summary"]["calls"] == 0
+
+
+@pytest.mark.anyio
+async def test_stdio_run_evidence_scheduled_gate_ledger(fake_workspace):
+    """Canonical scheduled-gate rows/events survive a real stdio round trip."""
+    from pipeline.verification_ledger import GateLedgerRow, GateTrailEvent
+    from pipeline.verification_ledger_store import ScheduledGateLedger, write_ledger
+
+    run_id = "20260101_000013"
+    project = in_workspace_project(fake_workspace, "ledger-project")
+    run_dir = write_run(
+        fake_workspace,
+        run_id,
+        meta={"project": project, "status": "done", "task": "ledger smoke"},
+        events=[_ev(1, kind="run.start"), _ev(2, kind="run.end")],
+    )
+    rows = (
+        GateLedgerRow(
+            gate="pytest -q",
+            hook="after_phase",
+            phase="implement",
+            timing="after_implement",
+            run_mode="auto",
+            gate_sets=(),
+            condition="always",
+            declared=True,
+            selectable=True,
+            selected=True,
+            execution_policy="require",
+            consequence="required_action",
+            executor="engine",
+            trigger="after_phase",
+        ),
+        GateLedgerRow(
+            gate="pytest -q",
+            hook="before_delivery",
+            phase="",
+            timing="delivery",
+            run_mode="auto",
+            gate_sets=(),
+            condition="always",
+            declared=True,
+            selectable=True,
+            selected=True,
+            execution_policy="warn",
+            consequence="warning",
+            executor="engine",
+            trigger="pre_final",
+        ),
+    )
+    ledger = ScheduledGateLedger(
+        rows,
+        trail=(
+            GateTrailEvent(
+                "pytest -q",
+                "after_phase",
+                "implement",
+                "execution",
+                "pass",
+                "completed",
+                "verification_receipts/pytest.json",
+            ),
+        ),
+    ).finalize()
+    write_ledger(run_dir, ledger)
+
+    async with initialized_stdio_session(fake_workspace) as (session, _):
+        catalog = await session.list_tools()
+        evidence_tool = next(
+            tool for tool in catalog.tools if tool.name == "orcho_run_evidence"
+        )
+        defs = evidence_tool.outputSchema["$defs"]
+        assert "ScheduledGateRowRecord" in defs
+        assert "ScheduledGateEventRecord" in defs
+        assert "VerificationGateCockpitRow" not in defs
+        result = await session.call_tool(
+            "orcho_run_evidence",
+            {"run_id": run_id, "slice": "verification_cockpit"},
+        )
+
+    assert result.isError is False
+    payload = result.structuredContent
+    assert payload is not None
+
+    from orcho_mcp.schemas import EvidenceResult
+
+    evidence = EvidenceResult.model_validate(payload)
+    cockpit = evidence.verification_cockpit
+    assert cockpit is not None
+    assert cockpit.schema_version == "1"
+    assert cockpit.finalized is True
+    assert [(row.command, row.hook, row.phase) for row in cockpit.rows] == [
+        ("pytest -q", "after_phase", "implement"),
+        ("pytest -q", "before_delivery", ""),
+    ]
+    assert [row.disposition for row in cockpit.rows] == [
+        "executed_pass",
+        "residual_missing",
+    ]
+    assert cockpit.rows[0].consequence == "required_action"
+    assert cockpit.rows[1].consequence == "warning"
+    assert cockpit.rows[0].receipt_evidence is not None
+    assert cockpit.rows[0].receipt_evidence.path == "verification_receipts/pytest.json"
+    assert [(event.kind, event.outcome, event.reason) for event in cockpit.events] == [
+        ("execution", "pass", "completed"),
+    ]
 
 
 @pytest.mark.anyio

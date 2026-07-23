@@ -27,6 +27,7 @@ import uuid
 from datetime import datetime
 
 import orcho_mcp.supervisor.cancel as cancel_ops
+import orcho_mcp.supervisor.followup as followup_ops
 import orcho_mcp.supervisor.lifecycle as lifecycle_ops
 import orcho_mcp.supervisor.recovery as recovery_ops
 import orcho_mcp.supervisor.resume as resume_ops
@@ -124,6 +125,16 @@ class RunsSupervisor:
     async def resume(self, run_id: str, *, profile: str | None = None) -> RunHandle:
         """Delegate to :func:`orcho_mcp.supervisor.resume.execute`."""
         return await resume_ops.execute(self, run_id, profile=profile)
+
+    async def followup(
+        self, *, parent_run_id: str, operator_comment: str,
+    ) -> RunHandle:
+        """Delegate an ordinary retained-change correction follow-up."""
+        return await followup_ops.execute(
+            self,
+            parent_run_id=parent_run_id,
+            operator_comment=operator_comment,
+        )
 
     async def cancel(self, run_id: str, mode: str = "graceful") -> dict[str, str]:
         """Delegate to :func:`orcho_mcp.supervisor.cancel.execute`."""

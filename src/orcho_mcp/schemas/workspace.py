@@ -170,6 +170,8 @@ class WorkspacePendingDecisionRow(BaseModel):
                     "exists for ``handoff_id`` — the run stays paused, so the "
                     "next step is resume, not a second decide.",
     )
+    decision_state: str = Field(default="missing", description="Typed decision-artifact outcome: recorded, missing, or degraded.")
+    decision_degraded_reason: str | None = Field(default=None, description="Stable reason for a degraded decision read.")
     suggested_next_action: str | None = Field(
         default=None,
         description="One-line pointer at the right next tool "

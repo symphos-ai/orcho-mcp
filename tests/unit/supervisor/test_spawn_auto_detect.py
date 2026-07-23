@@ -3,16 +3,16 @@
 ``profile="auto-detect"`` is a run-start *selector token* — orcho-core's CLI
 resolves it into a concrete profile + mode before any profile-registry lookup
 (see ``pipeline.project.cli`` auto-detect dispatch, keyed on the argv
-``--profile`` value). The supervisor must therefore:
+``--profile`` value).
 
-  * thread the selector through argv as ``--profile auto-detect`` (already
-    handled by ``build_orch_argv``'s verbatim passthrough), and
-  * NOT export ``ORCHO_PIPELINE=auto-detect`` — that env var is a concrete
-    profile override that feeds straight into the registry resolver, so setting
-    it to the selector token would pre-resolve / break the run.
-
-A control case pins that a genuine non-feature profile still sets
-``ORCHO_PIPELINE``.
+Spawn now delegates argv/env construction to
+``sdk.run_control.launch.launch_run``. The rule that ``auto-detect`` must
+reach core only through argv — never as an ``ORCHO_PIPELINE`` env override,
+even when the MCP server inherited that env var — now lives inside that SDK
+seam and is covered by its own unit tests plus the L4 mock smoke. The
+supervisor's contract at this layer is narrower: it forwards the caller's
+selector verbatim on ``LaunchSpec.profile`` and does not let an ambient
+``ORCHO_PIPELINE`` value rewrite the spec's profile selection.
 """
 from __future__ import annotations
 
@@ -20,6 +20,7 @@ import subprocess
 import sys
 
 import pytest
+from sdk.run_control.launch import LaunchedRun, LaunchResult
 
 from orcho_mcp.supervisor import RunsSupervisor
 
@@ -29,35 +30,50 @@ def anyio_backend():
     return "asyncio"
 
 
-def _capture_popen(captured_env, captured_argv):
-    """Build a Popen substitute that records env+argv then fast-exits."""
+def _install_fake_launch(monkeypatch, fake_workspace, captured):
+    """Patch the spawn module's ``launch_run`` seam, recording the spec."""
+    runs_dir = fake_workspace / "runspace" / "runs"
     real_popen = subprocess.Popen
 
-    def capture_popen(cmd, **kwargs):
-        captured_env.update(kwargs.get("env", {}))
-        captured_argv.extend(cmd)
-        return real_popen(
-            [sys.executable, "-c", "import sys; sys.exit(0)"],
-            **{k: v for k, v in kwargs.items() if k != "env"},
-            env=kwargs.get("env"),
+    def fake_launch_run(spec, *, run_id=None):
+        captured["spec"] = spec
+        captured["run_id"] = run_id
+        run_dir = runs_dir / run_id
+        run_dir.mkdir(parents=True, exist_ok=True)
+        popen = real_popen([sys.executable, "-c", "import sys; sys.exit(0)"])
+        run = LaunchedRun(
+            run_id=run_id,
+            pid=popen.pid,
+            pgid=popen.pid,
+            run_dir=run_dir,
+            project_dir=spec.project_dir,
+            command=[sys.executable, "-m", "pipeline.project_orchestrator"],
+            started_at="2026-07-07T00:00:00.000Z",
+            mock=spec.mock,
+            output_mode=spec.output_mode,
         )
+        return LaunchResult(run=run, popen=popen)
 
-    return capture_popen
+    monkeypatch.setattr(
+        "orcho_mcp.supervisor.spawn.launch_run", fake_launch_run
+    )
+
+
+def _reap_cleanup(handle):
+    if handle.popen and handle.popen.poll() is None:
+        handle.popen.terminate()
+        handle.popen.wait(timeout=2)
 
 
 @pytest.mark.asyncio
-async def test_spawn_threads_auto_detect_selector_via_argv_not_env(
+async def test_spawn_threads_auto_detect_selector_onto_launch_spec(
     tmp_path, fake_workspace, monkeypatch,
 ):
-    """``profile="auto-detect"`` lands in argv as a ``--profile auto-detect``
-    pair but MUST NOT set ``ORCHO_PIPELINE`` to the selector token."""
+    """``profile="auto-detect"`` lands verbatim on ``LaunchSpec.profile``."""
     monkeypatch.delenv("ORCHO_PIPELINE", raising=False)
 
-    captured_env: dict[str, str] = {}
-    captured_argv: list[str] = []
-    monkeypatch.setattr(
-        subprocess, "Popen", _capture_popen(captured_env, captured_argv)
-    )
+    captured: dict[str, object] = {}
+    _install_fake_launch(monkeypatch, fake_workspace, captured)
 
     sup = RunsSupervisor()
     handle = await sup.spawn(
@@ -67,38 +83,25 @@ async def test_spawn_threads_auto_detect_selector_via_argv_not_env(
         mock=True,
     )
     try:
-        # Selector threads through argv as a contiguous --profile pair.
-        assert "--profile" in captured_argv
-        assert captured_argv[captured_argv.index("--profile") + 1] == (
-            "auto-detect"
-        )
-        # The selector token must never become an ORCHO_PIPELINE override.
-        assert captured_env.get("ORCHO_PIPELINE") != "auto-detect"
-        assert "ORCHO_PIPELINE" not in captured_env
+        assert captured["spec"].profile == "auto-detect"
     finally:
-        if handle.popen and handle.popen.poll() is None:
-            handle.popen.terminate()
-            handle.popen.wait(timeout=2)
+        _reap_cleanup(handle)
 
 
 @pytest.mark.asyncio
-async def test_spawn_strips_inherited_auto_detect_orcho_pipeline(
+async def test_spawn_selector_spec_is_independent_of_inherited_auto_detect_env(
     tmp_path, fake_workspace, monkeypatch,
 ):
-    """An INHERITED ``ORCHO_PIPELINE=auto-detect`` must not leak to the child.
+    """An inherited ``ORCHO_PIPELINE=auto-detect`` must not change the spec.
 
-    ``execute`` copies ``os.environ``; if the MCP server itself was launched
-    with ``ORCHO_PIPELINE=auto-detect`` the subprocess would otherwise receive
-    that concrete-profile override alongside argv ``--profile auto-detect`` and
-    pre-resolve the run. The selector must reach core only through argv.
+    The supervisor forwards the caller's ``profile="auto-detect"`` selector
+    onto the spec regardless of ambient env; the SDK seam owns stripping any
+    inherited override off the child process env.
     """
     monkeypatch.setenv("ORCHO_PIPELINE", "auto-detect")
 
-    captured_env: dict[str, str] = {}
-    captured_argv: list[str] = []
-    monkeypatch.setattr(
-        subprocess, "Popen", _capture_popen(captured_env, captured_argv)
-    )
+    captured: dict[str, object] = {}
+    _install_fake_launch(monkeypatch, fake_workspace, captured)
 
     sup = RunsSupervisor()
     handle = await sup.spawn(
@@ -108,30 +111,20 @@ async def test_spawn_strips_inherited_auto_detect_orcho_pipeline(
         mock=True,
     )
     try:
-        assert "--profile" in captured_argv
-        assert captured_argv[captured_argv.index("--profile") + 1] == (
-            "auto-detect"
-        )
-        # The inherited selector token is stripped from the child env.
-        assert "ORCHO_PIPELINE" not in captured_env
+        assert captured["spec"].profile == "auto-detect"
     finally:
-        if handle.popen and handle.popen.poll() is None:
-            handle.popen.terminate()
-            handle.popen.wait(timeout=2)
+        _reap_cleanup(handle)
 
 
 @pytest.mark.asyncio
-async def test_spawn_strips_inherited_concrete_orcho_pipeline(
+async def test_spawn_selector_spec_is_independent_of_inherited_concrete_env(
     tmp_path, fake_workspace, monkeypatch,
 ):
-    """A concrete inherited ``ORCHO_PIPELINE`` override cannot shadow auto-detect."""
+    """A concrete inherited ``ORCHO_PIPELINE`` cannot shadow the selector spec."""
     monkeypatch.setenv("ORCHO_PIPELINE", "complex_feature")
 
-    captured_env: dict[str, str] = {}
-    captured_argv: list[str] = []
-    monkeypatch.setattr(
-        subprocess, "Popen", _capture_popen(captured_env, captured_argv)
-    )
+    captured: dict[str, object] = {}
+    _install_fake_launch(monkeypatch, fake_workspace, captured)
 
     sup = RunsSupervisor()
     handle = await sup.spawn(
@@ -141,35 +134,24 @@ async def test_spawn_strips_inherited_concrete_orcho_pipeline(
         mock=True,
     )
     try:
-        assert captured_argv[captured_argv.index("--profile") + 1] == (
-            "auto-detect"
-        )
-        # Auto-detect owns concrete profile selection in core. Any inherited
-        # ORCHO_PIPELINE override could make the child run a different profile
-        # than the one recorded in meta.auto_detect, so strip it.
-        assert "ORCHO_PIPELINE" not in captured_env
+        assert captured["spec"].profile == "auto-detect"
     finally:
-        if handle.popen and handle.popen.poll() is None:
-            handle.popen.terminate()
-            handle.popen.wait(timeout=2)
+        _reap_cleanup(handle)
 
 
 @pytest.mark.asyncio
-async def test_spawn_still_sets_orcho_pipeline_for_concrete_profile(
+async def test_spawn_threads_concrete_profile_onto_launch_spec(
     tmp_path, fake_workspace, monkeypatch,
 ):
-    """Control: a concrete non-feature profile still exports ``ORCHO_PIPELINE``.
+    """Control: a concrete non-feature profile threads verbatim onto the spec.
 
-    Guards against the auto-detect exclusion accidentally suppressing the
-    env override for genuine registered profiles.
+    Guards against the auto-detect handling accidentally rewriting the profile
+    selection for genuine registered profiles.
     """
     monkeypatch.delenv("ORCHO_PIPELINE", raising=False)
 
-    captured_env: dict[str, str] = {}
-    captured_argv: list[str] = []
-    monkeypatch.setattr(
-        subprocess, "Popen", _capture_popen(captured_env, captured_argv)
-    )
+    captured: dict[str, object] = {}
+    _install_fake_launch(monkeypatch, fake_workspace, captured)
 
     sup = RunsSupervisor()
     handle = await sup.spawn(
@@ -179,12 +161,6 @@ async def test_spawn_still_sets_orcho_pipeline_for_concrete_profile(
         mock=True,
     )
     try:
-        assert "--profile" in captured_argv
-        assert captured_argv[captured_argv.index("--profile") + 1] == (
-            "complex_feature"
-        )
-        assert captured_env.get("ORCHO_PIPELINE") == "complex_feature"
+        assert captured["spec"].profile == "complex_feature"
     finally:
-        if handle.popen and handle.popen.poll() is None:
-            handle.popen.terminate()
-            handle.popen.wait(timeout=2)
+        _reap_cleanup(handle)

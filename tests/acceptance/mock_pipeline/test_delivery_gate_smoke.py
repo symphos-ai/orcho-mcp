@@ -53,6 +53,7 @@ pytestmark = pytest.mark.mcp_integration
 _VALID_KINDS = {
     "delivery_decision_required",
     "correction_decision_required",
+    "delivery_completed",
     "direct_checkout_or_running",
 }
 
@@ -124,9 +125,11 @@ async def test_orcho_delivery_gate_typed_kind_after_mock_run(mock_project):
     assert proj.run_id == handle.run_id
     assert proj.kind in _VALID_KINDS, f"unexpected gate kind: {proj.kind!r}"
 
-    if proj.kind == "direct_checkout_or_running":
-        # Documented expected outcome for a hermetic mock run: no Orcho
-        # delivery gate, so no approve/apply/fix offered and no next actions.
+    if proj.kind in ("direct_checkout_or_running", "delivery_completed"):
+        # Both are terminal for a hermetic mock run: no approve/apply/fix is
+        # offered and there are no next actions. ``delivery_completed`` would
+        # additionally carry the landed-delivery facts, but a hermetic mock
+        # normally classifies as ``direct_checkout_or_running`` (no Orcho gate).
         assert proj.available_actions == []
         assert proj.next_actions == []
         assert proj.message
@@ -156,7 +159,7 @@ def anyio_backend():
 #
 # orcho-core has no non-interactive mock profile that reliably PARKS a run at a
 # rejected delivery gate or rejects final_acceptance (documented above), and the
-# cross-run supersede needs a real from_run_plan child to deliver — multi-run
+# cross-run supersede needs a real ordinary correction child to deliver — multi-run
 # orchestration the single-spawn mock harness cannot drive. So, mirroring the
 # existing precedent (the parking case is covered against synthetic runs), this
 # scenario smoke drives the FULL contract through the actual MCP/core state
@@ -177,6 +180,7 @@ def _rejected_final_acceptance_meta(
     return meta(
         status="halted",
         project=project_path,
+        worktree={"isolation": "per_run", "path": source_path},
         halt_reason="final_acceptance_rejected",
         halt={"reason": "final_acceptance_rejected", "phase": "final_acceptance"},
         rejected_outcome={
@@ -220,19 +224,29 @@ def _seed_dirty_git_project(path):
 def _followup_child_run(workspace, *, parent_run_id: str, child_run_id: str):
     child_dir = workspace / "runspace" / "runs" / child_run_id
     child_dir.mkdir(parents=True)
+    (child_dir / "correction_context.md").write_text(
+        "# Correction context\n\nOperator comment: fix the rejected release.\n",
+        encoding="utf-8",
+    )
     return SimpleNamespace(
         output_dir=child_dir,
-        state=SimpleNamespace(extras={"plan_source_run_id": parent_run_id}),
-        session={"status": "done", "commit_delivery": {"status": "committed"}},
+        state=SimpleNamespace(extras={"parent_run_id": parent_run_id}),
+        session={
+            "status": "done",
+            "resume_mode": "followup",
+            "parent_run_id": parent_run_id,
+            "profile": "correction",
+            "commit_delivery": {"status": "committed"},
+        },
         session_ts=child_run_id,
     )
 
 
 def test_correction_followup_then_supersede_scenario(fake_workspace):
-    """rejected-FA → fix → from_run_plan follow-up → supersede, end-to-end.
+    """rejected-FA → fix → ordinary correction follow-up → supersede.
 
     Asserts all four surfaces stay consistent across the two transitions:
-    after fix, diagnose + delivery_gate emit the typed from_run_plan action and
+    after fix, diagnose + delivery_gate emit the typed resume-input action and
     live_status reports resume inert; after supersede, the parent reads
     closed/superseded everywhere with no active correction and no authoritative
     old blockers.
@@ -251,7 +265,9 @@ def test_correction_followup_then_supersede_scenario(fake_workspace):
     parent = "20260101_000001"
     child = "20260101_000002"
     project = fake_workspace / "repo"
-    _seed_dirty_git_project(project)
+    retained = fake_workspace / "retained-worktree"
+    project.mkdir()
+    _seed_dirty_git_project(retained)
 
     write_run(
         fake_workspace,
@@ -259,7 +275,7 @@ def test_correction_followup_then_supersede_scenario(fake_workspace):
         meta=_rejected_final_acceptance_meta(
             parent,
             project_path=str(project),
-            source_path=str(project),
+            source_path=str(retained),
         ),
         diff_patch="diff --git a/src/a.py b/src/a.py\n",
     )
@@ -282,35 +298,37 @@ def test_correction_followup_then_supersede_scenario(fake_workspace):
     gate = project_delivery_gate(parent)
     assert gate.kind == "correction_decision_required"
     assert [a.action for a in gate.available_actions] == ["halt"]
-    gate_starts = [na for na in gate.next_actions if na.tool == "orcho_run_start"]
-    assert len(gate_starts) == 1
-    assert gate_starts[0].args["from_run_plan"] == parent
-    # The retained diff path rides as typed, machine-readable ``context`` — not
-    # only as (non-contractual) intent prose.
-    gate_ctx = gate_starts[0].context or {}
-    assert gate_ctx.get("from_run_plan") == parent
-    assert str(gate_ctx.get("diff_path", "")).endswith("diff.patch")
+    gate_resumes = [na for na in gate.next_actions if na.tool == "orcho_run_resume"]
+    assert len(gate_resumes) == 1
+    assert gate_resumes[0].args == {"run_id": parent}
+    assert gate_resumes[0].kind == "operator_input_required"
+    assert gate_resumes[0].choices == ["followup", "exit"]
+    gate_ctx = gate_resumes[0].context or {}
+    assert gate_ctx.get("continuation_subject") == "retained_change"
+    assert gate_ctx.get("diff_source") == "worktree"
+    assert "from_run_plan" not in gate_resumes[0].model_dump_json()
 
     diag = project_run_diagnosis(parent)
     assert diag.condition == "correction_followup_required"
     assert diag.recommended_next_action == "start_followup"
     assert diag.followup_diff_path is not None
-    # The diagnose wire emits the same typed action with the same machine-readable
-    # context, so a typed client gets the diff pointer from both surfaces.
-    diag_starts = [
+    # The diagnose wire emits the same typed input action and retained subject.
+    diag_resumes = [
         na for na in inspect_run_diagnosis(parent).next_actions
-        if na.tool == "orcho_run_start"
+        if na.tool == "orcho_run_resume"
     ]
-    assert len(diag_starts) == 1
-    diag_ctx = diag_starts[0].context or {}
-    assert diag_ctx.get("from_run_plan") == parent
-    assert str(diag_ctx.get("diff_path", "")).endswith("diff.patch")
+    assert len(diag_resumes) == 1
+    assert diag_resumes[0].args == {"run_id": parent}
+    diag_ctx = diag_resumes[0].context or {}
+    assert diag_ctx.get("continuation_subject") == "retained_change"
+    assert diag_ctx.get("diff_source") == "worktree"
+    assert "from_run_plan" not in diag_resumes[0].model_dump_json()
 
     card = build_run_live_status(parent)
     assert card.terminal is not None
     assert card.terminal.resume_meaningful is False
 
-    # ── transition 2: from_run_plan child delivered → parent superseded ─────
+    # ── transition 2: correction child delivered → parent superseded ────────
     _supersede_parent_correction_after_followup(
         _followup_child_run(fake_workspace, parent_run_id=parent, child_run_id=child),
     )
@@ -340,3 +358,84 @@ def test_correction_followup_then_supersede_scenario(fake_workspace):
     assert card2.terminal is not None
     assert card2.terminal.resume_meaningful is False
     assert "superseded" in card2.next_action
+
+
+def test_committed_published_delivery_projects_completed_end_to_end(fake_workspace):
+    """A committed, published Orcho delivery reads as ``delivery_completed``
+    consistently across the gate, evidence, and live-status surfaces.
+
+    Seeds a terminal run whose Orcho-managed delivery already landed
+    (``commit_delivery.status == 'committed'``) and opened a pull request
+    (``pr_url`` + ``delivery_notices``). Asserts all three read-only surfaces
+    agree on the terminal disposition without a second meta read or prose
+    scraping: the gate is the terminal ``delivery_completed`` kind carrying the
+    published PR facts (and suppressing the stale ``suggested_command``); the
+    evidence delivery record carries the same ``pr_url`` / ``delivery_notices``;
+    and the live terminal card routes ``terminal_success`` at the PR.
+    """
+    from orcho_mcp.inspection.evidence import inspect_run_evidence
+    from orcho_mcp.observe.live_status import build_run_live_status
+    from orcho_mcp.services.delivery_gate import project_delivery_gate
+    from tests.fixtures.mcp_workspace import commit_delivery, meta, write_run
+
+    run_id = "20260101_000042"
+    pr_url = "https://example.test/pr/42"
+    notices = ["PR opened: https://example.test/pr/42"]
+
+    write_run(
+        fake_workspace, run_id,
+        meta=meta(
+            status="done",
+            project="/repo/checkout",
+            commit_delivery=commit_delivery(
+                status="committed",
+                action="approve",
+                release_verdict="APPROVED",
+                project_path="/repo/checkout",
+                source_path="/repo/worktree",
+                commit_sha="abc123",
+                delivery_branch="orcho/deliver/20260101-slug",
+                pr_url=pr_url,
+                delivery_notices=notices,
+                pr_intent={
+                    "branch": "orcho/deliver/20260101-slug",
+                    "base": "main",
+                    "title": "Deliver widget",
+                    "suggested_command": "gh pr create --fill",
+                },
+            ),
+        ),
+    )
+
+    # ── gate surface — terminal completed kind with published PR facts ───────
+    gate = project_delivery_gate(run_id)
+    assert gate.kind == "delivery_completed"
+    assert gate.available_actions == []
+    assert gate.next_actions == []
+    assert gate.published is True
+    assert gate.pr_url == pr_url
+    assert gate.delivery_notices == notices
+    assert gate.delivery_branch == "orcho/deliver/20260101-slug"
+    # Stale "open a PR" command dropped once the PR is open; the live link is
+    # pr_url — the rest of the intent is preserved.
+    assert gate.pr_intent is not None
+    assert gate.pr_intent.suggested_command is None
+    assert gate.pr_intent.branch == "orcho/deliver/20260101-slug"
+    assert pr_url in gate.message
+
+    # ── evidence surface — same published facts via the shared helpers ───────
+    evidence = inspect_run_evidence(run_id, slice="delivery")
+    assert evidence.delivery is not None
+    assert evidence.delivery.committed is True
+    assert evidence.delivery.pr_url == pr_url
+    assert evidence.delivery.delivery_notices == notices
+
+    # ── live-status surface — terminal card carries the disposition ──────────
+    card = build_run_live_status(run_id)
+    assert card.state_class == "terminal_success"
+    assert card.terminal is not None
+    assert card.terminal.delivery_committed is True
+    assert card.terminal.delivery_published is True
+    assert card.terminal.delivery_pr_url == pr_url
+    # terminal_success routes a delivered run at its PR, not a manual commit.
+    assert pr_url in card.next_action

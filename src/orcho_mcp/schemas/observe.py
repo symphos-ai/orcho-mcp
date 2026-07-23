@@ -166,6 +166,12 @@ class PendingHandoffSummary(BaseModel):
                     "exists for this handoff (the operator has decided and "
                     "only ``orcho_run_resume`` remains).",
     )
+    decision_state: Literal["recorded", "missing", "degraded"] = Field(
+        default="missing", description="Typed decision-artifact read outcome; degraded never means missing.",
+    )
+    decision_degraded_reason: str | None = Field(
+        default=None, description="Stable safe reason when decision_state is degraded.",
+    )
     suggested_next_action: str | None = Field(
         default=None,
         description="One-line pointer at the right next tool: decide then "
@@ -866,6 +872,8 @@ class RunLiveHandoff(BaseModel):
                     "resume when no decision exists yet, resume when one "
                     "already does.",
     )
+    decision_state: Literal["recorded", "missing", "degraded"] = "missing"
+    decision_degraded_reason: str | None = None
 
 
 class RunLiveTerminal(BaseModel):
@@ -874,8 +882,10 @@ class RunLiveTerminal(BaseModel):
     Present only for a terminal ``state_class`` (``terminal_success`` /
     ``terminal_halted`` / ``terminal_inconsistent``). Carries the resolved
     ``halt_reason``, the ``final_acceptance`` verdict, whether a resume is
-    meaningful, and any detected consistency violations — so a caller can
-    render a coherent terminal card without scraping logs.
+    meaningful, any detected consistency violations, and — for a run whose
+    Orcho-managed delivery already landed — the delivery disposition
+    (``delivery_committed`` / ``delivery_published`` / ``delivery_pr_url``), so
+    a caller can render a coherent terminal card without scraping logs.
     """
 
     halt_reason: str | None = Field(
@@ -906,6 +916,24 @@ class RunLiveTerminal(BaseModel):
         description="Detected terminal contradictions (e.g. a terminal "
                     "success status while final_acceptance is REJECTED). "
                     "Empty for a coherent terminal card.",
+    )
+    delivery_committed: bool = Field(
+        default=False,
+        description="True when the run's Orcho-managed delivery already landed "
+                    "in the target checkout (a ``committed`` / "
+                    "``applied_uncommitted`` delivery). ``False`` when no "
+                    "delivery landed or the run carries no delivery block.",
+    )
+    delivery_published: bool = Field(
+        default=False,
+        description="True when the landed delivery opened a pull request "
+                    "(``delivery_pr_url`` is present). ``False`` otherwise.",
+    )
+    delivery_pr_url: str | None = Field(
+        default=None,
+        description="The live pull-request URL from the run's delivery block "
+                    "when the delivery was published; ``None`` when no pull "
+                    "request was opened.",
     )
 
 

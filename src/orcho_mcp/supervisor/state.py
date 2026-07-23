@@ -11,6 +11,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from sdk.run_control import LaunchedRun, read_launch_state, write_launch_state
+
 from orcho_mcp.supervisor.handle import RunHandle
 
 STATE_FILE = "mcp_supervisor.json"
@@ -47,6 +49,47 @@ def write_state(handle: RunHandle) -> None:
         json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
+
+
+def settle_launch(handle: RunHandle) -> bool:
+    """Persist one terminal launch outcome to both supervisor artifacts.
+
+    A reaper can finish after a newer resume has installed a new PID.  In that
+    case it must not overwrite either artifact.  Both durable supervisor
+    projections are identity guards, and a matching run id + PID is required
+    before any settlement.
+    """
+    current = read_state(handle.run_dir)
+    core_current = read_launch_state(handle.run_dir)
+    if (
+        current is not None
+        and (current.get("run_id") != handle.run_id or current.get("pid") != handle.pid)
+    ):
+        return False
+    if (
+        core_current is not None
+        and (
+            core_current.get("run_id") != handle.run_id
+            or core_current.get("pid") != handle.pid
+        )
+    ):
+        return False
+    write_state(handle)
+    write_launch_state(
+        LaunchedRun(
+            run_id=handle.run_id,
+            pid=handle.pid,
+            pgid=handle.pgid,
+            run_dir=handle.run_dir,
+            project_dir=handle.project_dir,
+            command=handle.command,
+            started_at=handle.started_at,
+            mock=handle.mock,
+            output_mode=handle.output_mode,
+            status=handle.status,
+        ),
+    )
+    return True
 
 
 def read_state(run_dir: Path) -> dict[str, Any] | None:
@@ -95,6 +138,16 @@ def read_meta_profile(run_dir: Path) -> str | None:
         return None
     profile = meta.get("profile")
     return profile if isinstance(profile, str) and profile.strip() else None
+
+
+def read_meta_status(run_dir: Path) -> str | None:
+    """Return the durable pipeline status without treating it as a launch fact."""
+    try:
+        meta = json.loads((run_dir / "meta.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    status = meta.get("status")
+    return status if isinstance(status, str) and status else None
 
 
 # Statuses that mean "the pipeline finished" from cancel's point of view.
@@ -150,7 +203,9 @@ __all__ = [
     "meta_status_is_terminal",
     "now_iso",
     "read_meta_profile",
+    "read_meta_status",
     "read_meta_task",
     "read_state",
+    "settle_launch",
     "write_state",
 ]

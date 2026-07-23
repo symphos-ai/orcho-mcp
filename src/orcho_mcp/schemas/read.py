@@ -14,6 +14,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from orcho_mcp.schemas.observe import CurrentSubtaskRecord
 from orcho_mcp.schemas.shared import (
     ContinuationSubjectLiteral,
     NextActionRecord,
@@ -44,6 +45,28 @@ class HistoryResult(BaseModel):
 # ── orcho_run_status ─────────────────────────────────────────────────────────
 
 
+CrossExecutionGraphNodeKindLiteral = Literal[
+    "global_phase", "project", "contract_check", "cross_final_acceptance",
+]
+CrossExecutionGraphNodeOwnerLiteral = Literal["global", "project", "runner"]
+CrossExecutionGraphExecutorLiteral = Literal[
+    "global_handler", "project_pipeline", "runner_gate",
+]
+CrossExecutionGraphStatusLiteral = Literal[
+    "pending", "ready", "running", "blocked", "completed", "skipped",
+]
+CrossExecutionGraphReasonLiteral = Literal[
+    "global_already_completed", "child_completed", "child_running",
+    "child_paused", "child_failed", "child_inconsistent",
+    "optional_project_not_run", "dependency_pending", "dependency_blocked",
+    "runner_gate_completed", "runner_gate_skipped", "runner_gate_running",
+    "policy_disabled", "policy_never", "fact_mismatch",
+]
+CrossExecutionGraphOperationExecutorLiteral = Literal[
+    "child_phase", "child_scheduled_gate",
+]
+
+
 class ArtefactRefRecord(BaseModel):
     """Wire model for one readable artefact of a run.
 
@@ -72,6 +95,56 @@ class ArtefactRefRecord(BaseModel):
         description="Physical artefact size from ``os.stat``. ``None`` for "
                     "composable resources assembled at read time (evidence).",
     )
+
+
+class CrossExecutionGraphCompileIdentityRecord(BaseModel):
+    """Immutable compilation identity for a persisted cross-run graph."""
+
+    schema_version: int
+    fingerprint: str
+
+
+class CrossExecutionGraphExecutorPolicyRecord(BaseModel):
+    """Complete structural executor assignment for one graph node."""
+
+    executor: CrossExecutionGraphExecutorLiteral
+    handler: str | None = None
+    enabled: bool
+    run: str | None = None
+    on_skip: str | None = None
+    mode: str | None = None
+
+
+class CrossExecutionGraphOperationRecord(BaseModel):
+    """One canonical operation currently associated with a graph node."""
+
+    alias: str
+    executor: CrossExecutionGraphOperationExecutorLiteral
+    phase: str
+    hook: str | None = None
+    command: list[str] = Field(default_factory=list)
+
+
+class CrossExecutionGraphNodeRecord(BaseModel):
+    """Structural graph node joined to its canonical derived state."""
+
+    identity: str
+    kind: CrossExecutionGraphNodeKindLiteral
+    dependencies: list[str] = Field(default_factory=list)
+    owner: CrossExecutionGraphNodeOwnerLiteral
+    executor: CrossExecutionGraphExecutorPolicyRecord
+    required: bool
+    status: CrossExecutionGraphStatusLiteral
+    reason: CrossExecutionGraphReasonLiteral
+    alias: str | None = None
+    operations: list[CrossExecutionGraphOperationRecord] = Field(default_factory=list)
+
+
+class CrossExecutionGraphRecord(BaseModel):
+    """Lossless read-only view of a persisted cross execution graph."""
+
+    compile_identity: CrossExecutionGraphCompileIdentityRecord
+    nodes: list[CrossExecutionGraphNodeRecord] = Field(default_factory=list)
 
 
 class FollowupLineage(BaseModel):
@@ -457,6 +530,20 @@ class RunStatus(BaseModel):
     surfaced as a plain dict. The runtime shape of meta.json/metrics.json
     evolves and over-tightening here would force schema changes for every
     observability tweak.
+
+    Delivery disposition is deliberately NOT projected as a dedicated typed axis
+    here. The interactive delivery surfaces already own it without a second meta
+    read: ``orcho_run_live_status`` carries the typed terminal disposition
+    (``RunLiveTerminal.delivery_committed`` / ``delivery_published`` /
+    ``delivery_pr_url``), ``orcho_delivery_gate`` projects the terminal
+    ``delivery_completed`` kind with ``published`` / ``pr_url`` /
+    ``delivery_notices``, and ``orcho_run_evidence`` (slice ``delivery``) carries
+    the read-only ``DeliverySummaryRecord``. A caller that needs the raw facts
+    from a status snapshot still reads them off the untyped ``meta`` dict
+    (``meta['commit_delivery']``). Adding a fourth, parallel delivery axis to
+    ``run_status`` would duplicate the source and risk drift, so it is left out
+    unless a status-parity requirement is explicitly raised (aligned with the
+    T1 gate kind and the T3 live-status disposition).
     """
     run_id: str
     run_dir: str
@@ -465,6 +552,12 @@ class RunStatus(BaseModel):
     sub_runs: list[str] = Field(
         default_factory=list,
         description="Child run aliases for cross-project runs (empty for single-project).",
+    )
+    cross_execution_graph: CrossExecutionGraphRecord | None = Field(
+        default=None,
+        description="Immutable cross execution graph joined with its canonical "
+                    "derived node state. ``None`` for mono-project runs and "
+                    "cross runs before the graph artifact exists.",
     )
     lineage: FollowupLineage | None = Field(
         default=None,
@@ -507,6 +600,12 @@ class RunStatus(BaseModel):
             "run is mid-flight or terminal-success."
         ),
     )
+    decision_state: Literal["recorded", "missing", "degraded"] | None = Field(
+        default=None, description="Typed active-handoff decision read outcome, when applicable.",
+    )
+    decision_degraded_reason: str | None = Field(
+        default=None, description="Stable reason when decision_state is degraded.",
+    )
     artefacts: list[ArtefactRefRecord] = Field(
         default_factory=list,
         description=(
@@ -528,6 +627,19 @@ class RunStatus(BaseModel):
             "provider-pressure follow-ups live here in "
             "``provider_pressure.next_actions``; the legacy SDK-derived "
             "``next_actions`` field is unaffected."
+        ),
+    )
+    current_subtask: CurrentSubtaskRecord | None = Field(
+        default=None,
+        description=(
+            "Live progress coordinate for the in-flight ``subtask_dag`` "
+            "subtask (index / total / goal / state), derived from the SAME "
+            "observe walk (``build_latest_run_events_summary``) that backs "
+            "``orcho_run_live_status`` — so status and live_status report the "
+            "same subtask position for a run. ``None`` when no subtask is "
+            "currently in flight (terminal run, or a phase with no active "
+            "subtask); the absence is not an error. For continuous live "
+            "progress prefer ``orcho_run_live_status``."
         ),
     )
 

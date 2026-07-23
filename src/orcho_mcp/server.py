@@ -71,7 +71,22 @@ def main(argv: list[str] | None = None) -> int:
     """Console-script entry. Parse args, then hand control to FastMCP's stdio loop."""
     parser = argparse.ArgumentParser(
         prog="orcho-mcp",
-        description="Orcho — Model Context Protocol server",
+        description=(
+            "Orcho — Model Context Protocol server.\n\n"
+            "Exposes the Orcho pipeline engine (run control, evidence, and "
+            "inspection) to MCP-speaking clients such as Claude Code, Cursor, "
+            "and Zed. It speaks JSON-RPC over stdio and is normally launched "
+            "by the MCP client, not run directly in a terminal."
+        ),
+        epilog=(
+            "typical use:\n"
+            "  Register this command as an MCP server in your client, e.g.\n"
+            "  Claude Code:  claude mcp add orcho -- orcho-mcp\n\n"
+            "  Running it by hand starts the stdio server and waits for a\n"
+            "  client on stdin/stdout — there is no interactive prompt.\n\n"
+            "docs: https://docs.orcho.dev/start/let-your-agent-drive/"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
         "--version", action="version", version=f"orcho-mcp {__version__}",

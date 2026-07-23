@@ -47,6 +47,10 @@ from orcho_mcp.schemas import (
 )
 from orcho_mcp.schemas.observe import HandoffDecisionHint
 from orcho_mcp.schemas.shared import ProviderPressure
+from orcho_mcp.services.delivery_gate import (
+    DeliveryDisposition,
+    delivery_disposition,
+)
 from orcho_mcp.services.run_projection import (
     RunDiagnosisProjection,
     TerminalConsistencyProjection,
@@ -85,6 +89,11 @@ _TERMINAL_CLASSES = frozenset({
     "terminal_success", "terminal_halted", "terminal_inconsistent",
 })
 
+# The empty terminal delivery disposition — the default for every non-terminal
+# card (kept as a module-level singleton so it is never re-constructed in an
+# argument default; the disposition is only truly read on the terminal branch).
+_EMPTY_DISPOSITION = DeliveryDisposition()
+
 # Diagnosis conditions under which a plain ``orcho_run_resume`` of THIS run is
 # inert or needs a prior operator action — resume is therefore NOT meaningful.
 # Mirrors the condition vocabulary owned by
@@ -96,7 +105,7 @@ _TERMINAL_CLASSES = frozenset({
 _NON_RESUMABLE_CONDITIONS = frozenset({
     "needs_decision",            # resolved via decision_artifact_exists below
     "needs_delivery_decision",
-    "correction_followup_required",  # next step is a from_run_plan follow-up
+    "correction_followup_required",  # correction is handled by core continuation
     "closed_by_followup",            # parent closed by a successful follow-up
     "superseded_by_child",
     "blocked_worktree",
@@ -196,19 +205,24 @@ def _build_live_handoff(
         verdict=pending.verdict,
         findings_summary=findings_summary,
         recommended_action=pending.suggested_next_action,
+        decision_state=pending.decision_state,
+        decision_degraded_reason=pending.decision_degraded_reason,
     )
 
 
 def _build_live_terminal(
     tc: TerminalConsistencyProjection,
     resume_meaningful: bool,
+    disposition: DeliveryDisposition,
 ) -> RunLiveTerminal:
     """Compose the terminal slice from the terminal-consistency projection.
 
     ``resume_meaningful`` is supplied by the caller from the unified
     ``project_run_diagnosis`` authority (NOT ``tc.resume_meaningful``, which
     only knew ``not is_terminal_success`` and so wrongly read a rejected
-    terminal halt as resumable). Every other terminal field is the narrow
+    terminal halt as resumable). ``disposition`` is the cheap terminal delivery
+    read (``services.delivery_gate.delivery_disposition``), computed by the
+    caller only on the terminal branch. Every other terminal field is the narrow
     coherence read the consistency projection owns.
     """
     return RunLiveTerminal(
@@ -217,6 +231,30 @@ def _build_live_terminal(
         final_acceptance_rejected=tc.final_acceptance_rejected,
         resume_meaningful=resume_meaningful,
         inconsistencies=list(tc.inconsistencies),
+        delivery_committed=disposition.committed,
+        delivery_published=disposition.published,
+        delivery_pr_url=disposition.pr_url,
+    )
+
+
+def _delivered_next_action(disposition: DeliveryDisposition) -> str:
+    """Next-step pointer for a terminal success whose delivery already landed.
+
+    Points at the pull request (its live ``pr_url``) when the delivery was
+    published, else at the delivered checkout, and always at the read-only
+    ``orcho_run_evidence`` delivery slice for the delivery record — never at a
+    stale 'inspect diff / commit directly' hint.
+    """
+    if disposition.published and disposition.pr_url:
+        return (
+            "delivery committed and a pull request is open "
+            f"({disposition.pr_url}) — review or merge the PR; inspect "
+            "orcho_run_evidence (slice='delivery') for the delivery record"
+        )
+    return (
+        "delivery committed to the target checkout — inspect orcho_run_evidence "
+        "(slice='delivery') for the delivery record and orcho_run_diff for the "
+        "delivered changes"
     )
 
 
@@ -225,6 +263,7 @@ def _live_next_action(
     pending: PendingHandoffSummary | None,
     resume_meaningful: bool,
     superseded_child: str | None = None,
+    disposition: DeliveryDisposition = _EMPTY_DISPOSITION,
 ) -> str:
     """Conservative one-line next-step pointer derived from ``state_class``.
 
@@ -233,7 +272,9 @@ def _live_next_action(
     points back at the poll loop. ``resume_meaningful`` is the unified
     diagnosis verdict, so a terminal halt only points at ``orcho_run_resume``
     when the pre-flight would actually let it spawn — a rejected / inert
-    terminal points at evidence only.
+    terminal points at evidence only. ``disposition`` (the cheap terminal
+    delivery read) redirects a delivered ``terminal_success`` at its PR /
+    delivery record instead of a generic inspect-diff hint.
     """
     if state_class == "awaiting_handoff":
         if pending is not None and pending.suggested_next_action:
@@ -257,10 +298,12 @@ def _live_next_action(
     if state_class == "terminal_success":
         if superseded_child:
             return (
-                "this run was superseded by a successful from_run_plan "
+                "this run was superseded by a successful correction "
                 f"follow-up ({superseded_child}); it is closed — inspect the "
                 "follow-up child, do not resume this parent"
             )
+        if disposition.committed:
+            return _delivered_next_action(disposition)
         return (
             "inspect orcho_run_evidence for findings and orcho_run_diff for "
             "changes"
@@ -325,6 +368,10 @@ def build_run_live_status(run_id: str) -> RunLiveStatusCard:
     # is computed lazily only for a terminal ``state_class``.
     resume_meaningful = False
     provider_pressure: ProviderPressure | None = None
+    # The delivery disposition is a terminal-only read: computed lazily here so
+    # the hot running / awaiting poll never pays for the commit-delivery meta
+    # read. Defaults to the empty disposition for every non-terminal card.
+    disposition = _EMPTY_DISPOSITION
     if state_class in _TERMINAL_CLASSES:
         resume_meaningful = _resume_meaningful_from_diagnosis(
             project_run_diagnosis(run_id),
@@ -335,6 +382,10 @@ def build_run_live_status(run_id: str) -> RunLiveStatusCard:
         provider_pressure = build_provider_pressure(
             project_provider_pressure(run_id),
         )
+        # Cheap single-source delivery disposition (committed / published /
+        # pr_url) — reads only meta.commit_delivery via the shared
+        # ``services.delivery_gate`` helper, no full gate projection.
+        disposition = delivery_disposition(run_id)
 
     handoff_model = (
         _build_live_handoff(pending, hint)
@@ -342,7 +393,7 @@ def build_run_live_status(run_id: str) -> RunLiveStatusCard:
         else None
     )
     terminal_model = (
-        _build_live_terminal(tc, resume_meaningful)
+        _build_live_terminal(tc, resume_meaningful, disposition)
         if state_class in _TERMINAL_CLASSES else None
     )
 
@@ -353,7 +404,11 @@ def build_run_live_status(run_id: str) -> RunLiveStatusCard:
         _provider_pressure_next_action(provider_pressure)
         if provider_pressure is not None
         else _live_next_action(
-            state_class, pending, resume_meaningful, tc.superseded_by_followup,
+            state_class,
+            pending,
+            resume_meaningful,
+            tc.superseded_by_followup,
+            disposition,
         )
     )
 

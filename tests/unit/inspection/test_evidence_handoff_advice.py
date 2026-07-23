@@ -7,6 +7,7 @@ wire-record mapping: per-call fields (incl. tri-state ``resolved``, usage/cost),
 the aggregate summary, the empty/absent surface degrading cleanly (SDK ``None``
 and a stale core missing the symbol), and inclusion in ``slice="all"``.
 """
+
 from __future__ import annotations
 
 from orcho_mcp.inspection.evidence import inspect_run_evidence
@@ -48,8 +49,11 @@ def _usage(**kw):
     from sdk import HandoffAdviceUsage
 
     base = dict(
-        tokens_in=100, tokens_out=50, tokens_cached=3,
-        duration_s=4.5, cost_usd_equivalent=None,
+        tokens_in=100,
+        tokens_out=50,
+        tokens_cached=3,
+        duration_s=4.5,
+        cost_usd_equivalent=None,
     )
     base.update(kw)
     return HandoffAdviceUsage(**base)
@@ -59,8 +63,13 @@ def _summary(**kw):
     from sdk import HandoffAdviceSummary
 
     base = dict(
-        calls=1, applied_retries=1, resolved_retries=1, repeated=0,
-        stopped=0, unknown=0, usage=_usage(),
+        calls=1,
+        applied_retries=1,
+        resolved_retries=1,
+        repeated=0,
+        stopped=0,
+        unknown=0,
+        usage=_usage(),
     )
     base.update(kw)
     return HandoffAdviceSummary(**base)
@@ -126,11 +135,18 @@ def test_handoff_advice_projects_calls_and_summary(monkeypatch) -> None:
 def test_handoff_advice_tri_state_resolved_and_stopped(monkeypatch) -> None:
     # An unapplied advisory call: applied=None, resolved=None, outcome=stopped.
     call = _call(
-        applied_action=None, feedback_source=None, resolved=None,
-        repeated=False, outcome="stopped",
+        applied_action=None,
+        feedback_source=None,
+        resolved=None,
+        repeated=False,
+        outcome="stopped",
     )
     summary = _summary(
-        calls=1, applied_retries=0, resolved_retries=0, stopped=1, usage=None,
+        calls=1,
+        applied_retries=0,
+        resolved_retries=0,
+        stopped=1,
+        usage=None,
     )
     _patch(monkeypatch, _evidence(calls=(call,), summary=summary))
 
@@ -187,36 +203,60 @@ def test_handoff_advice_slice_isolates_other_slices(monkeypatch) -> None:
 
 
 def test_all_slice_includes_handoff_advice(monkeypatch) -> None:
-    from sdk import ErrorsAndHalt, PlanSummary, VerificationTimelineProjection
+    from sdk import ErrorsAndHalt, PlanSummary
+    from sdk.verification_timeline import VerificationTimelineProjection
 
     import orcho_mcp.inspection.evidence as ev
 
     _patch(monkeypatch, _evidence())
     # Stub every other SDK seam so slice="all" does not touch a real run.
     monkeypatch.setattr(
-        ev, "_sdk_get_verification_timeline",
+        ev,
+        "_sdk_get_verification_timeline",
         lambda *, run_id, **_: VerificationTimelineProjection(
-            run_id="rid", project="/proj", has_contract=False,
+            schema_version="1",
+            run_id="rid",
+            project="/proj",
         ),
     )
-    monkeypatch.setattr(ev, "_sdk_get_plan_summary", lambda *a, **k: PlanSummary(
-        source="plan", short_summary="", planning_context="",
-        subtask_count=0, has_contract=False, goal="",
-        acceptance_criteria=(), owned_files=(), commands_to_run=(),
-        risks=(), review_focus=(),
-    ))
+    monkeypatch.setattr(
+        ev,
+        "_sdk_get_plan_summary",
+        lambda *a, **k: PlanSummary(
+            source="plan",
+            short_summary="",
+            planning_context="",
+            subtask_count=0,
+            has_contract=False,
+            goal="",
+            acceptance_criteria=(),
+            owned_files=(),
+            commands_to_run=(),
+            risks=(),
+            review_focus=(),
+        ),
+    )
     monkeypatch.setattr(ev, "_sdk_list_findings", lambda *a, **k: [])
     monkeypatch.setattr(ev, "_sdk_list_evidence_commands", lambda *a, **k: [])
     monkeypatch.setattr(ev, "_sdk_list_evidence_artifacts", lambda *a, **k: [])
-    monkeypatch.setattr(ev, "_sdk_get_errors_halt", lambda *a, **k: ErrorsAndHalt(
-        status="done", errors=(), halt_reason=None, halted_at=None,
-        error_summary=None,
-    ))
+    monkeypatch.setattr(
+        ev,
+        "_sdk_get_errors_halt",
+        lambda *a, **k: ErrorsAndHalt(
+            status="done",
+            errors=(),
+            halt_reason=None,
+            halted_at=None,
+            error_summary=None,
+        ),
+    )
     monkeypatch.setattr(ev, "_sdk_list_sub_runs", lambda *a, **k: [])
     monkeypatch.setattr(ev, "_sdk_list_subtask_receipts", lambda *a, **k: [])
     monkeypatch.setattr(ev, "_read_verification_receipts", lambda run_dir: [])
     monkeypatch.setattr(
-        ev, "find_run_dir", lambda run_id: __import__("pathlib").Path("/tmp"),
+        ev,
+        "find_run_dir",
+        lambda run_id: __import__("pathlib").Path("/tmp"),
     )
 
     result = inspect_run_evidence("rid", slice="all")

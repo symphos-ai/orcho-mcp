@@ -5,6 +5,20 @@ Orcho MCP is a stdio server. A client must know two things:
 1. Which command starts the server.
 2. Which workspace that server owns.
 
+## Install first
+
+Any of the three install paths provides the `orcho-mcp` binary:
+
+```bash
+pipx install orcho          # recommended: CLI + MCP server together
+pip install orcho-mcp      # just the MCP server, managed environments
+docker pull ghcr.io/symphos-ai/orcho   # containerized CLI + server
+```
+
+The umbrella `orcho` package includes the MCP server by default. The
+user-facing documentation portal is <https://docs.orcho.dev/> — see its MCP
+section for the operating model around these tools.
+
 Start by creating or choosing a workspace:
 
 ```bash
@@ -44,6 +58,40 @@ command -v orcho
 command -v orcho-mcp
 "$ORCHO_MCP_COMMAND" --version
 ```
+
+## Docker server command
+
+If you use the container image instead of a native install, the MCP command is
+`docker` and the server command becomes its argument list. Mount the workspace
+parent and bind the MCP server to the workspace inside the container:
+
+```bash
+docker run --rm -i \
+  -v "$HOME/www/my-workspace:/workspace" \
+  -v "$HOME/.orcho-auth:/agent-auth:ro" \
+  -e ORCHO_WORKSPACE=/workspace/workspace-orchestrator \
+  ghcr.io/symphos-ai/orcho \
+  orcho-mcp
+```
+
+For JSON-based clients, use the same shape:
+
+```json
+{
+  "command": "docker",
+  "args": [
+    "run", "--rm", "-i",
+    "-v", "/Users/me/www/my-workspace:/workspace",
+    "-v", "/Users/me/.orcho-auth:/agent-auth:ro",
+    "-e", "ORCHO_WORKSPACE=/workspace/workspace-orchestrator",
+    "ghcr.io/symphos-ai/orcho",
+    "orcho-mcp"
+  ]
+}
+```
+
+For terminal registration commands, put the `docker run ... orcho-mcp` command
+after the final `--` instead of `"$ORCHO_MCP_COMMAND"`.
 
 The workspace path used below is:
 
@@ -89,6 +137,27 @@ claude mcp add orcho-my-workspace \
 ```
 
 Restart the Claude Code session after changing the server.
+
+## Cursor
+
+Cursor reads `~/.cursor/mcp.json` (global) or `.cursor/mcp.json` in the
+project. Add the same stdio entry:
+
+```json
+{
+  "mcpServers": {
+    "orcho-my-workspace": {
+      "command": "/abs/path/to/orcho-mcp",
+      "env": {
+        "ORCHO_WORKSPACE": "/abs/path/to/my-workspace/workspace-orchestrator"
+      }
+    }
+  }
+}
+```
+
+Reload the window (or toggle the server in Cursor's MCP settings) after
+changing the entry.
 
 ## Gemini CLI
 
@@ -157,22 +226,30 @@ Restart Antigravity after changing `mcp.json`.
 
 ## Verify from the client
 
-After restart, the client should expose these Orcho tools:
+After restart, the client should expose the Orcho tool catalog. At minimum
+check for this core set:
 
 ```text
 orcho_workspace_info
 orcho_run_start
-orcho_run_status
+orcho_run_status           # what is happening / what should I do next?
 orcho_run_watch            # long-poll; until=next_event|phase_change|subtask|handoff_or_terminal|terminal
 orcho_run_events_tail
 orcho_run_events_summary
-orcho_run_evidence         # slices incl. "receipts" (per-subtask delivery + attestation)
-orcho_run_diff
+orcho_run_evidence         # what happened / what proves it?
+orcho_run_diff             # what changed?
 orcho_phase_handoff_decide
 orcho_run_resume
-orcho_run_metrics
+orcho_run_metrics          # how much did it consume?
 orcho_run_history
 ```
+
+This is a subset. The full catalog also covers run cancel/diagnose/live
+status, the delivery gate (`orcho_delivery_gate` / `orcho_delivery_decide`),
+the handoff advisor, plan validation, profiles/skills/prompts/workflows
+listings, and the workspace decision inbox — see
+[run_lifecycle.md](run_lifecycle.md) for semantics and `docs/mcp_schema.json`
+for the authoritative wire schema.
 
 Call `orcho_workspace_info` first. It should report the workspace you
 configured. If it reports another workspace, the client is launching a

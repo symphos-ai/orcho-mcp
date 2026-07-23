@@ -12,8 +12,10 @@ Why subprocess (not asyncio task in the MCP server):
     and tangle stdout (which MCP stdio transport reserves for protocol
     frames).
   - Subprocess gives us a real PID, hard cancel via signal, and crash
-    isolation. Each run is one Popen, in its own process group
-    (``start_new_session=True``) so ``os.killpg`` reaches the whole tree.
+    isolation. Each run is one detached process in its own process group
+    (a new session) so a group signal reaches the whole tree. The detached
+    launch and signal delivery are delegated to ``sdk.run_control.launch``
+    (``launch_run`` / ``resume_run`` / ``cancel_run``).
 
 State:
   In-memory ``dict[run_id → RunHandle]`` for runs spawned by *this*

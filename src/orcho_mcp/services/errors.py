@@ -15,6 +15,7 @@ Two surfaces:
   * ``RunNotFound``            → ``RunNotFoundError("run not found: <run_id>")``
   * ``NoWorkspace``            → ``WorkspaceNotResolvedError(str(e))``
   * ``InvalidPhaseHandoffState`` → ``InvalidPlanError(str(e))``
+  * ``CrossExecutionGraphInvalid`` → ``InvalidPlanError(str(e))``
   * ``ValueError``             → ``InvalidPlanError(str(e))``
 
   Wrap only the SDK call itself, never the post-success domain checks
@@ -33,10 +34,12 @@ Two surfaces:
 """
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 
 from sdk import (
+    CrossExecutionGraphInvalid as _SDKCrossExecutionGraphInvalid,
+    EvidenceInvalid as _SDKEvidenceInvalid,
     InvalidPhaseHandoffState as _SDKInvalidPhaseHandoffState,
     NoWorkspace as _SDKNoWorkspace,
     RunNotFound as _SDKRunNotFound,
@@ -72,11 +75,29 @@ def map_sdk_errors(run_id: str | None = None) -> Iterator[None]:
         # conflict). Surfaced as InvalidPlanError so clients distinguish
         # missing-run from bad-request.
         raise InvalidPlanError(str(e)) from e
+    except _SDKCrossExecutionGraphInvalid as e:
+        # A graph artifact that exists but cannot be decoded/validated is a
+        # bad durable plan contract, never optional status enrichment.
+        raise InvalidPlanError(str(e)) from e
     except ValueError as e:
         # SDK-side input validation (bad action / severity / phase,
         # malformed id, feedback-required-without-feedback, …) — same
         # bad-request bucket as the contract-mismatch case above.
         raise InvalidPlanError(str(e)) from e
+
+
+def read_optional_evidence[T](reader: Callable[[], T]) -> T | None:
+    """Return one evidence-derived enrichment, or ``None`` when unavailable.
+
+    High-frequency status reads must not fail because an optional evidence
+    projection cannot be composed. Explicit evidence tools still surface the
+    original typed SDK error; only callers that deliberately use this helper
+    opt into absence semantics.
+    """
+    try:
+        return reader()
+    except _SDKEvidenceInvalid:
+        return None
 
 
 @contextmanager
@@ -101,4 +122,4 @@ def map_command_errors() -> Iterator[None]:
         raise PipelineSpawnError(str(e)) from e
 
 
-__all__ = ["map_command_errors", "map_sdk_errors"]
+__all__ = ["map_command_errors", "map_sdk_errors", "read_optional_evidence"]

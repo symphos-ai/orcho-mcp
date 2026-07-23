@@ -5,9 +5,9 @@ typed bag every supervisor mixin shares state through.
 """
 from __future__ import annotations
 
-import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
+from subprocess import Popen
 
 
 @dataclass
@@ -41,7 +41,7 @@ class RunHandle:
     halt_reason: str | None = None
     mock: bool = False
     output_mode: str = "summary"
-    popen: subprocess.Popen | None = field(default=None, repr=False)
+    popen: Popen | None = field(default=None, repr=False)
 
 
 __all__ = ["RunHandle"]

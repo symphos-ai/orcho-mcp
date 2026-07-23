@@ -14,18 +14,27 @@ path through the core SDK event surface.
 """
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from sdk import (
     get_run_metrics as _sdk_get_run_metrics,
+    load_cross_execution_graph as _sdk_load_cross_execution_graph,
+    load_cross_execution_graph_state as _sdk_load_cross_execution_graph_state,
     load_status as _sdk_load_status,
 )
 
 from orcho_mcp.errors import RunNotFoundError, WorkspaceNotResolvedError
 from orcho_mcp.observe.observation import workspace_dir_or_none
+from orcho_mcp.observe.summary import build_latest_run_events_summary
 from orcho_mcp.schemas import (
     ArtefactRefRecord,
     AutoDetectProjection,
+    CrossExecutionGraphCompileIdentityRecord,
+    CrossExecutionGraphExecutorPolicyRecord,
+    CrossExecutionGraphNodeRecord,
+    CrossExecutionGraphOperationRecord,
+    CrossExecutionGraphRecord,
     EventRecord,
     EventsTailResult,
     FollowupLineage,
@@ -45,16 +54,89 @@ from orcho_mcp.services.run_lineage import (
     RecoveryLineageProjection,
     project_recovery_lineage,
 )
+from orcho_mcp.services.run_lookup import find_run_dir
 from orcho_mcp.services.run_projection import (
     build_provider_pressure,
     merged_halt_reason_from_meta,
     merged_status_from_meta,
     project_auto_detect,
     project_followup_lineage,
+    project_pending_handoff,
     project_provider_pressure,
     project_worktree_continuity,
 )
 from orcho_mcp.workspace_state import read_workspace_state
+
+
+def _enum_value(value: object) -> str:
+    """Return a public SDK enum's stable wire value without importing core types."""
+    return str(getattr(value, "value", value))
+
+
+def _project_cross_execution_graph(
+    run_id: str,
+    run_dir: Path,
+) -> CrossExecutionGraphRecord | None:
+    """Join immutable graph structure to SDK-derived state without reconstruction.
+
+    The artifact-presence check deliberately does not open or decode the file:
+    no graph means a normal mono/pre-graph status, while an existing malformed
+    artifact is delegated to the SDK and mapped as ``InvalidPlanError``.
+    """
+    if not (run_dir / "cross_execution_graph.json").exists():
+        return None
+
+    with map_sdk_errors(run_id):
+        graph = _sdk_load_cross_execution_graph(
+            run_id, runs_dir=run_dir.parent, cwd=None,
+        )
+        state = _sdk_load_cross_execution_graph_state(
+            run_id, runs_dir=run_dir.parent, cwd=None,
+        )
+        graph_identities = tuple(node.identity for node in graph.nodes)
+        state_identities = tuple(node.identity for node in state.nodes)
+        if graph_identities != state_identities:
+            raise ValueError(
+                "cross execution graph structure/state identity mismatch"
+            )
+
+        return CrossExecutionGraphRecord(
+            compile_identity=CrossExecutionGraphCompileIdentityRecord(
+                schema_version=graph.compile_identity.schema_version,
+                fingerprint=graph.compile_identity.fingerprint,
+            ),
+            nodes=[
+                CrossExecutionGraphNodeRecord(
+                    identity=node.identity,
+                    kind=_enum_value(node.kind),
+                    dependencies=list(node.dependencies),
+                    owner=_enum_value(node.owner),
+                    executor=CrossExecutionGraphExecutorPolicyRecord(
+                        executor=_enum_value(node.executor.executor),
+                        handler=node.executor.handler,
+                        enabled=node.executor.enabled,
+                        run=node.executor.run,
+                        on_skip=node.executor.on_skip,
+                        mode=node.executor.mode,
+                    ),
+                    required=node.required,
+                    status=_enum_value(node_state.status),
+                    reason=_enum_value(node_state.reason),
+                    alias=node_state.alias,
+                    operations=[
+                        CrossExecutionGraphOperationRecord(
+                            alias=operation.alias,
+                            executor=_enum_value(operation.executor),
+                            phase=operation.phase,
+                            hook=operation.hook,
+                            command=list(operation.command),
+                        )
+                        for operation in node_state.operations
+                    ],
+                )
+                for node, node_state in zip(graph.nodes, state.nodes, strict=True)
+            ],
+        )
 
 
 def _recovery_recommendation(
@@ -102,11 +184,16 @@ def get_run_status(
     :func:`orcho_mcp.services.meta_summary.summarize_run_meta`.
     """
     with map_sdk_errors(run_id):
-        s = _sdk_load_status(run_id, cwd=None)
+        run_dir = find_run_dir(run_id)
+        s = _sdk_load_status(run_id, runs_dir=run_dir.parent, cwd=None)
 
     # Wire fidelity: MCP returns ``None`` (not ``{}``) when metrics.json
     # is missing. SDK normalises missing files to ``{}``.
     metrics = s.raw_metrics if s.raw_metrics else None
+
+    cross_execution_graph = _project_cross_execution_graph(
+        s.run_ref.run_id, s.run_ref.run_dir,
+    )
 
     meta = dict(s.raw_meta or {})
     merged = merged_status_from_meta(meta, s.run_ref.run_dir)
@@ -208,6 +295,17 @@ def get_run_status(
         project_provider_pressure(s.run_ref.run_id),
     )
 
+    # Live subtask coordinate: reuse the SAME bounded observe walk that backs
+    # ``orcho_run_live_status`` (``build_latest_run_events_summary`` → the
+    # latest ``subtask.start`` / ``subtask.end`` boundary) so status and
+    # live_status report an identical ``current_subtask`` for a run. No new
+    # subtask derivation and no core-SDK field; the summary read is the same
+    # bounded event walk live_status already performs on the hot poll.
+    # ``None`` for a terminal run or a phase with no in-flight subtask.
+    current_subtask = build_latest_run_events_summary(
+        s.run_ref.run_id,
+    ).current_subtask
+
     # Summary-only projection of meta for the wire. The lineage /
     # worktree projections above already consumed the small top-level
     # blocks they need from the full ``meta``; this trims the heavy phase
@@ -218,12 +316,20 @@ def get_run_status(
         meta, include=frozenset(include or ()),
     )
 
+    pending = project_pending_handoff(s.run_ref.run_id)
+    status_actions = [a.to_dict() for a in s.next_actions]
+    if pending.is_pending_handoff:
+        if pending.decision_state == "recorded":
+            status_actions = [{"intent": "Apply the recorded phase-handoff decision.", "tool": "orcho_run_resume", "args": {"run_id": s.run_ref.run_id}, "optional": False, "kind": "ready_call"}]
+        elif pending.decision_state == "degraded":
+            status_actions = [{"intent": "Inspect the decision-read failure before attempting a mutation.", "tool": "orcho_run_diagnose", "args": {"run_id": s.run_ref.run_id}, "optional": False, "kind": "ready_call"}]
     return RunStatus(
         run_id=s.run_ref.run_id,
         run_dir=str(s.run_ref.run_dir),
         meta=meta_wire,
         metrics=metrics,
         sub_runs=sorted(sp.name for sp in s.sub_projects),
+        cross_execution_graph=cross_execution_graph,
         lineage=lineage,
         worktree_continuity=worktree_continuity,
         auto_detect=auto_detect,
@@ -233,7 +339,9 @@ def get_run_status(
         # RunStatus (see sdk.status.load_status). Pure pass-through —
         # no transformation, no enrichment — so the suggestions stay
         # consistent across consumers (CLI, MCP, future Web UI).
-        next_actions=[a.to_dict() for a in s.next_actions],
+        next_actions=status_actions,
+        decision_state=pending.decision_state if pending.is_pending_handoff else None,
+        decision_degraded_reason=pending.decision_degraded_reason if pending.is_pending_handoff else None,
         # SDK enumerates readable artefacts for a resolved run. Pure
         # pass-through to the wire model — ``kind`` narrows from SDK
         # ``str`` to wire ``Literal[...]`` via Pydantic validation,
@@ -249,6 +357,7 @@ def get_run_status(
             for a in s.artefacts
         ],
         provider_pressure=provider_pressure,
+        current_subtask=current_subtask,
     )
 
 
@@ -263,7 +372,8 @@ def get_run_metrics(run_id: str) -> RunMetrics:
     natural ``get_run_metrics`` name without shadowing.
     """
     with map_sdk_errors(run_id):
-        m = _sdk_get_run_metrics(run_id, cwd=None)
+        run_dir = find_run_dir(run_id)
+        m = _sdk_get_run_metrics(run_id, runs_dir=run_dir.parent, cwd=None)
     if not m.raw:
         raise RunNotFoundError(f"no metrics.json for run {run_id}")
     return RunMetrics(run_id=run_id, metrics=m.raw)

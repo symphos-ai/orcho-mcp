@@ -1,9 +1,15 @@
 """Project-local Orcho configuration for orcho-mcp development.
 
 The verification contract is intentionally a fine-tuning layer, not an
-onboarding requirement. It pins the recurring MCP/source-under-test invariant:
-MCP checks must run the current MCP checkout while importing the workspace
-orcho-core dependency, not a stale stable install.
+onboarding requirement. The MCP/source-under-test invariant — MCP checks run the
+current MCP checkout while importing the workspace orcho-core under review, not a
+stale install — is enforced by ``tests/_core_source.pin_core_source`` (a
+selective import finder loaded from conftest). The ``env-provenance`` gate calls
+that pin and verifies the pinned ``pipeline`` resolves to a real dev checkout,
+not an installed site-packages copy, so a missing/misconfigured core checkout is
+caught rather than silently validated against a stale install. It must NOT
+assert a *bare* ``import pipeline`` (which runs outside the pin and resolves the
+installed copy) — that only false-fails a green run.
 """
 
 PLUGIN = {
@@ -36,10 +42,6 @@ PLUGIN = {
             "assertions": [
                 {"file_exists": "{project}/.venv/bin/python"},
                 {
-                    "import": "pipeline",
-                    "path_equals": "{dependency:orcho-core}/pipeline/__init__.py",
-                },
-                {
                     "import": "orcho_mcp",
                     "path_under": "{checkout}/src/orcho_mcp",
                 },
@@ -50,7 +52,7 @@ PLUGIN = {
     },
     "verification": {
         "default_env": "mcp-local-core",
-        "delivery_policy": "warn",
+        "delivery_policy": "require",
         "required": [
             "env-provenance",
             "lint",
@@ -63,9 +65,16 @@ PLUGIN = {
                     "python",
                     "-c",
                     (
+                        "from tests._core_source import pin_core_source; "
+                        "pin_core_source(); "
                         "import pipeline, orcho_mcp; "
-                        "print('pipeline', pipeline.__file__); "
-                        "print('orcho_mcp', orcho_mcp.__file__)"
+                        "p = pipeline.__file__; "
+                        "assert 'site-packages' not in p and 'dist-packages' "
+                        "not in p, ('orcho-core resolved to an installed copy, "
+                        "not the dev checkout under review "
+                        "(pin_core_source found no checkout): ' + p); "
+                        "print('pipeline (pinned):', p); "
+                        "print('orcho_mcp:', orcho_mcp.__file__)"
                     ),
                 ],
             },
@@ -105,14 +114,22 @@ PLUGIN = {
             },
         },
         "gate_sets": {
-            "baseline": {
-                "commands": ["env-provenance", "lint"],
-                "default_policy": "warn",
+            "provenance": {
+                "commands": ["env-provenance"],
+                "default_policy": "require",
+                "default_action": "handoff",
+                "default_cheap": True,
+            },
+            "hygiene": {
+                "commands": ["lint"],
+                "default_policy": "require",
+                "default_action": "repair_loop",
                 "default_cheap": True,
             },
             "mcp-runtime": {
-                "commands": ["env-provenance", "lint", "run-control-unit"],
-                "default_policy": "warn",
+                "commands": ["run-control-unit"],
+                "default_policy": "require",
+                "default_action": "repair_loop",
                 "default_cheap": False,
             },
             "mcp-smoke": {
@@ -122,7 +139,7 @@ PLUGIN = {
             },
         },
         "selection": [
-            {"always": ["baseline"]},
+            {"always": ["provenance", "hygiene"]},
             {
                 "paths": [
                     "src/orcho_mcp/**",
@@ -143,27 +160,16 @@ PLUGIN = {
         ],
         "schedule": [
             {
-                "before_phase": "implement",
-                "gate_sets": ["baseline"],
-                "policy": "warn",
-                "action": "continue_warn",
+                "after_phase": "implement",
+                "gate_sets": ["provenance"],
+                "policy": "require",
+                "action": "handoff",
             },
             {
                 "after_phase": "implement",
-                "gate_sets": ["baseline", "mcp-runtime", "mcp-smoke"],
+                "gate_sets": ["hygiene", "mcp-runtime", "mcp-smoke"],
                 "policy": "require",
                 "action": "repair_loop",
-            },
-            {
-                "before_phase": "final_acceptance",
-                "gate_sets": ["baseline", "mcp-runtime"],
-                "policy": "warn",
-            },
-            {
-                "before_delivery": True,
-                "gate_sets": ["baseline", "mcp-runtime", "mcp-smoke"],
-                "policy": "warn",
-                "action": "handoff",
             },
         ],
     },

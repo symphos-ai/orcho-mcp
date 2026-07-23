@@ -9,6 +9,7 @@ recommendations, and the SDK→MCP error mapping. L2: the tool is registered.
 """
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -27,6 +28,14 @@ from orcho_mcp.run_control.advice import request_advice
 from orcho_mcp.schemas import HandoffAdviceResult
 
 _SEAM = "orcho_mcp.run_control.advice._sdk_request_handoff_advice"
+
+
+@pytest.fixture(autouse=True)
+def _resolved_run_dir(monkeypatch):
+    monkeypatch.setattr(
+        "orcho_mcp.run_control.advice.find_run_dir",
+        lambda run_id: Path("/runs") / run_id,
+    )
 
 
 def _safety(**kw):

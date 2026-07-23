@@ -27,6 +27,7 @@ def _sdk_result(**overrides):
         "halt_reason": None,
         "artifact_paths": ("/runs/run1/commit_decisions/run1.json",),
         "commit_sha": "abc123",
+        "published_commit_sha": None,
         "blocker": None,
         "followup_run_id": None,
     }
@@ -54,6 +55,7 @@ def test_decide_delivery_calls_sdk_with_cwd_none(
     assert result.accepted is True
     assert result.terminal_outcome == "done"
     assert result.artifact_paths == ["/runs/run1/commit_decisions/run1.json"]
+    assert result.published_commit_sha is None
     assert calls == [
         {
             "args": ("run1", "approve"),
@@ -111,3 +113,20 @@ def test_decide_delivery_preserves_typed_refusal(
     assert result.status == "not_applicable"
     assert result.terminal_outcome == "halted"
     assert result.blocker == "no_pending_delivery_gate"
+
+
+def test_decide_delivery_projects_published_commit_sha(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "orcho_mcp.run_control.delivery._sdk_decide_delivery",
+        lambda *args, **kwargs: _sdk_result(
+            commit_sha=None,
+            published_commit_sha="feed123",
+        ),
+    )
+
+    result = decide_delivery("run1", "approve")
+
+    assert result.commit_sha is None
+    assert result.published_commit_sha == "feed123"

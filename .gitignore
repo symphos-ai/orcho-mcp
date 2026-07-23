@@ -10,3 +10,4 @@ build/
 dist/
 uv.lock
 .orcho/.orcho-tasks/
+.orcho/.task-files/

@@ -149,8 +149,9 @@ def test_sdk_sentinel_symbols_present_in_approved_surface() -> None:
     union check is what matters.
     """
     expected = {
-        "find_run", "find_runs_dir", "get_run_metrics",
-        "read_run_events", "list_history", "load_meta", "load_status",
+    "find_run", "find_runs_dir", "get_run_metrics",
+        "read_run_events", "list_history", "load_cross_execution_graph",
+        "load_cross_execution_graph_state", "load_meta", "load_status",
     }
     seen: set[str] = set()
     for path in APPROVED_SDK_SENTINEL_SURFACE:
@@ -432,6 +433,15 @@ SDK_ERROR_TYPE_ALLOWLIST: frozenset[str] = frozenset({
     "services/run_lookup.py",    # find_run_dir / runs_dir_or_raise
     "services/run_events.py",    # read_run_events tail
     "services/read_queries.py",  # get_workspace_info soft NoWorkspace fallback
+    # Supervisor operation modules now delegate the detached launch /
+    # respawn / signal mechanics to ``sdk.run_control.launch`` and
+    # translate its typed errors (NoWorkspace / RunNotFound) into the MCP
+    # hierarchy at their own delegation boundary — a run-control primitive
+    # that resolves the run and maps at the seam, exactly like the read
+    # sources above.
+    "supervisor/spawn.py",       # launch_run: NoWorkspace → WorkspaceNotResolved
+    "supervisor/resume.py",      # resume_run: RunNotFound → RunNotFoundError
+    "supervisor/cancel.py",      # cancel_run: RunNotFound → RunNotFoundError
 })
 
 

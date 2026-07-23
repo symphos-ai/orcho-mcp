@@ -323,6 +323,43 @@ def supervisor_state(
     return out
 
 
+def launch_state(
+    *,
+    run_id: str,
+    pid: int = 999_999,
+    pgid: int | None = None,
+    status: str = "running",
+    project_dir: str = "/tmp/project",
+    started_at: str = "2026-01-01T00:00:00.000Z",
+    command: list[str] | None = None,
+    **extra: Any,
+) -> dict[str, Any]:
+    """Build a neutral ``run_supervisor.json`` dict (the SDK launch state).
+
+    Companion to :func:`supervisor_state`. ``launch_run`` / ``resume_run``
+    write this file at spawn; ``cancel_run`` reads pid / pgid back from it.
+    Tests that drive the *owned* (already-consistent) cancel path — where
+    both state files exist and no materialisation bridge is needed — write
+    this alongside ``mcp_supervisor.json``. Orphan-bridge tests deliberately
+    omit it so the cancel path materialises it from the MCP delta.
+
+    Mirrors ``sdk.run_control.launch.write_launch_state``'s payload shape.
+    """
+    out: dict[str, Any] = {
+        "run_id": run_id,
+        "pid": pid,
+        "pgid": pgid if pgid is not None else pid,
+        "command": command if command is not None else ["x"],
+        "project_dir": project_dir,
+        "started_at": started_at,
+        "status": status,
+        "mock": False,
+        "output_mode": "summary",
+    }
+    out.update(extra)
+    return out
+
+
 def commit_delivery(
     *,
     status: str = "pending",
@@ -405,6 +442,7 @@ __all__ = [
     "event",
     "fake_workspace",
     "in_workspace_project",
+    "launch_state",
     "meta",
     "metrics",
     "supervisor_state",

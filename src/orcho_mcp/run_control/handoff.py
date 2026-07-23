@@ -20,11 +20,14 @@ from orcho_mcp.errors import (
     InspectOnlyControlError,
     InvalidPlanError,
     OrchoMCPError,
+    RunNotFoundError,
+    WorkspaceNotResolvedError,
 )
 from orcho_mcp.run_control.lifecycle import build_inspect_only_control_result
 from orcho_mcp.schemas import PhaseHandoffDecideResult
 from orcho_mcp.services.errors import map_sdk_errors
 from orcho_mcp.services.run_control_boundary import project_run_control
+from orcho_mcp.services.run_lookup import find_run_dir
 
 # Actions that require a non-empty ``feedback`` string. ``retry_feedback``
 # injects it as the critique for one extra plan round; ``continue_with_waiver``
@@ -105,6 +108,22 @@ def _raise_if_inspect_only(run_id: str) -> None:
         )
 
 
+def _resolved_runs_dir_or_none(run_id: str):
+    """Resolve the SDK workspace anchor when the parent run is available.
+
+    Normal MCP operation always resolves the parent once and passes its
+    ``runs_dir`` explicitly to the SDK.  If the parent cannot be resolved,
+    retain the established direct-SDK error path: it is the SDK call that
+    supplies the public ``RunNotFound`` / ``NoWorkspace`` taxonomy.  This is
+    intentionally limited to resolution failures; a resolved run never falls
+    back to cwd-based lookup.
+    """
+    try:
+        return find_run_dir(run_id).parent
+    except (RunNotFoundError, WorkspaceNotResolvedError):
+        return None
+
+
 class _FeedbackInput(BaseModel):
     """Native form-elicitation payload for a feedback-gated decision."""
 
@@ -159,13 +178,19 @@ def decide_phase_handoff(
     _require_feedback_or_raise(action, feedback)
 
     with map_sdk_errors(run_id):
+        runs_dir = _resolved_runs_dir_or_none(run_id)
+        kwargs = {
+            "feedback": feedback,
+            "note": note,
+            "cwd": None,
+        }
+        if runs_dir is not None:
+            kwargs["runs_dir"] = runs_dir
         result = _sdk_phase_handoff_decide(
             run_id,
             handoff_id,
             action,
-            feedback=feedback,
-            note=note,
-            cwd=None,
+            **kwargs,
         )
 
     return PhaseHandoffDecideResult(

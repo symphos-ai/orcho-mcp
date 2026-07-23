@@ -7,4 +7,9 @@ notifications, and workflow helpers.
 
 Versioning follows the public Orcho release tags.
 """
-__version__ = "0.1.0"
+from importlib.metadata import PackageNotFoundError, version
+
+try:
+    __version__ = version("orcho-mcp")
+except PackageNotFoundError:
+    __version__ = "0+unknown"

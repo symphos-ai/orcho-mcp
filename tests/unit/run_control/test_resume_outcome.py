@@ -10,6 +10,7 @@ returns a success-shaped :class:`RunResumeResult` with a real ``pid``.
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -81,7 +82,6 @@ async def test_terminal_run_rejected_without_spawn(
 
     result = await resume_run("20260101_000001")
 
-    assert isinstance(result, ResumeBlockedResult)
     assert result.resume_outcome == "rejected_terminal"
     assert result.run_id == "20260101_000001"
     assert result.recommended_run_id is None
@@ -118,7 +118,6 @@ async def test_supervisor_terminal_stale_meta_rejected_without_spawn(
 
     result = await resume_run("20260101_000001")
 
-    assert isinstance(result, ResumeBlockedResult)
     assert result.resume_outcome == "rejected_terminal"
     assert not hasattr(result, "pid")
     assert all(na.tool != "orcho_run_resume" for na in result.next_actions)
@@ -262,6 +261,43 @@ async def test_non_terminal_halted_still_applies(
 
 
 @pytest.mark.asyncio
+async def test_core_preflight_blocker_prevents_override_and_spawn(monkeypatch):
+    diagnosis = SimpleNamespace(
+        control="mcp_controllable", control_reason=None, status="halted",
+        condition="halted", reason="terminal ledger", decision_artifact_exists=False,
+    )
+    monkeypatch.setattr(
+        "orcho_mcp.run_control.lifecycle._run_diagnosis_or_none",
+        lambda _run_id: diagnosis,
+    )
+    monkeypatch.setattr(
+        "orcho_mcp.services.continuation.resolve_core_continuation",
+        lambda _run_id: None,
+    )
+    monkeypatch.setattr(
+        "orcho_mcp.services.continuation.preflight_core_continuation",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            resolution=SimpleNamespace(
+                blocker="same-run resume is blocked: parent has a finalized scheduled-gate ledger",
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        "orcho_mcp.run_control.lifecycle._persist_runtime_override",
+        lambda *_args: pytest.fail("blocked preflight must not persist override"),
+    )
+    monkeypatch.setattr(
+        "orcho_mcp.supervisor.get_supervisor",
+        lambda: pytest.fail("blocked preflight must not spawn"),
+    )
+
+    result = await resume_run("parent")
+
+    assert result.resume_outcome == "preflight_blocked"
+    assert not hasattr(result, "pid")
+
+
+@pytest.mark.asyncio
 async def test_final_acceptance_rejected_terminal_without_spawn(
     fake_workspace, tmp_path, monkeypatch,
 ):
@@ -286,14 +322,14 @@ async def test_final_acceptance_rejected_terminal_without_spawn(
 
     result = await resume_run("20260101_000005")
 
-    assert isinstance(result, ResumeBlockedResult)
-    assert result.resume_outcome == "rejected_terminal"
+    assert result.resume_outcome == "blocked"
+    assert result.blocked is True
     assert result.run_id == "20260101_000005"
     # No spawn fields on this shape.
     assert not hasattr(result, "pid")
-    # Inspection-only follow-ups; never a ready resume action.
-    assert result.next_actions
-    assert all(na.tool != "orcho_run_resume" for na in result.next_actions)
+    # A blocked retained-change correction intentionally offers no impossible
+    # follow-up action.
+    assert not hasattr(result, "next_actions")
     # The supervisor was never asked to resume the rejected terminal run.
     assert fake.resume_calls == []
 

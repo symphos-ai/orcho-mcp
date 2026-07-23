@@ -11,27 +11,92 @@
 
 [Model Context Protocol](https://modelcontextprotocol.io) server for Orcho.
 
-Exposes orcho's runtime to MCP-aware clients (Claude Code, Cursor, Zed, and other MCP-speaking tools) over stdio. Full async control loop — act, observe, decide, inspect — without raw log scraping.
+Exposes orcho's runtime to MCP-aware clients (Claude Code, Cursor, Zed, and
+other MCP-speaking tools) over stdio. It lets clients drive Orcho as a
+production harness and control plane for agentic software delivery: act,
+observe, decide, inspect, and resume without raw log scraping.
 
-> **Status:** ``v0.1.0`` public release line. Core control loop surfaces are available:
+📖 **Documentation:** [docs.orcho.dev](https://docs.orcho.dev)
+
+![An AI client driving Orcho over MCP: it starts a mock run with orcho_run_start, watches it to a terminal state with orcho_run_watch, pulls the record with orcho_run_evidence and orcho_run_diff, and returns a short verdict](https://raw.githubusercontent.com/symphos-ai/orcho-mcp/main/docs/assets/orcho-mcp-demo.gif)
+
+<sub>An AI client (here Claude Code) driving a run through this server —
+`orcho_run_start` → `orcho_run_watch` → `orcho_run_evidence` → verdict, all
+typed, no log scraping. Real session; the run is `mock=True`. Interactive
+version: [docs.orcho.dev](https://docs.orcho.dev/start/let-your-agent-drive/).</sub>
+
+> **Status:** public alpha. Core control-loop surfaces are available:
 >
 > - **Act**: ``orcho_run_start`` / ``orcho_run_resume`` / ``orcho_run_cancel`` with L4-test-pinned semantics (process-group signal handling, supervisor-owned restart-recovery, race-aware cancel).
-> - **Observe**: ``orcho_run_status`` / ``orcho_run_history`` / ``orcho_run_metrics`` / ``orcho_run_events_tail`` — read-only, polling-friendly.
-> - **Decide**: ``orcho_phase_handoff_decide`` — generic phase-handoff state transition for paused runs. The pipeline pauses with ``status=awaiting_phase_handoff`` when a phase's declared ``handoff`` policy fires; ``continue`` / ``retry_feedback`` / ``halt`` write a decision artifact (``halt`` flips ``meta.status`` to ``halted`` synchronously). Pure state transition; never spawns.
-> - **Inspect**: ``orcho_run_evidence`` — typed inspection slices (``plan`` / ``findings`` / ``commands`` / ``artifacts`` / ``errors`` / ``sub_runs`` / ``all``) with severity filter (P0..P3).
+> - **Observe**: ``orcho_run_status`` answers "What is happening / what should I do next?"; ``orcho_run_history`` and ``orcho_run_events_tail`` are read-only, polling-friendly context.
+> - **Route**: ``orcho_run_diagnose`` and ``orcho_workspace_pending_decisions`` classify the continuation subject and visible decision work.
+> - **Decision support**: ``orcho_handoff_advice`` / ``orcho_delivery_gate`` explain sanctioned choices without applying them.
+> - **Decide**: ``orcho_phase_handoff_decide`` resolves runtime-published phase-handoff actions; ``orcho_delivery_gate`` / ``orcho_delivery_decide`` expose and resolve post-release delivery or correction. Decision tools never invent actions and never spawn a pipeline process.
+> - **Inspect**: ``orcho_run_evidence`` answers "What happened / what proves it?"; ``orcho_run_diff`` answers "What changed?"
+> - **Measure**: ``orcho_run_metrics`` answers "How much did it consume?" with tokens, duration, phase breakdown, and cost-reference fields when available.
 >
 > Live progress: ``orcho_run_watch`` emits ordered ``notifications/progress`` when the MCP request carries a ``progressToken``. Clients that don't carry one poll ``orcho_run_status`` / ``orcho_run_events_tail`` against the same run state.
 
 ## Install
 
+Choose an install path:
+
+| Path | Use when | Command |
+| --- | --- | --- |
+| Native CLI with `pipx` | You want `orcho` and `orcho-mcp` available from the shell. | `pipx install orcho` |
+| Docker | You want the MCP server and agent CLIs isolated inside a container. | `docker pull ghcr.io/symphos-ai/orcho` |
+| Direct MCP dependency | You intentionally want only this package in a virtualenv, CI image, devcontainer, or custom image. | `python -m pip install orcho-mcp` |
+
+If `pipx` is missing, install it first. On macOS with Homebrew:
+
 ```bash
-pipx install 'orcho[mcp]'
+brew install pipx
+pipx ensurepath
+exec zsh -l
 ```
 
-For a project-managed Python environment:
+For Linux or Windows, use the
+[official pipx installation guide](https://pipx.pypa.io/stable/installation/).
+
+### Recommended CLI install
+
+Use the `orcho` distribution when you want both the Orcho commands and the MCP
+server available from your shell. Since `orcho` 0.1.1 the server ships by
+default — no extra needed. `pipx` keeps the command set isolated from the
+current project or Python environment.
 
 ```bash
-pip install orcho-mcp
+pipx install orcho
+orcho-mcp --help
+```
+
+Since `orcho` 0.1.1 this includes the MCP server by default. The `[mcp]` and
+`[all]` extras remain as no-op aliases.
+
+### Containerized MCP server
+
+Use Docker when an MCP client should start an isolated server over stdio:
+
+```bash
+docker run --rm -i \
+  -v /path/to/my-workspace:/workspace \
+  -v ~/.orcho-auth:/agent-auth:ro \
+  -e ORCHO_WORKSPACE=/workspace/workspace-orchestrator \
+  ghcr.io/symphos-ai/orcho \
+  orcho-mcp
+```
+
+Inside that server, projects live under `/workspace/<project-name>`. The
+[`orcho` Docker docs](https://github.com/symphos-ai/orcho/tree/main/docker)
+cover one-time credential bootstrap and custom project toolchains.
+
+### Direct MCP package install
+
+Use `pip` when you intentionally want `orcho-mcp` in the active virtual
+environment, CI image, devcontainer, or Docker image.
+
+```bash
+python -m pip install orcho-mcp
 ```
 
 This pulls `orcho-core` (the engine), the official `mcp` Python SDK, and the runtime pieces orcho-mcp depends on.
@@ -86,18 +151,42 @@ A static catalogue is also committed at [`docs/mcp_schema.json`](docs/mcp_schema
 
 ## Control loop
 
-The full contract — **starting**, **observing**, **resuming**, **cancelling**, **deciding** (QA gate), and **inspecting** runs through the MCP wire — lives in [`docs/run_lifecycle.md`](docs/run_lifecycle.md). Tool docstrings stay terse; that file is the long-form reference.
+The full contract — **starting**, **observing**, **resuming**, **cancelling**, **deciding**, and **inspecting** runs through the MCP wire — lives in [`docs/run_lifecycle.md`](docs/run_lifecycle.md). The complete multi-axis decision graph is documented in [`docs/architecture/control_state_machine.md`](docs/architecture/control_state_machine.md). Tool docstrings stay terse; those files are the long-form references.
 
 Tool naming is consistent: every run-lifecycle tool is `orcho_run_<verb>`. State-transition and inspection tools sit beside that group with their own names:
 
 | Group | Tools |
 |---|---|
 | **Act** | `orcho_run_start`, `orcho_run_resume`, `orcho_run_cancel` |
-| **Observe** | `orcho_run_status`, `orcho_run_history`, `orcho_run_metrics`, `orcho_run_events_tail` |
-| **Decide** | `orcho_phase_handoff_decide` |
+| **Observe** | `orcho_run_status`, `orcho_run_live_status`, `orcho_run_watch`, `orcho_run_events_summary`, `orcho_run_events_tail`, `orcho_run_history` |
+| **Route** | `orcho_run_diagnose`, `orcho_workspace_pending_decisions` |
+| **Decision support** | `orcho_handoff_advice`, `orcho_delivery_gate` |
+| **Decide** | `orcho_phase_handoff_decide`, `orcho_delivery_decide` |
 | **Inspect** | `orcho_run_evidence`, `orcho_run_diff` |
+| **Measure** | `orcho_run_metrics` |
+
+When choosing a read tool, start from the question:
+
+| Question | MCP tool |
+|---|---|
+| What is happening / what should I do next? | `orcho_run_status` |
+| What happened / what proves it? | `orcho_run_evidence` |
+| How much did it consume? | `orcho_run_metrics` |
+| What changed? | `orcho_run_diff` |
 
 For an end-to-end walkthrough of the full control loop with code, see [`docs/control_loop_walkthrough.md`](docs/control_loop_walkthrough.md).
+
+### Current public-alpha boundaries
+
+- `orcho_run_live_status` is a bounded mono-run card. Cross runs use the
+  broader status, event, evidence, and sub-run projections.
+- `orcho_workspace_pending_decisions` currently aggregates phase handoffs; it
+  is not a universal inbox for every delivery and cross-gate decision.
+- a CLI-started or otherwise foreign run can be fully inspected, but mutation
+  is refused as `inspect_only` when this MCP server does not own its supervisor
+  record.
+- core owns the lifecycle and allowed actions. The MCP layer projects that
+  state; it does not create a second state machine.
 
 ## Architecture
 
@@ -110,6 +199,9 @@ The post-v1 cross-MCP consumer roadmap (orcho-as-MCP-client — pipeline agents 
 
 For contributor-facing architecture and test guidance:
 
+- [`docs/architecture/control_state_machine.md`](docs/architecture/control_state_machine.md)
+  maps core lifecycle state, MCP projections, pending decisions, delivery,
+  continuation lineage, and the typed tool edge for each supported transition.
 - [`docs/architecture/mcp_boundaries.md`](docs/architecture/mcp_boundaries.md)
   describes the package boundaries enforced by the architecture tests.
 - [`docs/architecture/observation_delivery.md`](docs/architecture/observation_delivery.md)

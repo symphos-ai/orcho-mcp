@@ -16,11 +16,21 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from orcho_mcp.services.delivery_gate import project_delivery_gate
+from orcho_mcp.schemas.inspection import PrIntentRecord
+from orcho_mcp.services.delivery_gate import (
+    _extract_delivery_branch,
+    _extract_delivery_notices,
+    _extract_pr_url,
+    _extract_published_commit_sha,
+    _map_pr_intent,
+    project_delivery_gate,
+)
+from orcho_mcp.tools import orcho_run_diagnose
 from tests.fixtures.mcp_workspace import (
     commit_decision,
     commit_delivery,
     diff_patch_text,
+    init_git_repo,
     meta,
     write_run,
 )
@@ -174,18 +184,12 @@ def test_fix_requested_status_is_correction(fake_workspace):
     # repeat joins the blocked shipping/skip set and is never offered.
     assert _action_names(proj) == ["halt"]
     assert proj.blocked_actions == ["fix", "approve", "apply", "skip"]
-    # The gate surfaces a typed from_run_plan follow-up action (ready_call),
-    # ahead of the residual halt decide call.
-    starts = [na for na in proj.next_actions if na.tool == "orcho_run_start"]
-    assert len(starts) == 1
-    assert starts[0].kind == "ready_call"
-    assert starts[0].args["from_run_plan"] == _RUN
-    # The retained diff path rides as typed, machine-readable ``context`` — never
-    # as a tool arg and never only in the (non-contractual) intent prose.
-    assert "action" not in starts[0].args
-    ctx = starts[0].context or {}
-    assert ctx.get("from_run_plan") == _RUN
-    assert str(ctx.get("diff_path", "")).endswith("diff.patch")
+    # A retained-change decision is core-owned. This fixture has no isolated
+    # retained worktree, so correction is typed as blocked rather than being
+    # promoted into a fresh from_run_plan child.
+    assert proj.continuation_subject == "retained_change"
+    assert proj.continuation_blocked is True
+    assert not [na for na in proj.next_actions if na.tool == "orcho_run_start"]
     # The residual halt decide call is still present.
     assert any(
         na.tool == "orcho_delivery_decide" and na.args.get("action") == "halt"
@@ -193,10 +197,47 @@ def test_fix_requested_status_is_correction(fake_workspace):
     )
 
 
+def test_retained_worktree_correction_uses_one_resume_input_action(fake_workspace):
+    """A real core decision, not a mocked resolver, drives both read surfaces."""
+    worktree = fake_workspace / "retained"
+    init_git_repo(worktree)
+    (worktree / "retained.py").write_text("changed = True\n", encoding="utf-8")
+    write_run(
+        fake_workspace, _RUN,
+        meta=meta(
+            status="halted",
+            halt_reason="commit_decision_fix",
+            worktree={"isolation": "worktree", "path": str(worktree)},
+            commit_delivery=commit_delivery(
+                status="fix_requested", action="fix", release_verdict="REJECTED",
+                changed_paths=["retained.py"],
+            ),
+        ),
+        commit_decision=commit_decision(action="fix", commit_status="fix_requested"),
+        diff_patch=diff_patch_text("retained.py"),
+    )
+
+    gate = project_delivery_gate(_RUN)
+    diagnosis = orcho_run_diagnose(_RUN)
+
+    assert gate.continuation_subject == "retained_change"
+    assert gate.continuation_blocked is False
+    for actions in (gate.next_actions, diagnosis.next_actions):
+        assert len(actions) == 1
+        action = actions[0]
+        assert action.tool == "orcho_run_resume"
+        assert action.kind == "operator_input_required"
+        assert action.args == {"run_id": _RUN}
+        assert action.choices == ["followup", "exit"]
+        assert "from_run_plan" not in action.model_dump_json()
+
+
 # (c) terminal status / no commit_delivery -> direct --------------------------
 
 
-def test_committed_terminal_is_direct(fake_workspace):
+def test_committed_terminal_is_delivery_completed(fake_workspace):
+    # A committed delivery with no PR is a terminal, executed delivery — the
+    # distinct ``delivery_completed`` kind, NOT ``direct_checkout_or_running``.
     write_run(
         fake_workspace, _RUN,
         meta=meta(
@@ -212,10 +253,15 @@ def test_committed_terminal_is_direct(fake_workspace):
 
     proj = project_delivery_gate(_RUN)
 
-    assert proj.kind == "direct_checkout_or_running"
+    assert proj.kind == "delivery_completed"
+    assert proj.published is False
+    assert proj.pr_url is None
+    assert proj.delivery_notices == []
     assert proj.available_actions == []
     assert proj.next_actions == []
     assert proj.message
+    # Never advise a manual commit of the checkout — the delivery already ran.
+    assert "commit the checkout directly" not in proj.message
 
 
 def test_skipped_terminal_is_direct(fake_workspace):
@@ -498,5 +544,296 @@ def test_superseded_parent_is_direct_with_superseded_message(fake_workspace):
     assert proj.blocked_actions == []
     assert proj.next_actions == []
     assert proj.message
+    assert "superseded" in proj.message
+    assert "20260619_000999" in proj.message
+
+
+# (h) ADR 0119 delivery_branch / pr_intent mapping helpers --------------------
+#
+# ``_extract_delivery_branch`` / ``_map_pr_intent`` are the single defensive
+# mapping from core's ``meta['commit_delivery']`` shape onto the wire facts,
+# shared by the gate projection and the read-only delivery evidence slice.
+
+
+def test_extract_delivery_branch_defensive():
+    """None / non-dict / absent / empty → None; a present branch is returned."""
+    assert _extract_delivery_branch(None) is None
+    assert _extract_delivery_branch("not-a-dict") is None
+    assert _extract_delivery_branch({}) is None
+    assert _extract_delivery_branch({"delivery_branch": ""}) is None
+    assert (
+        _extract_delivery_branch({"delivery_branch": "orcho/deliver/x"})
+        == "orcho/deliver/x"
+    )
+
+
+def test_map_pr_intent_none_and_non_dict():
+    """None / non-dict cd, and a non-dict ``pr_intent`` value, all yield None."""
+    assert _map_pr_intent(None) is None
+    assert _map_pr_intent("not-a-dict") is None
+    assert _map_pr_intent({}) is None
+    assert _map_pr_intent({"pr_intent": "not-a-dict"}) is None
+    assert _map_pr_intent({"pr_intent": None}) is None
+
+
+def test_map_pr_intent_full_dict():
+    """A full ``pr_intent`` dict (core ``DeliveryPrIntent.to_dict`` shape) maps to
+    a typed, fully-populated :class:`PrIntentRecord`."""
+    r = _map_pr_intent(
+        {
+            "pr_intent": {
+                "branch": "orcho/deliver/x",
+                "base": "main",
+                "title": "t",
+                "suggested_command": "gh pr create",
+            },
+        },
+    )
+    assert isinstance(r, PrIntentRecord)
+    assert r.branch == "orcho/deliver/x"
+    assert r.base == "main"
+    assert r.title == "t"
+    assert r.suggested_command == "gh pr create"
+
+
+def test_map_pr_intent_partial_fields_default_none():
+    """A partial ``pr_intent`` block leaves the missing fields None (no fabrication)."""
+    r = _map_pr_intent({"pr_intent": {"branch": "orcho/deliver/x"}})
+    assert r is not None
+    assert r.branch == "orcho/deliver/x"
+    assert r.base is None
+    assert r.title is None
+    assert r.suggested_command is None
+
+
+def test_project_delivery_gate_surfaces_branch_policy_fields(fake_workspace):
+    """A decidable gate whose meta decision carries the ADR 0119 branch facts
+    surfaces both ``delivery_branch`` and the typed ``pr_intent`` on the gate
+    projection (decidable branch)."""
+    write_run(
+        fake_workspace, _RUN,
+        meta=meta(
+            status="halted",
+            project="/repo/checkout",
+            commit_delivery=commit_delivery(
+                status="pending",
+                action="approve",
+                release_verdict="APPROVED",
+                project_path="/repo/checkout",
+                source_path="/repo/worktree",
+                delivery_branch="orcho/deliver/20260619-slug",
+                pr_intent={
+                    "branch": "orcho/deliver/20260619-slug",
+                    "base": "main",
+                    "title": "Deliver X",
+                    "suggested_command": "gh pr create --fill",
+                },
+            ),
+        ),
+        commit_decision=commit_decision(),
+        diff_patch=diff_patch_text("src/a.py"),
+    )
+
+    proj = project_delivery_gate(_RUN)
+
+    assert proj.kind == "delivery_decision_required"
+    assert proj.delivery_branch == "orcho/deliver/20260619-slug"
+    assert proj.pr_intent is not None
+    assert proj.pr_intent.branch == "orcho/deliver/20260619-slug"
+    assert proj.pr_intent.base == "main"
+    assert proj.pr_intent.title == "Deliver X"
+    assert proj.pr_intent.suggested_command == "gh pr create --fill"
+
+
+def test_project_delivery_gate_stale_core_branch_fields_none(fake_workspace):
+    """Stale core defensiveness on the completed branch: a terminal committed
+    decision with no ADR 0119 keys yields ``delivery_branch=None`` /
+    ``pr_intent=None`` / ``pr_url=None`` without raising."""
+    write_run(
+        fake_workspace, _RUN,
+        meta=meta(
+            status="done",
+            commit_delivery=commit_delivery(
+                status="committed",
+                action="approve",
+                release_verdict="APPROVED",
+                commit_sha="abc123",
+            ),
+        ),
+    )
+
+    proj = project_delivery_gate(_RUN)
+
+    assert proj.kind == "delivery_completed"
+    assert proj.published is False
+    assert proj.pr_url is None
+    assert proj.delivery_branch is None
+    assert proj.pr_intent is None
+
+
+# (i) delivery_completed — published committed delivery -----------------------
+#
+# A committed delivery that opened a pull request is the terminal
+# ``delivery_completed`` gate: published, carrying ``pr_url`` /
+# ``delivery_notices`` from meta, and NOT advertising a stale
+# ``pr_intent.suggested_command`` (the live link is ``pr_url``).
+
+
+def test_extract_pr_url_defensive():
+    """None / non-dict / absent / empty → None; a present url is returned."""
+    assert _extract_pr_url(None) is None
+    assert _extract_pr_url("not-a-dict") is None
+    assert _extract_pr_url({}) is None
+    assert _extract_pr_url({"pr_url": None}) is None
+    assert _extract_pr_url({"pr_url": ""}) is None
+    assert (
+        _extract_pr_url({"pr_url": "https://example.test/pr/1"})
+        == "https://example.test/pr/1"
+    )
+
+
+def test_extract_published_commit_sha_defensive():
+    assert _extract_published_commit_sha(None) is None
+    assert _extract_published_commit_sha({}) is None
+    assert _extract_published_commit_sha({"published_commit_sha": ""}) is None
+    assert (
+        _extract_published_commit_sha({"published_commit_sha": "feed123"})
+        == "feed123"
+    )
+
+
+def test_extract_delivery_notices_defensive():
+    """None / non-dict / absent / non-list → []; a present list is coerced."""
+    assert _extract_delivery_notices(None) == []
+    assert _extract_delivery_notices("not-a-dict") == []
+    assert _extract_delivery_notices({}) == []
+    assert _extract_delivery_notices({"delivery_notices": None}) == []
+    assert _extract_delivery_notices({"delivery_notices": "x"}) == []
+    assert _extract_delivery_notices(
+        {"delivery_notices": ["PR opened: https://x/1", "branch ready"]},
+    ) == ["PR opened: https://x/1", "branch ready"]
+
+
+def test_committed_with_pr_is_published_delivery_completed(fake_workspace):
+    write_run(
+        fake_workspace, _RUN,
+        meta=meta(
+            status="done",
+            project="/repo/checkout",
+            commit_delivery=commit_delivery(
+                status="committed",
+                action="approve",
+                release_verdict="APPROVED",
+                commit_sha="abc123",
+                published_commit_sha="feed123",
+                delivery_branch="orcho/deliver/20260619-slug",
+                pr_url="https://example.test/pr/42",
+                delivery_notices=["PR opened: https://example.test/pr/42"],
+                pr_intent={
+                    "branch": "orcho/deliver/20260619-slug",
+                    "base": "main",
+                    "title": "Deliver X",
+                    "suggested_command": "gh pr create --fill",
+                },
+            ),
+        ),
+    )
+
+    proj = project_delivery_gate(_RUN)
+
+    assert proj.kind == "delivery_completed"
+    assert proj.published is True
+    assert proj.pr_url == "https://example.test/pr/42"
+    assert proj.delivery_notices == ["PR opened: https://example.test/pr/42"]
+    assert proj.delivery_branch == "orcho/deliver/20260619-slug"
+    assert proj.published_commit_sha == "feed123"
+    assert proj.available_actions == []
+    assert proj.next_actions == []
+    # The stale "open a PR" command is suppressed — the live link is pr_url.
+    assert proj.pr_intent is not None
+    assert proj.pr_intent.suggested_command is None
+    assert proj.pr_intent.branch == "orcho/deliver/20260619-slug"
+    assert proj.pr_intent.base == "main"
+    assert proj.pr_intent.title == "Deliver X"
+    # Message names the PR and never advises a manual commit.
+    assert "https://example.test/pr/42" in proj.message
+    assert "commit the checkout directly" not in proj.message
+
+
+def test_applied_uncommitted_is_delivery_completed(fake_workspace):
+    # ``applied_uncommitted`` is a landed delivery too (aligned with the
+    # evidence applied-status set) → delivery_completed, not direct.
+    write_run(
+        fake_workspace, _RUN,
+        meta=meta(
+            status="done",
+            commit_delivery=commit_delivery(
+                status="applied_uncommitted",
+                action="apply",
+                release_verdict="APPROVED",
+            ),
+        ),
+    )
+
+    proj = project_delivery_gate(_RUN)
+
+    assert proj.kind == "delivery_completed"
+    assert proj.published is False
+    assert proj.pr_url is None
+
+
+def test_completed_without_pr_keeps_pr_intent_suggested_command(fake_workspace):
+    # An unpublished completed delivery (no pr_url) keeps its pr_intent intact —
+    # suppression applies ONLY to the published case.
+    write_run(
+        fake_workspace, _RUN,
+        meta=meta(
+            status="done",
+            commit_delivery=commit_delivery(
+                status="committed",
+                action="approve",
+                release_verdict="APPROVED",
+                commit_sha="abc123",
+                pr_intent={
+                    "branch": "orcho/deliver/x",
+                    "suggested_command": "gh pr create --fill",
+                },
+            ),
+        ),
+    )
+
+    proj = project_delivery_gate(_RUN)
+
+    assert proj.kind == "delivery_completed"
+    assert proj.published is False
+    assert proj.pr_intent is not None
+    assert proj.pr_intent.suggested_command == "gh pr create --fill"
+
+
+def test_superseded_committed_parent_stays_direct(fake_workspace):
+    # A superseded parent keeps the direct/superseded message even if its stale
+    # commit_delivery still reads committed — the completed branch defers to the
+    # superseded-child handling.
+    write_run(
+        fake_workspace, _RUN,
+        meta=meta(
+            status="done",
+            project="/repo/checkout",
+            superseded_by_followup={
+                "child_run_id": "20260619_000999",
+                "child_status": "done",
+            },
+            commit_delivery=commit_delivery(
+                status="committed",
+                action="approve",
+                release_verdict="APPROVED",
+                commit_sha="abc123",
+            ),
+        ),
+    )
+
+    proj = project_delivery_gate(_RUN)
+
+    assert proj.kind == "direct_checkout_or_running"
     assert "superseded" in proj.message
     assert "20260619_000999" in proj.message

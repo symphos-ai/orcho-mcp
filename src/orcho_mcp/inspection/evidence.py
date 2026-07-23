@@ -22,6 +22,7 @@ per-command detail), so this module reads the durable JSON artifacts
 under ``<run_dir>/verification_receipts/`` directly — the sanctioned
 fallback — without re-implementing the banned generic loaders.
 """
+
 from __future__ import annotations
 
 import json
@@ -63,10 +64,15 @@ try:
 except ImportError:  # pragma: no cover - exercised by a stale-core unit test
     _sdk_list_handoff_advice = None
 
-from orcho_mcp.errors import InvalidPlanError
-from orcho_mcp.inspection.verification_cockpit import build_verification_cockpit
+from orcho_mcp.errors import (
+    InvalidPlanError,
+    RunNotFoundError,
+    WorkspaceNotResolvedError,
+)
 from orcho_mcp.schemas import (
+    CorrectionSliceRecord,
     CriterionReportRecord,
+    DeliverySummaryRecord,
     ErrorsHaltSliceRecord,
     EvidenceArtifactSliceRecord,
     EvidenceCommandSliceRecord,
@@ -78,20 +84,40 @@ from orcho_mcp.schemas import (
     HandoffAdviceUsageRecord,
     ImplementDeliveryRecord,
     PlanSliceRecord,
+    ReceiptEvidenceRecord,
+    ScheduledGateEventRecord,
+    ScheduledGateRowRecord,
+    ScopeExpansionItemRecord,
+    ScopeExpansionSliceRecord,
     SubRunLinkRecord,
     SubtaskReceiptRecord,
-    VerificationAutorunEventRecord,
     VerificationCheckRecord,
     VerificationCommandRecord,
     VerificationReceiptRecord,
-    VerificationTimelineGateRecord,
     VerificationTimelineRecord,
 )
+from orcho_mcp.services.delivery_gate import (
+    _extract_commit_delivery,
+    _extract_delivery_branch,
+    _extract_delivery_notices,
+    _extract_pr_url,
+    _extract_published_commit_sha,
+    _map_pr_intent,
+    _map_release,
+)
 from orcho_mcp.services.errors import map_sdk_errors
+from orcho_mcp.services.run_artifacts import (
+    get_run_allowed_modifications as _get_run_allowed_modifications,
+    get_run_meta_raw as _get_run_meta_raw,
+)
 from orcho_mcp.services.run_lookup import find_run_dir
 from orcho_mcp.services.run_projection import (
     build_provider_pressure,
     project_provider_pressure_from_errors_halt,
+)
+from orcho_mcp.services.status_merge import (
+    merged_halt_reason_from_meta,
+    merged_status_from_meta,
 )
 
 # Verification-environment receipts live under
@@ -118,6 +144,118 @@ def _str_list(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(x) for x in value if x is not None]
+
+
+_ADVISORY_FINDING_PHASE = "validate_plan"
+
+
+def _as_int(value: Any) -> int:
+    """Coerce a meta scalar to ``int``; non-ints (incl. bool) → ``0``.
+
+    Mirrors orcho-core's ``pipeline.project.finalization._as_int`` so the
+    whole-plan-delivered replication matches core's own numeric coercion.
+    """
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        try:
+            return int(value.strip())
+        except ValueError:
+            return 0
+    return 0
+
+
+def _implement_whole_plan_delivered(meta: dict[str, Any]) -> bool:
+    """Thin sanctioned replication of core's advisory-findings gate.
+
+    Mirrors ``pipeline.project.finalization._implement_whole_plan_delivered``
+    (the same way ``services.run_artifacts._safe_decision_id`` replicates a
+    core-internal helper that the SDK does not re-export): the implement record
+    carries ``output``, has no ``guardrail_blocked`` / ``failed`` / ``error``,
+    and ran no subtask DAG (its ``meta`` has no positive ``subtask_count``).
+    True marks the small-task-style path where a bypassed validate_plan's
+    critique was forwarded into a successful whole-plan implement, so those
+    plan findings are ADVISORY (visible, not resolved, not active blockers)
+    rather than active release risks. This is a durable-data rule only — no
+    LLM classification.
+
+    Defensive: any missing / malformed key yields ``False`` (findings stay
+    active), never an exception.
+    """
+    phases = meta.get("phases") if isinstance(meta, dict) else None
+    implement = phases.get("implement") if isinstance(phases, dict) else None
+    if not isinstance(implement, dict):
+        return False
+    if not implement.get("output"):
+        return False
+    if any(implement.get(key) for key in ("guardrail_blocked", "failed", "error")):
+        return False
+    imeta = implement.get("meta")
+    return not (isinstance(imeta, dict) and _as_int(imeta.get("subtask_count")) > 0)
+
+
+def _phase_attempts(value: Any) -> list[dict[str, Any]]:
+    """Normalise a ``meta.phases[name]`` slot into a list of attempt dicts.
+
+    Mirrors core's ``pipeline.project.finalization._phase_attempts`` (and the
+    SDK's own copy): an attempt-list phase stays a list, a single-mapping phase
+    wraps to a one-element list, anything else is empty.
+    """
+    if isinstance(value, list):
+        return [item for item in value if isinstance(item, dict)]
+    if isinstance(value, dict):
+        return [value]
+    return []
+
+
+def _validate_plan_attempt_approved(attempt: dict[str, Any]) -> bool:
+    """Whether a ``validate_plan`` attempt was approved (core parity).
+
+    Thin replication of core's ``_attempt_approved`` narrowed to the
+    ``validate_plan`` phase (the ``review_changes`` / ``final_acceptance``
+    branches never apply here): an ``APPROVED`` verdict (case/whitespace
+    normalised, mirroring ``pipeline.run_state.release_verdict.is_approved``) or
+    an explicit boolean ``approved`` field. Durable-data only — no LLM judgment.
+    """
+    verdict = attempt.get("verdict")
+    if isinstance(verdict, str) and verdict.strip().upper() == "APPROVED":
+        return True
+    approved = attempt.get("approved")
+    return approved if isinstance(approved, bool) else False
+
+
+def _advisory_validate_plan_attempt(meta: dict[str, Any]) -> int | None:
+    """The attempt number of the latest ``validate_plan`` attempt when advisory.
+
+    Mirrors core's ``_review_finding_summary`` advisory rule exactly: findings
+    are advisory ONLY for the LATEST ``validate_plan`` attempt, and ONLY when (a)
+    the implement delivered the whole plan and (b) that latest attempt was NOT
+    approved. Findings from earlier attempts are historical/resolved (neither
+    active nor advisory); if the latest attempt is approved, core marks nothing
+    advisory. SDK ``list_findings`` flattens findings across ALL attempts, so we
+    must key advisory on the latest attempt number rather than the phase alone.
+
+    Returns the latest attempt's number (the same value the SDK stamps on its
+    findings: ``int(attempt['attempt'] or attempt_idx)``) so the caller can
+    match findings by ``attempt``; ``None`` when no advisory findings apply.
+
+    Defensive: any missing / malformed key yields ``None`` (findings stay
+    active), never an exception.
+    """
+    if not _implement_whole_plan_delivered(meta):
+        return None
+    phases = meta.get("phases") if isinstance(meta, dict) else None
+    attempts = _phase_attempts(
+        phases.get(_ADVISORY_FINDING_PHASE) if isinstance(phases, dict) else None,
+    )
+    if not attempts:
+        return None
+    latest = attempts[-1]
+    if _validate_plan_attempt_approved(latest):
+        return None
+    return _as_int(latest.get("attempt")) or len(attempts)
 
 
 def _project_implement_delivery(
@@ -196,7 +334,8 @@ def _coerce_exit_code(raw: Any) -> int | None:
 
 
 def _project_verification_receipt(
-    data: dict[str, Any], artifact_path: Path,
+    data: dict[str, Any],
+    artifact_path: Path,
 ) -> VerificationReceiptRecord:
     """Project one parsed receipt dict into a typed record.
 
@@ -209,28 +348,38 @@ def _project_verification_receipt(
     for c in raw_checks if isinstance(raw_checks, list) else []:
         if not isinstance(c, dict):
             continue
-        checks.append(VerificationCheckRecord(
-            name=str(c.get("name", "")),
-            expected=_optional_str(c.get("expected")),
-            actual=_optional_str(c.get("actual")),
-            passed=bool(c.get("passed")),
-        ))
+        checks.append(
+            VerificationCheckRecord(
+                name=str(c.get("name", "")),
+                expected=_optional_str(c.get("expected")),
+                actual=_optional_str(c.get("actual")),
+                passed=bool(c.get("passed")),
+            )
+        )
 
     raw_commands = data.get("commands")
     commands: list[VerificationCommandRecord] = []
     for cm in raw_commands if isinstance(raw_commands, list) else []:
         if not isinstance(cm, dict):
             continue
-        commands.append(VerificationCommandRecord(
-            argv=_coerce_argv(cm.get("argv")),
-            exit_code=_coerce_exit_code(cm.get("exit_code")),
-        ))
+        commands.append(
+            VerificationCommandRecord(
+                argv=_coerce_argv(cm.get("argv")),
+                exit_code=_coerce_exit_code(cm.get("exit_code")),
+            )
+        )
 
     all_passed = bool(checks) and all(c.passed for c in checks)
     raw_round = data.get("round")
-    round_val = raw_round if isinstance(raw_round, int) and not isinstance(
-        raw_round, bool,
-    ) else None
+    round_val = (
+        raw_round
+        if isinstance(raw_round, int)
+        and not isinstance(
+            raw_round,
+            bool,
+        )
+        else None
+    )
 
     return VerificationReceiptRecord(
         phase=_optional_str(data.get("phase")),
@@ -276,65 +425,55 @@ def _read_verification_receipts(
 
 
 def _project_verification_timeline(proj: Any) -> VerificationTimelineRecord:
-    """Project the SDK verification-timeline dataclass into the wire record.
+    """Map the canonical SDK ledger one-to-one onto the public wire record."""
 
-    Pure pass-through: the SDK
-    (``sdk.get_verification_timeline``) already owns the durable
-    classification and the six-value status enum (no ``MANUAL``), so this
-    only maps the typed dataclass onto the Pydantic wire model — per-gate
-    ``searched_run_dirs`` / ``rerun_hint`` / ``status`` included. Empty SDK
-    strings (``env`` / ``hook`` / ``receipt_path`` / ``source_run_id`` /
-    ``stale_reason``) collapse to ``None`` so the wire stays clean. The SDK
-    gate record carries no per-gate ``source``; it is reported ``None``.
-    """
-    gates = [
-        VerificationTimelineGateRecord(
-            command=g.command,
-            env=_optional_str(g.env),
-            hook=_optional_str(g.hook),
-            source=None,
-            policy=_optional_str(g.policy),
-            required=bool(g.required),
-            status=g.status,
-            receipt_path=_optional_str(g.receipt_path),
-            source_run_id=_optional_str(g.source_run_id),
-            inherited=bool(g.inherited),
-            stale_reason=_optional_str(g.stale_reason),
-            searched_run_dirs=[str(d) for d in g.searched_run_dirs],
-            rerun_hint=[str(h) for h in g.rerun_hint],
-            # Mirror the SDK gate's environment-provenance note: a provenance
-            # break downgrades the gate to FAIL and populates this. The
-            # ``getattr`` default keeps a version-skewed core without the field
-            # from breaking the slice.
-            detail=_optional_str(getattr(g, "detail", None)),
+    def receipt(value: Any) -> ReceiptEvidenceRecord | None:
+        if value is None:
+            return None
+        return ReceiptEvidenceRecord(
+            classification=value.classification,
+            path=value.path,
+            source=value.source,
+            inherited=value.inherited,
+            reason=value.reason,
+            rerun=value.rerun,
         )
-        for g in proj.gates
-    ]
-    autorun_events = [
-        VerificationAutorunEventRecord(
-            hook_label=str(e.hook_label),
-            source=str(e.source),
-            ran_pass=[str(c) for c in e.ran_pass],
-            ran_fail=[str(c) for c in e.ran_fail],
-            skipped_fresh=[str(c) for c in e.skipped_fresh],
-            skipped_manual=[str(c) for c in e.skipped_manual],
-            receipt_paths=[str(p) for p in e.receipt_paths],
-        )
-        for e in proj.autorun_events
-    ]
+
     return VerificationTimelineRecord(
+        schema_version=proj.schema_version,
         run_id=str(proj.run_id),
-        has_contract=bool(proj.has_contract),
-        gates=gates,
-        residual_missing=[str(c) for c in proj.residual_missing],
-        residual_stale=[str(c) for c in proj.residual_stale],
-        residual_failed=[str(c) for c in proj.residual_failed],
-        manual_only=[str(c) for c in proj.manual_only],
-        inherited=[str(c) for c in proj.inherited],
-        searched_run_dirs=[str(d) for d in proj.searched_run_dirs],
-        suggested_commands=[str(c) for c in proj.suggested_commands],
-        autorun_events=autorun_events,
-        scheduled_trail_available=bool(proj.scheduled_trail_available),
+        project=proj.project,
+        finalized=proj.finalized,
+        rows=[
+            ScheduledGateRowRecord(
+                command=row.command,
+                hook=row.hook,
+                phase=row.phase,
+                declared=row.declared,
+                selectable=row.selectable,
+                selected=row.selected,
+                execution_policy=row.execution_policy,
+                consequence=row.consequence,
+                disposition=row.disposition,
+                selection_reason=row.selection_reason,
+                executor=row.executor,
+                trigger=row.trigger,
+                receipt_evidence=receipt(row.receipt_evidence),
+            )
+            for row in proj.rows
+        ],
+        events=[
+            ScheduledGateEventRecord(
+                command=event.command,
+                hook=event.hook,
+                phase=event.phase,
+                kind=event.kind,
+                outcome=event.outcome,
+                reason=event.reason,
+                receipt_evidence=receipt(event.receipt_evidence),
+            )
+            for event in proj.events
+        ],
     )
 
 
@@ -398,6 +537,226 @@ def _project_handoff_advice(ev: Any) -> HandoffAdviceSliceRecord:
     return HandoffAdviceSliceRecord(calls=calls, summary=summary)
 
 
+_SCOPE_STATUS_PREFIX = "scope_expansion_"
+
+
+def _normalize_scope_classification(raw: Any) -> str:
+    """Normalise a core scope-expansion status onto the wire vocabulary.
+
+    Core's ``ScopeExpansionStatus`` (``pipeline.engine.scope_expansion``) writes
+    its durable ``status`` as the ENUM VALUE — ``scope_expansion_notice`` /
+    ``scope_expansion_risk`` / ``scope_expansion_blocker`` — via
+    ``ScopeExpansionItem.to_dict()``. The wire contract, schema, docs, and
+    captain clients all branch on the bare ``notice`` / ``risk`` / ``blocker``
+    tokens, so strip the ``scope_expansion_`` prefix here. A bare token (older
+    core, or a hand-built fixture) passes through unchanged; an empty / missing
+    status defaults to ``notice`` (the benign, informational classification).
+    """
+    s = str(raw) if raw is not None else ""
+    if not s:
+        return "notice"
+    if s.startswith(_SCOPE_STATUS_PREFIX):
+        return s[len(_SCOPE_STATUS_PREFIX) :] or "notice"
+    return s
+
+
+def _project_scope_expansion(run_id: str) -> ScopeExpansionSliceRecord:
+    """Project the ADR 0110 scope-expansion audit from the run's meta.
+
+    Reads ``meta['phases']['final_acceptance']['scope_expansion']`` (a dict
+    carrying ``items`` and ``has_blocker``) via the sanctioned durable read
+    ``services.run_artifacts.get_run_meta_raw`` — the same read-path discipline
+    as ``verification_receipts`` (no direct file read here, no SDK re-implement).
+
+    Defensive like ``_read_verification_receipts``: a missing / unreadable run,
+    a non-dict meta, an absent / non-dict ``scope_expansion`` key, or non-list
+    ``items`` all collapse to a clean empty slice (``items=[]``,
+    ``has_blocker=False``) — never an exception. A stale core that never wrote
+    the key therefore leaves ``slice='all'`` intact with an empty scope slice.
+
+    Each item projects ``path`` (required — items without one are skipped),
+    ``classification`` normalised from the core item's ``status`` onto the bare
+    ``notice`` / ``risk`` / ``blocker`` wire vocabulary (core writes the enum
+    VALUE ``scope_expansion_notice`` / ``…_risk`` / ``…_blocker`` — see
+    ``_normalize_scope_classification``), ``category``, and ``evidence``.
+
+    Product semantics: this is the ADR 0110 plan-vs-delivered scope axis, a
+    SEPARATE fact from the delivery ``scope_disclosure`` (strict-mono sibling
+    files behind a shipping block) surfaced on ``DeliveryGateProjection``. A
+    ``notice`` is informational ONLY — the projection forms no operator handoff
+    / next_action for it (this slice carries no ``next_actions`` field at all).
+    A ``blocker`` is reflected as the decision condition via ``has_blocker``,
+    without changing any core policy.
+    """
+    try:
+        meta = _get_run_meta_raw(run_id)
+    except (RunNotFoundError, WorkspaceNotResolvedError):
+        return ScopeExpansionSliceRecord()
+    if not isinstance(meta, dict):
+        return ScopeExpansionSliceRecord()
+    phases = meta.get("phases")
+    final_acceptance = (
+        phases.get("final_acceptance")
+        if isinstance(
+            phases,
+            dict,
+        )
+        else None
+    )
+    raw = (
+        final_acceptance.get("scope_expansion")
+        if isinstance(
+            final_acceptance,
+            dict,
+        )
+        else None
+    )
+    if not isinstance(raw, dict):
+        return ScopeExpansionSliceRecord()
+
+    raw_items = raw.get("items")
+    items: list[ScopeExpansionItemRecord] = []
+    for it in raw_items if isinstance(raw_items, list) else []:
+        if not isinstance(it, dict):
+            continue
+        path = _optional_str(it.get("path"))
+        if path is None:
+            continue
+        items.append(
+            ScopeExpansionItemRecord(
+                path=path,
+                classification=_normalize_scope_classification(it.get("status")),
+                category=_optional_str(it.get("category")),
+                evidence=_str_list(it.get("evidence")),
+            )
+        )
+    return ScopeExpansionSliceRecord(
+        items=items,
+        has_blocker=bool(raw.get("has_blocker")),
+    )
+
+
+# Explicit maps over the core ``CommitDeliveryStatus`` vocabulary
+# (``pipeline.engine.commit_delivery.CommitDeliveryStatus``). Anything outside
+# these sets is an unrecognized status → all four booleans False, raw status
+# preserved.
+_DELIVERY_APPLIED_STATUSES = frozenset({"applied_uncommitted", "committed"})
+_DELIVERY_FAILED_STATUSES = frozenset(
+    {
+        "commit_failed",
+        "apply_failed",
+        "halted",
+        "verification_blocked",
+        "target_dirty",
+    }
+)
+
+
+def _project_delivery(
+    run_id: str,
+    errors: list[dict[str, Any]],
+) -> DeliverySummaryRecord | None:
+    """Project the post-release commit-delivery outcome from durable meta.
+
+    Reads ``meta['commit_delivery']`` via the shared
+    ``services.delivery_gate._extract_commit_delivery`` (single source for the
+    top-level / legacy-nested shape) and maps the core
+    ``CommitDeliveryStatus`` vocabulary onto the explicit
+    ``applied`` / ``committed`` / ``skipped`` / ``failed`` booleans. This is a
+    read-only evidence projection — it never resolves available actions or
+    mutates state (that is the interactive ``DeliveryGateProjection``).
+
+    ``release_verdict`` reuses ``services.delivery_gate._map_release`` so an
+    approved correction child re-run after a ``gate_rerun`` reads ``approved``
+    from its OWN ``commit_delivery`` block. ``implement_delivery`` reuses
+    ``_project_implement_delivery`` over the SAME errors-rollup the ``errors``
+    slice surfaces — never a second meta read.
+
+    Defensive: an unknown / unreadable run or a meta with no ``commit_delivery``
+    block yields ``None`` (not an exception), so ``slice='all'`` stays whole.
+    """
+    try:
+        meta = _get_run_meta_raw(run_id)
+    except (RunNotFoundError, WorkspaceNotResolvedError):
+        return None
+    cd = _extract_commit_delivery(meta) if isinstance(meta, dict) else None
+    if cd is None:
+        return None
+
+    status = _optional_str(cd.get("status"))
+    commit_sha = _optional_str(cd.get("commit_sha"))
+    applied = status in _DELIVERY_APPLIED_STATUSES
+    committed = status == "committed" or commit_sha is not None
+    skipped = status == "skipped"
+    failed = status in _DELIVERY_FAILED_STATUSES
+
+    halt_reason = _optional_str(cd.get("halt_reason"))
+    if halt_reason is None and isinstance(meta, dict):
+        halt_reason = _optional_str(meta.get("halt_reason"))
+
+    return DeliverySummaryRecord(
+        release_verdict=_map_release(cd),
+        decision_status=status,
+        action=_optional_str(cd.get("action")),
+        applied=applied,
+        committed=committed,
+        commit_sha=commit_sha,
+        published_commit_sha=_extract_published_commit_sha(cd),
+        skipped=skipped,
+        failed=failed,
+        halt_reason=halt_reason,
+        # ADR 0119 delivery-branch facts, mapped through the SAME shared
+        # ``services.delivery_gate`` helpers the gate projection uses (single
+        # source, no second meta read). Absent → None / [], never fabricated.
+        delivery_branch=_extract_delivery_branch(cd),
+        pr_url=_extract_pr_url(cd),
+        delivery_notices=_extract_delivery_notices(cd),
+        pr_intent=_map_pr_intent(cd),
+        # Single source: the same implement-verdict projection as the errors
+        # slice, built from the already-fetched errors-rollup (no second meta
+        # read), so the two records can never drift.
+        implement_delivery=_project_implement_delivery(errors),
+    )
+
+
+def _project_correction(run_id: str) -> CorrectionSliceRecord | None:
+    """Project the ADR 0098 correction fixed-point / non-convergence block.
+
+    Reads ``meta['correction_fixed_point']`` (the durable non-convergence block
+    core writes when a correction child repeats its parent's blockers) plus the
+    run's ``halt_reason``. ``non_converging`` True is an OPERATOR-DECISION
+    condition — ``suggested_actions`` are advisory next-step hints for the
+    captain, NEVER an auto-applied fix.
+
+    Defensive: an unknown / unreadable run or a meta with no
+    ``correction_fixed_point`` block yields ``None`` (not an exception).
+    """
+    try:
+        meta = _get_run_meta_raw(run_id)
+    except (RunNotFoundError, WorkspaceNotResolvedError):
+        return None
+    block = meta.get("correction_fixed_point") if isinstance(meta, dict) else None
+    if not isinstance(block, dict):
+        return None
+
+    repeated = _str_list(block.get("repeated"))
+    reason = _optional_str(block.get("reason"))
+    halt_reason = _optional_str(meta.get("halt_reason"))
+    # The block is only ever written on non-convergence; derive the flag from
+    # the durable signals rather than hardcoding it.
+    non_converging = (
+        halt_reason == "correction_not_converging" or bool(repeated) or reason is not None
+    )
+    return CorrectionSliceRecord(
+        non_converging=non_converging,
+        repeated=repeated,
+        parent_run_id=_optional_str(block.get("parent_run_id")),
+        child_run_id=_optional_str(block.get("child_run_id")),
+        suggested_actions=_str_list(block.get("suggested_actions")),
+        reason=reason,
+    )
+
+
 def inspect_run_evidence(
     run_id: str,
     slice: str = "all",
@@ -411,14 +770,25 @@ def inspect_run_evidence(
     thin sync shim.
     """
     valid_slices = {
-        "all", "plan", "findings", "commands", "artifacts",
-        "errors", "sub_runs", "receipts", "verification_receipts",
-        "verification_timeline", "verification_cockpit", "handoff_advice",
+        "all",
+        "plan",
+        "findings",
+        "commands",
+        "artifacts",
+        "errors",
+        "sub_runs",
+        "receipts",
+        "verification_receipts",
+        "verification_timeline",
+        "verification_cockpit",
+        "handoff_advice",
+        "scope_expansion",
+        "delivery",
+        "correction",
     }
     if slice not in valid_slices:
         raise InvalidPlanError(
-            f"orcho_run_evidence: slice must be one of "
-            f"{sorted(valid_slices)!r}, got {slice!r}"
+            f"orcho_run_evidence: slice must be one of {sorted(valid_slices)!r}, got {slice!r}"
         )
 
     sev_kw: dict[str, Any] = {}
@@ -433,6 +803,16 @@ def inspect_run_evidence(
 
     want = {slice} if slice != "all" else valid_slices - {"all"}
     out: dict[str, Any] = {"run_id": run_id, "slice": slice}
+    try:
+        run_dir = find_run_dir(run_id)
+    except (RunNotFoundError, WorkspaceNotResolvedError):
+        # Keep the SDK-error seam usable for narrow evidence projections; a
+        # real resolved run still receives the settled-supervisor overlay.
+        run_dir = None
+    try:
+        evidence_meta = _get_run_meta_raw(run_id)
+    except (RunNotFoundError, WorkspaceNotResolvedError):
+        evidence_meta = {}
 
     # Capability precondition (deterministic, slice-order-independent): the
     # ``verification_timeline`` AND the derived ``verification_cockpit`` slices
@@ -468,18 +848,50 @@ def inspect_run_evidence(
                 commands_to_run=list(p.commands_to_run),
                 risks=list(p.risks),
                 review_focus=list(p.review_focus),
+                # The SDK plan summary carries no ``allowed_modifications``; the
+                # single source is the durable ``parsed_plan.json`` top-level
+                # field, read defensively (absent → empty).
+                allowed_modifications=_get_run_allowed_modifications(run_id),
             )
 
         if "findings" in want:
             findings = _sdk_list_findings(
-                run_id, cwd=None, phases=phases_kw, **sev_kw,
+                run_id,
+                cwd=None,
+                phases=phases_kw,
+                **sev_kw,
             )
+            # Advisory rule (AC5): a ``validate_plan`` finding forwarded into a
+            # successful whole-plan implement is advisory (visible, not active),
+            # replicating core's ``_review_finding_summary`` gate over durable
+            # meta. Core marks advisory ONLY the LATEST validate_plan attempt's
+            # findings, and ONLY when that attempt was not approved; earlier
+            # attempts are historical/resolved. SDK ``list_findings`` flattens
+            # every attempt, so match on the latest attempt number rather than
+            # the phase alone (fixes over-marking on multi-attempt runs).
+            # Defensive: an unreadable run leaves every finding active. Read meta
+            # once for the whole batch.
+            try:
+                _meta = _get_run_meta_raw(run_id)
+            except (RunNotFoundError, WorkspaceNotResolvedError):
+                _meta = {}
+            _advisory_attempt = _advisory_validate_plan_attempt(_meta)
             out["findings"] = [
                 FindingRecord(
-                    id=f.id, severity=f.severity, title=f.title,
-                    body=f.body, required_fix=f.required_fix,
-                    file=f.file, line=f.line, phase=f.phase,
+                    id=f.id,
+                    severity=f.severity,
+                    title=f.title,
+                    body=f.body,
+                    required_fix=f.required_fix,
+                    file=f.file,
+                    line=f.line,
+                    phase=f.phase,
                     attempt=f.attempt,
+                    advisory=(
+                        _advisory_attempt is not None
+                        and f.phase == _ADVISORY_FINDING_PHASE
+                        and f.attempt == _advisory_attempt
+                    ),
                 )
                 for f in findings
             ]
@@ -488,9 +900,20 @@ def inspect_run_evidence(
             cmds = _sdk_list_evidence_commands(run_id, cwd=None)
             out["commands"] = [
                 EvidenceCommandSliceRecord(
-                    argv_summary=c.argv_summary, cwd=c.cwd,
-                    exit_code=c.exit_code, duration_s=c.duration_s,
+                    argv_summary=c.argv_summary,
+                    cwd=c.cwd,
+                    exit_code=c.exit_code,
+                    duration_s=c.duration_s,
                     outcome=c.outcome,
+                    source=c.source,
+                    identity_digest=c.identity_digest,
+                    phase=c.phase,
+                    state=c.state,
+                    executable=c.executable,
+                    started_at=c.started_at,
+                    finished_at=c.finished_at,
+                    artifact_path=c.artifact_path,
+                    degraded_reason=c.degraded_reason,
                 )
                 for c in cmds
             ]
@@ -499,21 +922,30 @@ def inspect_run_evidence(
             arts = _sdk_list_evidence_artifacts(run_id, cwd=None)
             out["artifacts"] = [
                 EvidenceArtifactSliceRecord(
-                    path=a.path, kind=a.kind, size_bytes=a.size_bytes,
+                    path=a.path,
+                    kind=a.kind,
+                    size_bytes=a.size_bytes,
                 )
                 for a in arts
             ]
 
-        if "errors" in want:
-            eh = _sdk_get_errors_halt(run_id, cwd=None)
-            # Single source: the delivery/waiver projection is built from
-            # the SAME rollup list as the raw ``errors`` field, never a
-            # second meta read — so the two can never drift.
+        # The delivery/waiver implement projection reuses the SAME errors-rollup
+        # the ``errors`` slice surfaces (single source, never a second meta
+        # read). Fetch it once when either the ``errors`` or ``delivery`` slice
+        # needs it, then share it with both.
+        errors_list: list[dict[str, Any]] = []
+        if want & {"errors", "delivery"}:
+            eh_kwargs = {"cwd": None}
+            if run_dir is not None:
+                eh_kwargs["runs_dir"] = run_dir.parent
+            eh = _sdk_get_errors_halt(run_id, **eh_kwargs)
             errors_list = list(eh.errors)
+
+        if "errors" in want:
             out["errors"] = ErrorsHaltSliceRecord(
-                status=eh.status,
+                status=(merged_status_from_meta(evidence_meta, run_dir) if run_dir else None) or eh.status,
                 errors=errors_list,
-                halt_reason=eh.halt_reason,
+                halt_reason=(merged_halt_reason_from_meta(evidence_meta, run_dir) if run_dir else None) or eh.halt_reason,
                 halted_at=eh.halted_at,
                 error_summary=eh.error_summary,
                 implement_delivery=_project_implement_delivery(errors_list),
@@ -532,7 +964,9 @@ def inspect_run_evidence(
             links = _sdk_list_sub_runs(run_id, cwd=None)
             out["sub_runs"] = [
                 SubRunLinkRecord(
-                    name=link.name, status=link.status, run_dir=link.run_dir,
+                    name=link.name,
+                    status=link.status,
+                    run_dir=link.run_dir,
                 )
                 for link in links
             ]
@@ -552,8 +986,10 @@ def inspect_run_evidence(
                     error=r.error,
                     criteria_report=[
                         CriterionReportRecord(
-                            index=c.index, criterion=c.criterion,
-                            met=c.met, evidence=c.evidence,
+                            index=c.index,
+                            criterion=c.criterion,
+                            met=c.met,
+                            evidence=c.evidence,
                         )
                         for c in r.criteria_report
                     ],
@@ -587,26 +1023,48 @@ def inspect_run_evidence(
                 find_run_dir(run_id),
             )
 
+        if "scope_expansion" in want:
+            # ADR 0110 scope-expansion audit projected from durable meta via
+            # ``services.run_artifacts.get_run_meta_raw`` (the sanctioned
+            # read-path — no direct file read, no core re-implement). Fully
+            # defensive: a missing / malformed audit yields a clean empty slice,
+            # never an exception, so a stale core keeps ``slice='all'`` whole.
+            # This axis is distinct from the delivery ``scope_disclosure`` on
+            # ``DeliveryGateProjection`` (strict-mono sibling shipping block).
+            out["scope_expansion"] = _project_scope_expansion(run_id)
+
+        if "delivery" in want:
+            # Read-only post-release commit-delivery outcome projected from
+            # durable meta. ``implement_delivery`` reuses the SAME errors-rollup
+            # fetched above (single source, no second meta read). ``None`` when
+            # the run recorded no commit-delivery decision.
+            out["delivery"] = _project_delivery(run_id, errors_list)
+
+        if "correction" in want:
+            # ADR 0098 correction fixed-point / non-convergence, projected from
+            # durable meta. ``non_converging`` is an operator-decision condition;
+            # ``suggested_actions`` are advisory, never auto-applied. ``None``
+            # when core recorded no fixed-point block.
+            out["correction"] = _project_correction(run_id)
+
         if needs_timeline:
             # Availability is guaranteed by the precondition check above. The
             # official verification-gate timeline is a read-only durable SDK
-            # projection (no pipeline import in MCP): the SDK owns the
-            # classification + the six-value status enum, this layer is a pure
-            # wire pass-through. ``cwd=None`` disables walk-up so the long-lived
+            # projection (no pipeline import in MCP): this layer forwards its
+            # canonical ledger rows and identity-scoped events unchanged.
+            # ``cwd=None`` disables walk-up so the long-lived
             # server never binds to an arbitrary process cwd's runspace — the
             # same discipline as ``services.run_lookup`` and the other SDK
             # accessors. RunNotFound resolves through map_sdk_errors.
             #
-            # ONE SDK read feeds BOTH slices: the timeline is a pure wire
-            # pass-through and the cockpit a derived projection over the same
-            # ``proj`` — never a second ``get_verification_timeline`` call.
+            # ONE SDK read feeds BOTH public names. They are intentionally the
+            # same canonical ledger projection, not separate semantic views.
             proj = _sdk_get_verification_timeline(run_id=run_id, cwd=None)
+            timeline = _project_verification_timeline(proj)
             if "verification_timeline" in want:
-                out["verification_timeline"] = _project_verification_timeline(
-                    proj,
-                )
+                out["verification_timeline"] = timeline
             if "verification_cockpit" in want:
-                out["verification_cockpit"] = build_verification_cockpit(proj)
+                out["verification_cockpit"] = timeline
 
     return EvidenceResult(**out)
 

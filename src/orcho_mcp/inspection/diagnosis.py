@@ -214,7 +214,25 @@ def _delivery_gate_actions(
     ``orcho_run_diagnose`` stays read-only and points callers to the richer
     gate projection. ``orcho_delivery_gate`` then carries one ready
     ``orcho_delivery_decide`` call per SDK-available action.
+
+    A ``delivery_completed`` gate is terminal — the delivery already landed, so
+    there is nothing to decide. Point at the gate projection for the delivered
+    outcome (its ``pr_url`` / evidence), never at a delivery decision.
     """
+    if gate_kind == "delivery_completed":
+        return [
+            NextActionRecord(
+                intent=(
+                    "This Orcho-managed delivery already landed — inspect the "
+                    "delivered outcome (pr_url / delivery notices) on the gate "
+                    "projection; there is no delivery decision to make."
+                ),
+                tool="orcho_delivery_gate",
+                args={"run_id": run_id},
+                optional=False,
+                kind="ready_call",
+            ),
+        ]
     label = "correction" if gate_kind == "correction_decision_required" else "delivery"
     choices = f" Available actions now: {', '.join(available_actions)}." if (
         available_actions
@@ -252,8 +270,8 @@ def _recover_via_source_actions(
             intent=(
                 f"Resume the source run {source_run_id} that still owns the "
                 "retained checkpoint / worktree. The inspected terminal run "
-                f"{run_id} is NOT the continuation subject — do not start a "
-                "new from_run_plan run to finish its diff."
+                f"{run_id} is NOT the continuation subject — do not create a "
+                "fresh plan-based run to finish its diff."
             ),
             optional=False,
         ),
@@ -293,22 +311,17 @@ def _correction_followup_actions(
 ) -> list[NextActionRecord]:
     """Typed actions for a correction whose fix was requested.
 
-    The single deterministic step is an ``orcho_run_start`` from_run_plan
-    follow-up carrying the parent's plan + retained diff. Built via the shared
-    ``services.delivery_gate.build_followup_next_action`` so the diagnose and the
-    delivery-gate surfaces emit a byte-identical typed action — including its
-    machine-readable ``context`` (``from_run_plan`` / ``diff_path`` /
-    ``project_dir`` / ``retained_worktree``). Read-only status inspection rides
-    alongside.
+    The single deterministic step is the core-owned ``orcho_run_resume``
+    operator-input requirement. It preserves the parent's retained worktree;
+    no MCP surface may promote this correction into a plan-start action.
     """
-    from orcho_mcp.services.delivery_gate import build_followup_next_action
+    from orcho_mcp.services.continuation import (
+        correction_resume_action,
+        resolve_core_continuation,
+    )
 
-    return [
-        build_followup_next_action(
-            run_id, project_dir, diff_path, retained_worktree,
-        ),
-        _status_action(run_id),
-    ]
+    action = correction_resume_action(resolve_core_continuation(run_id))
+    return [action] if action is not None else [_status_action(run_id)]
 
 
 def _closed_by_followup_actions(
@@ -316,16 +329,16 @@ def _closed_by_followup_actions(
 ) -> list[NextActionRecord]:
     """Read-only actions for a parent CLOSED by a follow-up.
 
-    The parent is settled/superseded: NO resume of this parent and NO fresh
-    ``from_run_plan`` against it. The superseding child (when known) is the live
-    subject — point inspection at it; otherwise fall back to the parent's own
-    status snapshot. Every record stays read-only.
+    The parent is settled/superseded: no resume or new correction is offered.
+    The superseding child (when known) is the live subject — point inspection at
+    it; otherwise fall back to the parent's own status snapshot. Every record
+    stays read-only.
     """
     if child_run_id:
         return [
             NextActionRecord(
                 intent=(
-                    f"This run was closed by a successful from_run_plan "
+                    f"This run was closed by a successful correction "
                     f"follow-up ({child_run_id}); inspect the superseding child "
                     "— do NOT resume this parent."
                 ),
@@ -373,6 +386,22 @@ def _resolve_next_actions(
     run_id = proj.run_id
     cond = proj.condition
 
+    # Core owns retained-change classification. Check it before the legacy
+    # diagnosis condition branches so every read surface gets the same resume
+    # input requirement and never advertises a plan-start promotion.
+    from orcho_mcp.services.continuation import (
+        correction_resume_action,
+        resolve_core_continuation,
+    )
+    try:
+        correction_action = correction_resume_action(
+            resolve_core_continuation(run_id),
+        )
+    except Exception:
+        correction_action = None
+    if correction_action is not None:
+        return cond, [correction_action]
+
     if cond == "needs_decision":
         # Once a decision artifact is recorded for the active handoff, the run
         # no longer needs another decide — it needs resume to apply the
@@ -380,6 +409,8 @@ def _resolve_next_actions(
         # live_status / summary projections already point at (single source of
         # truth: ``RunDiagnosisProjection.decision_artifact_exists``), never a
         # second round of decide verbs.
+        if proj.decision_state == "degraded":
+            return cond, [_status_action(run_id)]
         if proj.decision_artifact_exists:
             return cond, [
                 _resume_action(
@@ -410,9 +441,8 @@ def _resolve_next_actions(
         )
 
     if cond == "closed_by_followup":
-        # Correction-followup contract: a parent CLOSED by a successful from_run_plan follow-up.
-        # Inspect the superseding child (never resume this settled parent, never
-        # offer a fresh from_run_plan against it). Read-only diagnostics only.
+        # A parent closed by a successful correction follow-up is inspection-only.
+        # Inspect the superseding child; this settled parent is read-only.
         return cond, _closed_by_followup_actions(run_id, proj.recommended_run_id)
 
     if cond == "superseded_by_child":
@@ -463,6 +493,9 @@ def _resolve_next_actions(
 
     if cond == "active":
         return cond, [_watch_action(run_id), _status_action(run_id)]
+
+    if proj.recommended_next_action == "plan_artifact_continuation":
+        return cond, _plan_artifact_continuation_actions(run_id)
 
     if cond in _RESUMABLE_CONDITIONS:
         return cond, [
@@ -543,6 +576,8 @@ def inspect_run_diagnosis(run_id: str) -> RunDiagnosis:
         recommended_run_id=proj.recommended_run_id,
         available_actions=list(proj.available_actions),
         decision_recorded=proj.decision_artifact_exists,
+        decision_state=proj.decision_state,
+        decision_degraded_reason=proj.decision_degraded_reason,
         next_actions=next_actions,
         continuation_subject=proj.continuation_subject,
         recommended_next_action=proj.recommended_next_action,

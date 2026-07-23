@@ -301,6 +301,14 @@ def _row_next_actions(
     ``choices`` are the runtime's available verbs (the operator still picks a
     verb and supplies feedback where the verb requires it).
     """
+    if pending.decision_state == "degraded":
+        return [
+            NextActionRecord(
+                intent="Inspect the decision-read failure before attempting a mutation.",
+                tool="orcho_run_diagnose", args={"run_id": run_id}, optional=False,
+                kind="ready_call",
+            ),
+        ]
     if pending.decision_artifact_exists:
         return [
             NextActionRecord(
@@ -364,6 +372,8 @@ def _pending_row(run_dir: Path) -> WorkspacePendingDecisionRow | None:
         round_label=pending.round_label,
         available_actions=list(pending.available_actions),
         decision_artifact_exists=pending.decision_artifact_exists,
+        decision_state=pending.decision_state,
+        decision_degraded_reason=pending.decision_degraded_reason,
         suggested_next_action=pending.suggested_next_action,
         next_actions=_row_next_actions(run_id, pending),
     )
