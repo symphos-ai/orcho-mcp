@@ -19,7 +19,7 @@ dependencies = [
     #   - core.observability.events.append_event (cross-process append)
     "orcho-core>=0.5.0,<0.6",
     # Anthropic's MCP SDK — server + client primitives.
-    "mcp>=1.2,<2",
+    "mcp>=1.2,<3",
     # JSON Schema generation for tool I/O.
     "pydantic>=2.6",
     # Async helpers used by FastMCP's stdio transport.
