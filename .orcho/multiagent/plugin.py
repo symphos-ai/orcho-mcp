@@ -60,7 +60,7 @@ PLUGIN = {
         "commands": {
             "env-provenance": {
                 "env": "mcp-local-core",
-                "cheap": True,
+                "cost": "fast",
                 "run": [
                     "python",
                     "-c",
@@ -80,11 +80,12 @@ PLUGIN = {
             },
             "lint": {
                 "env": "mcp-local-core",
-                "cheap": True,
+                "cost": "fast",
                 "run": ["python", "-m", "ruff", "check", "."],
             },
             "run-control-unit": {
                 "env": "mcp-local-core",
+                "cost": "moderate",
                 "parity": "differential",
                 "run": [
                     "python",
@@ -99,6 +100,7 @@ PLUGIN = {
             },
             "mcp-mock-smoke": {
                 "env": "mcp-local-core",
+                "cost": "slow",
                 "parity": "differential",
                 "run": [
                     "python",
@@ -118,24 +120,24 @@ PLUGIN = {
                 "commands": ["env-provenance"],
                 "default_policy": "require",
                 "default_action": "handoff",
-                "default_cheap": True,
+                "default_cost": "fast",
             },
             "hygiene": {
                 "commands": ["lint"],
                 "default_policy": "require",
                 "default_action": "repair_loop",
-                "default_cheap": True,
+                "default_cost": "fast",
             },
             "mcp-runtime": {
                 "commands": ["run-control-unit"],
                 "default_policy": "require",
                 "default_action": "repair_loop",
-                "default_cheap": False,
+                "default_cost": "moderate",
             },
             "mcp-smoke": {
                 "commands": ["mcp-mock-smoke"],
                 "default_policy": "suggest",
-                "default_cheap": False,
+                "default_cost": "slow",
             },
         },
         "selection": [
