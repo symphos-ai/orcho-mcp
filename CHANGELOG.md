@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+## 0.6.0 - 2026-07-28
+
+### Changed
+
+- Requires `orcho-core>=0.6.0,<0.7` and reads the core 0.6 verification-cost,
+  cross-plan, and execution-state contracts.
+- Project verification configuration uses the typed granular cost vocabulary.
+- Release-path GitHub Actions use immutable pins and CodeQL covers protected
+  release branches.
+
+### Fixed
+
+- The MCP SDK is constrained to the supported 1.x line; clean installations
+  cannot silently resolve the incompatible 2.x API.
+
 ## 0.5.0 - 2026-07-23
 
 ### Added
