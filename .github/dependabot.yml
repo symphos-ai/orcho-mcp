@@ -7,6 +7,10 @@ updates:
       day: "monday"
       time: "09:00"
       timezone: "Etc/UTC"
+    groups:
+      codeql-lifecycle:
+        patterns:
+          - "github/codeql-action/*"
     open-pull-requests-limit: 5
 
   - package-ecosystem: "pip"
@@ -16,4 +20,8 @@ updates:
       day: "monday"
       time: "09:15"
       timezone: "Etc/UTC"
+    ignore:
+      - dependency-name: "mcp"
+        versions:
+          - ">=2"
     open-pull-requests-limit: 5
