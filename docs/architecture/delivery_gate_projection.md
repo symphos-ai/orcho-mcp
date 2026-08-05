@@ -48,6 +48,7 @@ artifact in `message`.
 |---|---|
 | `kind="delivery", decidable=true` | `delivery_decision_required` |
 | `kind="correction", decidable=true` | `correction_decision_required` |
+| `kind="delivery" or "correction", decidable=false` | Same mapped decision kind, but resume-first and no delivery mutation calls. |
 | `decidable=false`, `commit_delivery.status` in `committed` / `applied_uncommitted` (not a superseded parent) | `delivery_completed` |
 | `decidable=false`, any other status | `direct_checkout_or_running` |
 
@@ -65,6 +66,12 @@ checkout edit, a still-running run, or a skipped / halted / failed terminal).
 `available_actions` contains only SDK-available actions. `blocked_actions`
 contains actions core currently refuses, commonly `approve` / `apply` on a
 rejected release or incomplete required verification.
+
+A stopped gate is durable context, not a current decision: MCP preserves its
+mapped delivery/correction `kind` and the core `reason`, sets `decidable=false`,
+and publishes empty `available_actions`, `blocked_actions`, `default_action`,
+and `next_actions`. Clients resume the run first; when lifecycle re-parks the
+same gate live, MCP returns its original ordered actions and ready calls.
 
 `next_actions` carries one `ready_call` per available action:
 
@@ -95,6 +102,7 @@ The result mirrors core's `DeliveryDecisionResult`:
 | `status` | Resulting commit-delivery status. |
 | `terminal_outcome` | Strictly `done` or `halted`. |
 | `blocker` | Typed refusal cause when `accepted=false`. |
+| `reason` | Core explanation; a stopped-gate refusal matches the gate projection's resume-first reason. |
 | `halt_reason` | Structured halt reason for halted outcomes. |
 | `artifact_paths` | Decision artifacts written by core. |
 | `commit_sha` | Commit id landed in the target checkout. |

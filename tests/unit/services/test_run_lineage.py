@@ -134,12 +134,9 @@ def test_status_lineage_terminal_halt_reason_excluded_but_other_halt_active(
     assert s2.lineage.active_child_run_id == "20260101_000002"
 
 
-def test_status_lineage_excludes_commit_delivery_parked_children(fake_workspace):
-    # A child halted on a parked commit-delivery gate (``commit_delivery_pending``
-    # or ``commit_delivery_scope_blocked``) is terminal-for-checkpoint in core's
-    # ``is_terminal_resume_parent``; the MCP replica must mirror that and NOT
-    # advertise such a child as an active follow-up (otherwise it would be
-    # mis-recommended as a checkpoint-resume target core/CLI consider parked).
+def test_status_lineage_includes_checkpoint_resumable_delivery_children(fake_workspace):
+    # A child halted on a parked delivery gate resumes into a live gate, so MCP
+    # must keep it as the active checkpoint-resume target like core does.
     reasons = ("commit_delivery_pending", "commit_delivery_scope_blocked")
     for i, halt_reason in enumerate(reasons):
         parent = f"2026010{i + 1}_000001"
@@ -157,8 +154,8 @@ def test_status_lineage_excludes_commit_delivery_parked_children(fake_workspace)
 
         s = orcho_run_status(parent)
         assert s.lineage is not None, halt_reason
-        assert s.lineage.has_active_child_followup is False, halt_reason
-        assert s.lineage.recommended_run_id is None, halt_reason
+        assert s.lineage.has_active_child_followup is True, halt_reason
+        assert s.lineage.recommended_run_id == child, halt_reason
 
 
 def test_status_lineage_ignores_cross_alias_child(fake_workspace):

@@ -653,6 +653,19 @@
             "description": "Commit created on the published delivery branch. It did not land in the target checkout and therefore does not populate commit_sha.",
             "title": "Published Commit Sha"
           },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Core refusal explanation. A stopped delivery gate names its lifecycle status and directs the operator to resume first.",
+            "title": "Reason"
+          },
           "run_id": {
             "title": "Run Id",
             "type": "string"
@@ -965,6 +978,12 @@
             "default": null,
             "title": "Continuation Subject"
           },
+          "decidable": {
+            "default": false,
+            "description": "True only when the core delivery gate can be decided now. A stopped durable gate remains visible with false and requires a resume before MCP offers delivery mutation calls.",
+            "title": "Decidable",
+            "type": "boolean"
+          },
           "default_action": {
             "anyOf": [
               {
@@ -1091,6 +1110,19 @@
             "default": null,
             "description": "Commit created on the published delivery branch. Distinct from commit_sha, which means a commit landed in the target checkout.",
             "title": "Published Commit Sha"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Core-provided explanation for this gate state.",
+            "title": "Reason"
           },
           "recommended_next_action": {
             "anyOf": [
