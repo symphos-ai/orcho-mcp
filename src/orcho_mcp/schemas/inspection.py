@@ -883,6 +883,18 @@ class DeliveryGateProjection(BaseModel):
     """
 
     run_id: str
+    decidable: bool = Field(
+        default=False,
+        description=(
+            "True only when the core delivery gate can be decided now. A "
+            "stopped durable gate remains visible with false and requires a "
+            "resume before MCP offers delivery mutation calls."
+        ),
+    )
+    reason: str | None = Field(
+        default=None,
+        description="Core-provided explanation for this gate state.",
+    )
     continuation_subject: str | None = None
     recommended_next_action: str | None = None
     continuation_blocked: bool | None = None

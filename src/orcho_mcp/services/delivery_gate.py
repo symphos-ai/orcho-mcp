@@ -521,6 +521,42 @@ def project_delivery_gate(run_id: str) -> DeliveryGateProjection:
     delivery_branch = _extract_delivery_branch(cd)
     pr_intent = _map_pr_intent(cd)
 
+    # A stopped run can retain a delivery/correction gate. It is explanatory
+    # context, not a mutation surface: preserve the mapped kind and core reason
+    # while withholding every delivery action until lifecycle resume re-parks it.
+    if not state.decidable and _is_unresolved_gate(status, release):
+        kind = _gate_kind_from_state(state.kind)
+        diff_summary, missing = _build_diff_summary(run_id, cd)
+        scope_disclosure, scope_blocker = _scope_fields(state)
+        return DeliveryGateProjection(
+            run_id=run_id,
+            decidable=False,
+            reason=state.reason,
+            continuation_subject=(
+                continuation.continuation_subject if continuation is not None else None
+            ),
+            recommended_next_action=(
+                continuation.recommended_next_action if continuation is not None else None
+            ),
+            continuation_blocked=(continuation.blocked if continuation is not None else None),
+            diff_source=(continuation.diff_source if continuation is not None else None),
+            continuation_reason=(continuation.reason if continuation is not None else None),
+            kind=kind,
+            release=release,
+            target_checkout=_target_checkout(meta, cd),
+            retained_worktree=_retained_worktree(meta, cd),
+            diff=diff_summary,
+            default_action=None,
+            available_actions=[],
+            blocked_actions=[],
+            scope_blocker=scope_blocker,
+            scope_disclosure=scope_disclosure,
+            delivery_branch=delivery_branch,
+            pr_intent=pr_intent,
+            message=_gate_message(kind, missing, state.reason),
+            next_actions=[],
+        )
+
     if not state.decidable:
         superseded_child = _superseded_child(meta)
         # A terminal, already-executed delivery (``committed`` /
@@ -581,6 +617,8 @@ def project_delivery_gate(run_id: str) -> DeliveryGateProjection:
 
     return DeliveryGateProjection(
         run_id=run_id,
+        decidable=True,
+        reason=state.reason,
         continuation_subject=(
             continuation.continuation_subject if continuation is not None else None
         ),
@@ -604,6 +642,18 @@ def project_delivery_gate(run_id: str) -> DeliveryGateProjection:
         pr_intent=pr_intent,
         message=_gate_message(kind, missing, state.reason),
         next_actions=next_actions,
+    )
+
+
+def _is_unresolved_gate(status: str | None, release: str) -> bool:
+    """Whether durable context is an unresolved delivery/correction gate.
+
+    Core preserves a generic delivery kind on any stopped run that still has a
+    commit-delivery block. MCP must not mistake completed, skipped, or malformed
+    blocks for the stopped pending-gate presentation.
+    """
+    return status in {"pending", "fix_requested"} or (
+        status == "not_applicable" and release == "rejected"
     )
 
 

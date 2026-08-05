@@ -681,9 +681,9 @@ def test_recover_via_source_run_dogfood_shape(fake_workspace):
     assert d.recovery_lineage.source_resumable is True
 
 
-def test_recover_via_source_run_priority_after_delivery_gate(fake_workspace):
-    # A pending delivery gate still outranks recover_via_source_run: the gate
-    # is a live decision, not a dead-end.
+def test_stopped_delivery_gate_routes_to_checkpoint_resume(fake_workspace):
+    # A stopped pending gate is no longer a delivery decision; core routes the
+    # lifecycle through resume before a live re-park can offer delivery calls.
     write_run(
         fake_workspace, "20260101_000001",
         meta=_source_failed_with_worktree(),
@@ -702,7 +702,8 @@ def test_recover_via_source_run_priority_after_delivery_gate(fake_workspace):
 
     d = project_run_diagnosis("20260101_000002")
 
-    assert d.condition == "needs_delivery_decision"
+    assert d.condition == "halted"
+    assert d.recommended_next_action != "delivery_decision"
 
 
 def test_recover_via_source_run_tool_recommends_source_resume(fake_workspace):
@@ -913,9 +914,7 @@ def test_projection_flags_correction_followup_over_terminal_halt(fake_workspace)
     assert d.continuation_subject == "retained_change"
 
 
-def test_diagnose_delivery_gate_points_to_gate_projection(fake_workspace):
-    # A real (approved) pending delivery gate still points at orcho_delivery_gate;
-    # the fix-correction follow-up case is covered separately.
+def test_diagnose_stopped_delivery_gate_does_not_offer_delivery_gate(fake_workspace):
     write_run(
         fake_workspace, "20260101_000001",
         meta=meta(
@@ -929,14 +928,13 @@ def test_diagnose_delivery_gate_points_to_gate_projection(fake_workspace):
 
     diag = orcho_run_diagnose("20260101_000001")
 
-    assert diag.condition == "needs_delivery_decision"
-    assert diag.next_actions, "delivery gate must surface a next action"
-    for na in diag.next_actions:
-        assert na.kind == "ready_call"
-        assert na.requires_operator_input is False
-        assert na.tool == "orcho_delivery_gate"
-        assert na.args == {"run_id": "20260101_000001"}
-    assert "feedback" not in str(diag.next_actions[0].args)
+    assert diag.condition == "halted"
+    assert diag.next_actions, "stopped gate must surface a resume action"
+    resume = next(na for na in diag.next_actions if na.tool == "orcho_run_resume")
+    assert resume.kind == "ready_call"
+    assert resume.requires_operator_input is False
+    assert resume.args == {"run_id": "20260101_000001"}
+    assert not any(na.tool == "orcho_delivery_gate" for na in diag.next_actions)
 
 
 def test_no_commit_delivery_keeps_existing_terminal_classification(fake_workspace):
@@ -1660,5 +1658,5 @@ def test_needs_delivery_decision_kind_is_wire_vocab(fake_workspace):
 
     d = project_run_diagnosis("20260101_000001")
 
-    assert d.condition == "needs_delivery_decision"
-    assert d.delivery_gate_kind == "delivery_decision_required"
+    assert d.condition == "halted"
+    assert d.delivery_gate_kind is None

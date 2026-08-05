@@ -152,14 +152,36 @@ def test_mcp_delivery_surface_projects_core_produced_strict_scope_block(
     )
 
     # Persist exactly what core produced; the MCP surface reads it back.
-    (run_dir / "meta.json").write_text(
-        json.dumps({
-            "status": "done",
-            "project": str(primary),
-            "commit_delivery": decision.to_dict(),
-        }),
-        encoding="utf-8",
-    )
+    meta_path = run_dir / "meta.json"
+
+    def _persist(status: str) -> None:
+        meta_path.write_text(
+            json.dumps({
+                "status": status,
+                "project": str(primary),
+                "commit_delivery": decision.to_dict(),
+            }),
+            encoding="utf-8",
+        )
+
+    # A real strict-scope violation halts the run, so the durable gate is first
+    # seen on a stopped lifecycle: explanatory only, resume-first, no actions
+    # and no ready calls (ADR 0175).
+    _persist("halted")
+    stopped = orcho_delivery_gate(_RUN_ID)
+    assert isinstance(stopped, DeliveryGateProjection)
+    assert stopped.decidable is False
+    assert stopped.kind == "delivery_decision_required"
+    assert stopped.available_actions == []
+    assert stopped.next_actions == []
+    assert stopped.reason is not None and "resume" in stopped.reason
+
+    refused_stopped = orcho_delivery_decide(_RUN_ID, "approve")
+    assert refused_stopped.accepted is False
+    assert refused_stopped.blocker == "delivery_decision_requires_resume"
+
+    # Resume re-parks the same gate live; the scope presentation returns intact.
+    _persist("awaiting_commit_decision")
 
     # ── MCP projection surface (orcho_delivery_gate) ─────────────────────────
     gate = orcho_delivery_gate(_RUN_ID)
