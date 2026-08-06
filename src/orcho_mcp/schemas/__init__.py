@@ -7,7 +7,9 @@ explicit and round-trippable in tests.
 Module layout:
 
   ``shared``       cross-family models (``NextActionRecord``).
-  ``workspace``    orcho_workspace_info / orcho_workspace_state.
+  ``workspace``    orcho_workspace_info / orcho_workspace_state /
+                   orcho_workspace_pending_decisions /
+                   orcho_workspace_cleanup_report + _reclaim.
   ``read``         orcho_run_history / status / metrics / events_tail /
                    skills_list / profiles_list.
   ``observe``      orcho_run_events_summary / orcho_run_watch + the
@@ -144,6 +146,9 @@ from orcho_mcp.schemas.workflows import (
     WorkflowRecipeList,
 )
 from orcho_mcp.schemas.workspace import (
+    WorkspaceCleanupReasonRow,
+    WorkspaceCleanupReceiptResult,
+    WorkspaceCleanupReportResult,
     WorkspaceInfo,
     WorkspaceMcpStateResult,
     WorkspacePendingDecisionRow,
@@ -163,6 +168,9 @@ __all__ = [
     "RecommendedNextActionLiteral",
     "RecoveryLineage",
     # workspace
+    "WorkspaceCleanupReasonRow",
+    "WorkspaceCleanupReceiptResult",
+    "WorkspaceCleanupReportResult",
     "WorkspaceInfo",
     "WorkspaceMcpStateResult",
     "WorkspacePendingDecisionRow",

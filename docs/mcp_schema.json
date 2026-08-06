@@ -11134,6 +11134,391 @@
       }
     },
     {
+      "description": "Remove reclaimable checkouts confirmed by a prior cleanup report.\n\n    **Destructive.** This is the acting half of workspace cleanup: it deletes\n    or archives retained checkouts, and under ``tier='both'`` their run roots\n    too. Call ``orcho_workspace_cleanup_report`` first, show the operator what\n    it selected, and only then call this with that report's ``confirm_token``.\n\n    The token is re-verified against the live workspace before anything is\n    touched. A token that was never issued, or one issued against a selection\n    that has since changed, raises ``WorkspaceCleanupConfirmationError`` and\n    nothing is removed — so a cleanup can never run against a state the\n    operator did not see. ``older_than_days`` and ``force`` must match the\n    report the token came from; they participate in the fingerprint.\n\n    Choose the two axes deliberately. ``tier='worktrees'`` reclaims the\n    physical checkouts and leaves each run's durable artifacts (evidence,\n    events, receipts) in place; ``tier='both'`` also removes the run roots\n    themselves, discarding that history for runs past the cutoff.\n    ``disposition='archive'`` writes an archive before removing, so the\n    content is recoverable and ``bytes_reclaimed`` stays below\n    ``bytes_selected``; ``disposition='delete'`` does not.\n\n    The engine writes a durable receipt *before* it changes anything; the\n    result copies that receipt's facts and points at it via ``receipt_path``.\n    A sweep can partially fail: read ``error_count`` and ``errors`` rather\n    than treating any returned receipt as a clean result.\n\n    Args:\n        tier: ``worktrees`` (checkouts only) or ``both`` (checkouts plus run\n            roots past the cutoff).\n        disposition: ``archive`` (recoverable) or ``delete`` (outright).\n        confirm_token: the ``confirm_token`` from a matching cleanup report.\n        older_than_days: run-root retention cutoff in days (default 30). Must\n            match the report the token came from.\n        force: override value protections; requires an explicit\n            ``older_than_days``. Must match the report the token came from.\n\n    Errors:\n        - WorkspaceCleanupConfirmationError — token missing, stale, or issued\n          against a different selection. Nothing was removed.\n        - WorkspaceNotResolvedError — no $ORCHO_WORKSPACE / $ORCHO_WORKTREE.\n        - ValueError — non-positive cutoff, or ``force`` without a cutoff.\n    ",
+      "inputSchema": {
+        "properties": {
+          "confirm_token": {
+            "title": "Confirm Token",
+            "type": "string"
+          },
+          "disposition": {
+            "enum": [
+              "archive",
+              "delete"
+            ],
+            "title": "Disposition",
+            "type": "string"
+          },
+          "force": {
+            "default": false,
+            "title": "Force",
+            "type": "boolean"
+          },
+          "older_than_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Older Than Days"
+          },
+          "tier": {
+            "enum": [
+              "worktrees",
+              "both"
+            ],
+            "title": "Tier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tier",
+          "disposition",
+          "confirm_token"
+        ],
+        "title": "orcho_workspace_cleanup_reclaimArguments",
+        "type": "object"
+      },
+      "name": "orcho_workspace_cleanup_reclaim",
+      "outputSchema": {
+        "description": "Returned by ``orcho_workspace_cleanup_reclaim`` — facts from the receipt.\n\nProjects ``sdk.WorkspaceCleanupReceipt``. The engine writes its own\ndurable receipt before it changes anything on disk; this model copies that\nreceipt's facts onto the wire and points at it via ``receipt_path``, so\nthe authoritative record of a destructive operation lives in the workspace\nrather than in a chat transcript.\n\n``errors`` is the honest half: a cleanup can partially succeed, and\n``status`` plus a non-zero ``error_count`` says so instead of reporting a\nclean sweep. Byte counters distinguish *selected* from *archived* from\n*reclaimed* — under ``disposition='archive'`` nothing is destroyed, and\n``bytes_reclaimed`` reflects only what actually left the disk.",
+        "properties": {
+          "archive_paths": {
+            "description": "Archives written under ``disposition='archive'``.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Archive Paths",
+            "type": "array"
+          },
+          "bytes_archived": {
+            "default": 0,
+            "description": "Bytes written to archives.",
+            "title": "Bytes Archived",
+            "type": "integer"
+          },
+          "bytes_reclaimed": {
+            "default": 0,
+            "description": "Bytes actually freed on disk.",
+            "title": "Bytes Reclaimed",
+            "type": "integer"
+          },
+          "bytes_selected": {
+            "default": 0,
+            "description": "Bytes the selection covered.",
+            "title": "Bytes Selected",
+            "type": "integer"
+          },
+          "disposition": {
+            "description": "Executed disposition: ``archive`` or ``delete``.",
+            "title": "Disposition",
+            "type": "string"
+          },
+          "error_count": {
+            "default": 0,
+            "description": "Number of per-item failures. Non-zero means the sweep was partial — read ``errors``.",
+            "title": "Error Count",
+            "type": "integer"
+          },
+          "errors": {
+            "description": "Per-item failure messages copied from the receipt.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Errors",
+            "type": "array"
+          },
+          "receipt_path": {
+            "description": "Path to the engine's durable cleanup receipt.",
+            "title": "Receipt Path",
+            "type": "string"
+          },
+          "status": {
+            "description": "Engine's final status for the attempt, verbatim.",
+            "title": "Status",
+            "type": "string"
+          },
+          "tier": {
+            "description": "Executed tier: ``worktrees`` or ``both``.",
+            "title": "Tier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "receipt_path",
+          "tier",
+          "disposition",
+          "status"
+        ],
+        "title": "WorkspaceCleanupReceiptResult",
+        "type": "object"
+      }
+    },
+    {
+      "description": "Preview what a workspace cleanup would reclaim. Changes nothing.\n\n    A long-lived workspace accumulates retained checkouts from finished runs.\n    This is the read-only half of reclaiming that space: it runs the engine's\n    real selection and reports what it picked, what it is holding back, and\n    why — without touching a single file.\n\n    **Read the buckets, not just the totals.** ``reclaimable_*`` is what the\n    matching reclaim call would remove. ``protected_*`` is what the engine\n    refuses to touch because the work is still at risk — dirty, unpushed, or\n    resumable — and the per-reason breakdown says which. ``inert_*`` covers\n    references with no retained checkout left at all (never recorded, or\n    already reclaimed); counting those as reclaimable space would badly\n    overstate what a sweep can free, which is why they are a separate bucket.\n\n    **``confirm_token`` is the handshake.** It fingerprints this exact\n    selection and is the only value ``orcho_workspace_cleanup_reclaim``\n    accepts. Show the operator this report, get their decision, then pass the\n    token back. If the workspace changes in between — a run finishes, someone\n    else sweeps — the token stops matching and the reclaim refuses rather\n    than removing something nobody looked at.\n\n    ``next_actions`` is non-empty only when something is actually\n    reclaimable, and is always ``operator_input_required``: choosing tier and\n    disposition is the operator's call, not a step to take on a report's\n    say-so.\n\n    Args:\n        older_than_days: run-root retention cutoff in days (default 30).\n            Runs newer than this keep their run root regardless of tier.\n        force: override the engine's value protections. Requires an explicit\n            ``older_than_days`` — forcing against the default window is\n            refused, because the point of forcing is a deliberate cutoff.\n\n    Errors:\n        - WorkspaceNotResolvedError — no $ORCHO_WORKSPACE / $ORCHO_WORKTREE.\n        - ValueError — non-positive cutoff, or ``force`` without a cutoff.\n    ",
+      "inputSchema": {
+        "properties": {
+          "force": {
+            "default": false,
+            "title": "Force",
+            "type": "boolean"
+          },
+          "older_than_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Older Than Days"
+          }
+        },
+        "title": "orcho_workspace_cleanup_reportArguments",
+        "type": "object"
+      },
+      "name": "orcho_workspace_cleanup_report",
+      "outputSchema": {
+        "$defs": {
+          "NextActionRecord": {
+            "description": "One suggested follow-up tool call surfaced in tool responses.\n\nWorkflow-decision responses carry these records so the LLM does not\nhave to remember workflow patterns from documentation; the suggested\nnext steps ride in the payload.\n\nMirrors :class:`sdk.actions.Action` on the orcho-core side. The base\npass-through (``intent``/``tool``/``args``/``optional``) stays\nstate-derived and drift-free; the ``kind`` family below is MCP-wire\nenrichment computed entirely on the MCP side from state the server\nalready has, so it requires no new data from the core and the\ndefaults reproduce the historical pass-through record exactly.\n\nCall-readiness invariant (checked via the typed ``kind`` field, never\nby parsing ``intent``):\n\n- ``kind='ready_call'`` ⇒ ``args`` already contains every required\n  parameter of the target tool's actual signature (e.g.\n  ``orcho_run_resume`` ⇒ ``args`` has ``run_id``;\n  ``orcho_phase_handoff_decide`` ⇒ ``args`` has ``action`` and, where\n  the chosen verb mandates it, ``feedback``). The record is safe to\n  forward verbatim.\n- ``kind='operator_input_required'`` ⇒ the final decision args MAY be\n  omitted, but ONLY when ``choices`` and/or ``input_schema`` are\n  present to tell the operator what input is still needed.\n\n``intent`` stays human-readable and is NOT a contractual signal.",
+            "properties": {
+              "args": {
+                "additionalProperties": true,
+                "description": "Pre-filled arguments matching the target tool's input schema. Values are safe to forward as-is. When a follow-up requires operator input, that input is not represented as a placeholder inside this dict.",
+                "title": "Args",
+                "type": "object"
+              },
+              "choices": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "When operator input is a choice among a fixed set (e.g. the available phase-handoff decision verbs), the allowed values. ``None`` (default) for ready-to-forward calls.",
+                "title": "Choices"
+              },
+              "context": {
+                "anyOf": [
+                  {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Structured, machine-readable recovery context for this action that is NOT a parameter of the target tool (so it must not ride in ``args``), yet a typed client needs to branch on it. A retained-change correction records its durable continuation facts here (subject, blocked state, diff source, and reason). Read these typed keys — never the ``intent`` prose. ``None`` (default) when the action carries no extra context.",
+                "title": "Context"
+              },
+              "input_schema": {
+                "anyOf": [
+                  {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "When operator input is free-form (e.g. required retry ``feedback``), a description of the expected input. ``None`` (default) for ready-to-forward calls.",
+                "title": "Input Schema"
+              },
+              "intent": {
+                "description": "One-sentence human-readable description of what this action would accomplish. Clients SHOULD surface this verbatim in their UI.",
+                "title": "Intent",
+                "type": "string"
+              },
+              "kind": {
+                "default": "ready_call",
+                "description": "Typed call-readiness signal. ``ready_call`` (default) means ``args`` already carries every required parameter of the target tool, so the record is safe to forward verbatim. ``operator_input_required`` means a final decision argument is intentionally omitted and the caller must collect operator input first, as described by ``choices`` and/or ``input_schema``. This typed field — not ``intent`` text — is the contractual readiness signal.",
+                "enum": [
+                  "ready_call",
+                  "operator_input_required"
+                ],
+                "title": "Kind",
+                "type": "string"
+              },
+              "optional": {
+                "default": true,
+                "description": "True (default) when this is one of several valid follow-ups. False when the workflow has a single deterministic next step (e.g. ``orcho_run_resume`` after ``continue`` / ``retry_feedback`` / ``continue_with_waiver`` decision).",
+                "title": "Optional",
+                "type": "boolean"
+              },
+              "requires_operator_input": {
+                "default": false,
+                "description": "True iff ``kind == 'operator_input_required'``: the caller must gather operator input before invoking the tool. False (default) for ready-to-forward calls.",
+                "title": "Requires Operator Input",
+                "type": "boolean"
+              },
+              "tool": {
+                "description": "Name of the MCP tool the caller should invoke (e.g. ``orcho_run_start``, ``orcho_phase_handoff_decide``, ``orcho_run_resume``).",
+                "title": "Tool",
+                "type": "string"
+              }
+            },
+            "required": [
+              "intent",
+              "tool"
+            ],
+            "title": "NextActionRecord",
+            "type": "object"
+          },
+          "WorkspaceCleanupReasonRow": {
+            "description": "How many references one engine cleanup reason accounts for.\n\n``reason`` is the engine's stable selection vocabulary (e.g.\n``worktree_missing``, ``already_reclaimed``) and is safe to render\nverbatim; ``detail`` is the engine's own one-line explanation for that\nreason. Neither carries a path, a diff, or run content.",
+            "properties": {
+              "count": {
+                "description": "References this reason accounts for.",
+                "title": "Count",
+                "type": "integer"
+              },
+              "detail": {
+                "description": "Engine's one-line explanation.",
+                "title": "Detail",
+                "type": "string"
+              },
+              "reason": {
+                "description": "Stable engine selection reason.",
+                "title": "Reason",
+                "type": "string"
+              }
+            },
+            "required": [
+              "reason",
+              "count",
+              "detail"
+            ],
+            "title": "WorkspaceCleanupReasonRow",
+            "type": "object"
+          }
+        },
+        "description": "Returned by ``orcho_workspace_cleanup_report`` — a read-only preview.\n\nProjects ``sdk.report_workspace_cleanup`` onto the wire. Nothing on disk\nis touched to produce it: it is the same selection the reclaim step would\nact on, rendered as counts plus per-reason breakdowns so an operator can\nsee *what* would go and *why* before anything is removed.\n\nTwo buckets answer different questions. ``reclaimable_*`` is what the\nmatching reclaim call would remove; ``protected_*`` is what the engine\nrefuses to touch because the work is still at risk (dirty, unpushed, or\nresumable). ``inert_*`` references have no retained checkout left to act\non at all — they are neither reclaimable nor meaningfully protected, and\nare reported separately so a large inert count is never misread as\nreclaimable space.\n\n``confirm_token`` is the handshake: it fingerprints this exact selection\n(runs dir, cutoff, force flag, and every bucket count and reason) and is\nthe only accepted value for ``orcho_workspace_cleanup_reclaim``'s\n``confirm_token``. If the workspace changes between the two calls — a run\nfinishes, a worktree is removed, another operator reclaims first — the\ntoken stops matching and the reclaim refuses, so a destructive call can\nnever execute against a selection nobody looked at.",
+        "properties": {
+          "confirm_token": {
+            "description": "Opaque fingerprint of this selection. Pass verbatim as ``confirm_token`` to ``orcho_workspace_cleanup_reclaim``; it is rejected once the selection changes.",
+            "title": "Confirm Token",
+            "type": "string"
+          },
+          "force": {
+            "default": false,
+            "description": "``True`` when value protections were overridden for this selection (mirrors the CLI's ``--force``).",
+            "title": "Force",
+            "type": "boolean"
+          },
+          "inert_count": {
+            "default": 0,
+            "description": "References with no retained checkout left to act on (never recorded, or already reclaimed).",
+            "title": "Inert Count",
+            "type": "integer"
+          },
+          "inert_reasons": {
+            "description": "Per-reason breakdown of ``inert_count``.",
+            "items": {
+              "$ref": "#/$defs/WorkspaceCleanupReasonRow"
+            },
+            "title": "Inert Reasons",
+            "type": "array"
+          },
+          "next_actions": {
+            "description": "Typed follow-up. Non-empty only when something is reclaimable, and always ``operator_input_required``: the operator still has to choose tier and disposition, and removing a checkout is not a step a client may take on its own initiative.",
+            "items": {
+              "$ref": "#/$defs/NextActionRecord"
+            },
+            "title": "Next Actions",
+            "type": "array"
+          },
+          "older_than_days": {
+            "description": "Run-root retention cutoff in days applied to the selection.",
+            "title": "Older Than Days",
+            "type": "integer"
+          },
+          "protected_count": {
+            "default": 0,
+            "description": "Checkouts the engine refuses to reclaim because the work is still at risk (dirty, unpushed, or resumable).",
+            "title": "Protected Count",
+            "type": "integer"
+          },
+          "protected_reasons": {
+            "description": "Per-reason breakdown of ``protected_count`` — why the engine is holding each group back.",
+            "items": {
+              "$ref": "#/$defs/WorkspaceCleanupReasonRow"
+            },
+            "title": "Protected Reasons",
+            "type": "array"
+          },
+          "protected_run_root_count": {
+            "default": 0,
+            "description": "Run roots held back from the ``both`` tier.",
+            "title": "Protected Run Root Count",
+            "type": "integer"
+          },
+          "protected_run_root_reasons": {
+            "description": "Per-reason breakdown of ``protected_run_root_count``.",
+            "items": {
+              "$ref": "#/$defs/WorkspaceCleanupReasonRow"
+            },
+            "title": "Protected Run Root Reasons",
+            "type": "array"
+          },
+          "reclaimable_count": {
+            "default": 0,
+            "description": "Retained checkouts the matching reclaim would remove.",
+            "title": "Reclaimable Count",
+            "type": "integer"
+          },
+          "reclaimable_reasons": {
+            "description": "Per-reason breakdown of ``reclaimable_count``, largest bucket first.",
+            "items": {
+              "$ref": "#/$defs/WorkspaceCleanupReasonRow"
+            },
+            "title": "Reclaimable Reasons",
+            "type": "array"
+          },
+          "reclaimable_run_root_count": {
+            "default": 0,
+            "description": "Run roots the ``both`` tier would additionally remove.",
+            "title": "Reclaimable Run Root Count",
+            "type": "integer"
+          },
+          "reclaimable_run_root_reasons": {
+            "description": "Per-reason breakdown of ``reclaimable_run_root_count``.",
+            "items": {
+              "$ref": "#/$defs/WorkspaceCleanupReasonRow"
+            },
+            "title": "Reclaimable Run Root Reasons",
+            "type": "array"
+          },
+          "runs_dir": {
+            "description": "Resolved runs directory the report covers.",
+            "title": "Runs Dir",
+            "type": "string"
+          }
+        },
+        "required": [
+          "runs_dir",
+          "older_than_days",
+          "confirm_token"
+        ],
+        "title": "WorkspaceCleanupReportResult",
+        "type": "object"
+      }
+    },
+    {
       "description": "Return where orcho reads/writes runs and which projects appear in recent history.\n\n    Useful as an initial discovery call so the client knows whether other\n    tools that need ``project_dir`` will succeed.\n    ",
       "inputSchema": {
         "properties": {},
