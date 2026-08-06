@@ -1,11 +1,13 @@
 """orcho_mcp.schemas.workspace — wire models for workspace tools.
 
 Covers ``orcho_workspace_info`` (instance discovery),
-``orcho_workspace_state`` (advisory cross-run state cache), and
+``orcho_workspace_state`` (advisory cross-run state cache),
 ``orcho_workspace_pending_decisions`` (artifact-built recovery of runs
-paused awaiting an operator phase-handoff decision). All three are
-read-only surfaces; none of these models carries raw event payloads,
-prompts, findings, reviewer output, env, or credentials by design.
+paused awaiting an operator phase-handoff decision), and the two-step
+``orcho_workspace_cleanup_report`` / ``orcho_workspace_cleanup_reclaim``
+pair. The first three are read-only surfaces; none of these models
+carries raw event payloads, prompts, findings, reviewer output, env, or
+credentials by design.
 """
 from __future__ import annotations
 
@@ -275,7 +277,169 @@ class WorkspacePendingDecisionsResult(BaseModel):
     )
 
 
+class WorkspaceCleanupReasonRow(BaseModel):
+    """How many references one engine cleanup reason accounts for.
+
+    ``reason`` is the engine's stable selection vocabulary (e.g.
+    ``worktree_missing``, ``already_reclaimed``) and is safe to render
+    verbatim; ``detail`` is the engine's own one-line explanation for that
+    reason. Neither carries a path, a diff, or run content.
+    """
+
+    reason: str = Field(description="Stable engine selection reason.")
+    count: int = Field(description="References this reason accounts for.")
+    detail: str = Field(description="Engine's one-line explanation.")
+
+
+class WorkspaceCleanupReportResult(BaseModel):
+    """Returned by ``orcho_workspace_cleanup_report`` — a read-only preview.
+
+    Projects ``sdk.report_workspace_cleanup`` onto the wire. Nothing on disk
+    is touched to produce it: it is the same selection the reclaim step would
+    act on, rendered as counts plus per-reason breakdowns so an operator can
+    see *what* would go and *why* before anything is removed.
+
+    Two buckets answer different questions. ``reclaimable_*`` is what the
+    matching reclaim call would remove; ``protected_*`` is what the engine
+    refuses to touch because the work is still at risk (dirty, unpushed, or
+    resumable). ``inert_*`` references have no retained checkout left to act
+    on at all — they are neither reclaimable nor meaningfully protected, and
+    are reported separately so a large inert count is never misread as
+    reclaimable space.
+
+    ``confirm_token`` is the handshake: it fingerprints this exact selection
+    (runs dir, cutoff, force flag, and every bucket count and reason) and is
+    the only accepted value for ``orcho_workspace_cleanup_reclaim``'s
+    ``confirm_token``. If the workspace changes between the two calls — a run
+    finishes, a worktree is removed, another operator reclaims first — the
+    token stops matching and the reclaim refuses, so a destructive call can
+    never execute against a selection nobody looked at.
+    """
+
+    runs_dir: str = Field(description="Resolved runs directory the report covers.")
+    older_than_days: int = Field(
+        description="Run-root retention cutoff in days applied to the selection.",
+    )
+    force: bool = Field(
+        default=False,
+        description="``True`` when value protections were overridden for this "
+                    "selection (mirrors the CLI's ``--force``).",
+    )
+    reclaimable_count: int = Field(
+        default=0,
+        description="Retained checkouts the matching reclaim would remove.",
+    )
+    protected_count: int = Field(
+        default=0,
+        description="Checkouts the engine refuses to reclaim because the work "
+                    "is still at risk (dirty, unpushed, or resumable).",
+    )
+    inert_count: int = Field(
+        default=0,
+        description="References with no retained checkout left to act on "
+                    "(never recorded, or already reclaimed).",
+    )
+    reclaimable_run_root_count: int = Field(
+        default=0,
+        description="Run roots the ``both`` tier would additionally remove.",
+    )
+    protected_run_root_count: int = Field(
+        default=0,
+        description="Run roots held back from the ``both`` tier.",
+    )
+    reclaimable_reasons: list[WorkspaceCleanupReasonRow] = Field(
+        default_factory=list,
+        description="Per-reason breakdown of ``reclaimable_count``, "
+                    "largest bucket first.",
+    )
+    protected_reasons: list[WorkspaceCleanupReasonRow] = Field(
+        default_factory=list,
+        description="Per-reason breakdown of ``protected_count`` — why the "
+                    "engine is holding each group back.",
+    )
+    inert_reasons: list[WorkspaceCleanupReasonRow] = Field(
+        default_factory=list,
+        description="Per-reason breakdown of ``inert_count``.",
+    )
+    reclaimable_run_root_reasons: list[WorkspaceCleanupReasonRow] = Field(
+        default_factory=list,
+        description="Per-reason breakdown of ``reclaimable_run_root_count``.",
+    )
+    protected_run_root_reasons: list[WorkspaceCleanupReasonRow] = Field(
+        default_factory=list,
+        description="Per-reason breakdown of ``protected_run_root_count``.",
+    )
+    confirm_token: str = Field(
+        description="Opaque fingerprint of this selection. Pass verbatim as "
+                    "``confirm_token`` to ``orcho_workspace_cleanup_reclaim``; "
+                    "it is rejected once the selection changes.",
+    )
+    next_actions: list[NextActionRecord] = Field(
+        default_factory=list,
+        description="Typed follow-up. Non-empty only when something is "
+                    "reclaimable, and always ``operator_input_required``: the "
+                    "operator still has to choose tier and disposition, and "
+                    "removing a checkout is not a step a client may take on "
+                    "its own initiative.",
+    )
+
+
+class WorkspaceCleanupReceiptResult(BaseModel):
+    """Returned by ``orcho_workspace_cleanup_reclaim`` — facts from the receipt.
+
+    Projects ``sdk.WorkspaceCleanupReceipt``. The engine writes its own
+    durable receipt before it changes anything on disk; this model copies that
+    receipt's facts onto the wire and points at it via ``receipt_path``, so
+    the authoritative record of a destructive operation lives in the workspace
+    rather than in a chat transcript.
+
+    ``errors`` is the honest half: a cleanup can partially succeed, and
+    ``status`` plus a non-zero ``error_count`` says so instead of reporting a
+    clean sweep. Byte counters distinguish *selected* from *archived* from
+    *reclaimed* — under ``disposition='archive'`` nothing is destroyed, and
+    ``bytes_reclaimed`` reflects only what actually left the disk.
+    """
+
+    receipt_path: str = Field(
+        description="Path to the engine's durable cleanup receipt.",
+    )
+    tier: str = Field(
+        description="Executed tier: ``worktrees`` or ``both``.",
+    )
+    disposition: str = Field(
+        description="Executed disposition: ``archive`` or ``delete``.",
+    )
+    status: str = Field(
+        description="Engine's final status for the attempt, verbatim.",
+    )
+    bytes_selected: int = Field(
+        default=0, description="Bytes the selection covered.",
+    )
+    bytes_archived: int = Field(
+        default=0, description="Bytes written to archives.",
+    )
+    bytes_reclaimed: int = Field(
+        default=0, description="Bytes actually freed on disk.",
+    )
+    error_count: int = Field(
+        default=0,
+        description="Number of per-item failures. Non-zero means the sweep "
+                    "was partial — read ``errors``.",
+    )
+    errors: list[str] = Field(
+        default_factory=list,
+        description="Per-item failure messages copied from the receipt.",
+    )
+    archive_paths: list[str] = Field(
+        default_factory=list,
+        description="Archives written under ``disposition='archive'``.",
+    )
+
+
 __all__ = [
+    "WorkspaceCleanupReasonRow",
+    "WorkspaceCleanupReceiptResult",
+    "WorkspaceCleanupReportResult",
     "WorkspaceInfo",
     "WorkspaceMcpStateResult",
     "WorkspacePendingDecisionRow",

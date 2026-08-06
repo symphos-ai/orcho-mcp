@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+### Added
+
+- `orcho_workspace_cleanup_report` previews what a workspace cleanup would
+  reclaim — separating reclaimable checkouts from work the engine protects as
+  still-at-risk and from inert references with nothing left to remove — and
+  changes nothing on disk.
+- `orcho_workspace_cleanup_reclaim` performs the removal, but only against a
+  selection an operator confirmed: it requires the `confirm_token` minted by a
+  preceding report and re-derives that token from the live workspace, so a
+  token that was never issued or whose selection has since changed is refused
+  with nothing removed. The two halves are separate tools so allowlisting the
+  preview does not allowlist the removal.
+
+### Changed
+
+- A stopped delivery or correction gate is published as context rather than a
+  decision surface: it keeps its explanation but offers no actions, no default,
+  and no ready `orcho_delivery_decide` call until the run is resumed.
+
 ## 0.6.0 - 2026-07-28
 
 ### Changed
