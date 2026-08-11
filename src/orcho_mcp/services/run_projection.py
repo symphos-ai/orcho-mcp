@@ -491,15 +491,12 @@ _TERMINAL_SUCCESS_STATUSES = frozenset({"done", "success", "completed"})
 _PHASE_HANDOFF_HALT_REASON = "phase_handoff_halt"
 _COMMIT_DECISION_HALT_REASON = "commit_decision_halt"
 _COMMIT_DECISION_FIX_REASON = "commit_decision_fix"
-# Parked delivery-decision gates: a run that halted with its delivery decision
-# still pending (defer mode) or with a strict-mono delivery-scope gate parked.
-# Both await an out-of-band ``decide_delivery`` call, not a checkpoint
-# continuation, so core's ``is_terminal_resume_parent`` treats them as
-# terminal-for-checkpoint. The replica must include them too, otherwise a halted
-# ``commit_delivery_*`` follow-up child would be mis-counted as an *active*
-# follow-up here while core/CLI consider it non-checkpoint-resumable.
-_COMMIT_DELIVERY_PENDING_REASON = "commit_delivery_pending"
-_COMMIT_DELIVERY_SCOPE_BLOCKED_REASON = "commit_delivery_scope_blocked"
+# These named durable reasons remain useful for routing a stopped gate to its
+# checkpoint resume. They are intentionally absent from _TERMINAL_HALT_REASONS.
+_CHECKPOINT_RESUMABLE_DELIVERY_HALT_REASONS = frozenset({
+    "commit_delivery_pending",
+    "commit_delivery_scope_blocked",
+})
 # Rejected final-acceptance dead-ends: a release the gate rejected with no
 # applied delivery and no correction gate. ``final_acceptance_rejected`` is the
 # rejected-override terminal; ``final_acceptance_no_diff`` fires when a rejecting
@@ -512,15 +509,14 @@ _COMMIT_DELIVERY_SCOPE_BLOCKED_REASON = "commit_delivery_scope_blocked"
 _FINAL_ACCEPTANCE_REJECTED_REASON = "final_acceptance_rejected"
 _FINAL_ACCEPTANCE_NO_DIFF_REASON = "final_acceptance_no_diff"
 # Full value-mirror of orcho-core's ``resume_context.is_terminal_resume_parent``
-# halt-reason set: phase-handoff halt, the two commit-decision halts, the two
-# parked commit-delivery gates, and the two rejected final-acceptance dead-ends.
+# halt-reason set: phase-handoff halt, the two commit-decision halts, and the
+# two rejected final-acceptance dead-ends. Parked delivery gates resume into a
+# live gate and therefore remain checkpoint-resumable.
 # Keep this in lockstep with core; never import the pipeline-internal predicate.
 _TERMINAL_HALT_REASONS = frozenset({
     _PHASE_HANDOFF_HALT_REASON,
     _COMMIT_DECISION_HALT_REASON,
     _COMMIT_DECISION_FIX_REASON,
-    _COMMIT_DELIVERY_PENDING_REASON,
-    _COMMIT_DELIVERY_SCOPE_BLOCKED_REASON,
     _FINAL_ACCEPTANCE_REJECTED_REASON,
     _FINAL_ACCEPTANCE_NO_DIFF_REASON,
 })
@@ -532,8 +528,8 @@ def _is_terminal_resume_parent(meta: dict) -> bool:
     Replicates ``resume_context.is_terminal_resume_parent``: terminal
     success (``done`` / ``success`` / ``completed``) or a ``halted`` run
     whose ``halt_reason`` is one of the terminal halt reasons (phase-handoff
-    halt, the two commit-decision halts, the two parked commit-delivery
-    gates, and the two rejected final-acceptance dead-ends). Every other
+    halt, the two commit-decision halts, and the two rejected
+    final-acceptance dead-ends). Every other
     status (``running`` / ``failed`` / ``interrupted`` / ``awaiting_*`` / a
     non-terminal ``halted``) is treated as resumable and therefore an
     *active* follow-up.
@@ -1792,6 +1788,24 @@ def _project_run_diagnosis(
             missing_facts=list(diagnosis.missing_facts),
             source_run_id=diagnosis.source_run_id,
             recommended_run_id=diagnosis.recommended_run_id,
+            recovery_lineage=recovery_lineage,
+        )
+
+    # A stopped delivery gate has no same-place decision action.  Core emits a
+    # residual resumable ``halted`` condition after the lifecycle classifier;
+    # keep it out of the rejected-dead-end reconciliation so MCP exposes resume
+    # instead of inspect-only terminal actions.
+    if (
+        status == "halted"
+        and halt_reason in _CHECKPOINT_RESUMABLE_DELIVERY_HALT_REASONS
+    ):
+        return RunDiagnosisProjection(
+            condition=cond,
+            reason=diagnosis.reason,
+            run_id=run_id,
+            status=status,
+            halt_reason=halt_reason,
+            parent_run_id=parent_run_id,
             recovery_lineage=recovery_lineage,
         )
 

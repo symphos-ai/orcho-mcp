@@ -48,6 +48,7 @@ def decide_delivery(
         commit_sha=result.commit_sha,
         published_commit_sha=getattr(result, "published_commit_sha", None),
         blocker=result.blocker,
+        reason=getattr(result, "reason", None),
         followup_run_id=result.followup_run_id,
         scope_disclosure=[str(p) for p in scope_disclosure if isinstance(p, str)],
     )

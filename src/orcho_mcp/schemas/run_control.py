@@ -539,6 +539,13 @@ class DeliveryDecideResult(BaseModel):
         ),
     )
     blocker: str | None = None
+    reason: str | None = Field(
+        default=None,
+        description=(
+            "Core refusal explanation. A stopped delivery gate names its "
+            "lifecycle status and directs the operator to resume first."
+        ),
+    )
     followup_run_id: str | None = None
     scope_disclosure: list[str] = Field(
         default_factory=list,

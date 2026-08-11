@@ -74,6 +74,10 @@ _KNOWN_CONDITIONS = frozenset({
 })
 
 _RESUMABLE_CONDITIONS = frozenset({"halted", "failed", "interrupted"})
+_DELIVERY_GATE_RESUME_REASONS = frozenset({
+    "commit_delivery_pending",
+    "commit_delivery_scope_blocked",
+})
 
 
 def _status_action(run_id: str, *, optional: bool = True) -> NextActionRecord:
@@ -385,6 +389,19 @@ def _resolve_next_actions(
     """Map a diagnosis projection to (wire condition, typed next_actions)."""
     run_id = proj.run_id
     cond = proj.condition
+
+    if (
+        proj.status == "halted"
+        and proj.halt_reason in _DELIVERY_GATE_RESUME_REASONS
+    ):
+        return cond, [
+            _resume_action(
+                run_id,
+                intent="Resume this stopped delivery gate from its checkpoint.",
+                optional=False,
+            ),
+            _evidence_errors_action(run_id),
+        ]
 
     # Core owns retained-change classification. Check it before the legacy
     # diagnosis condition branches so every read surface gets the same resume

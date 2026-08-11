@@ -115,6 +115,28 @@ def test_decide_delivery_preserves_typed_refusal(
     assert result.blocker == "no_pending_delivery_gate"
 
 
+def test_decide_delivery_projects_core_resume_first_refusal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reason = "run status 'halted' is stopped; resume first before deciding delivery"
+    monkeypatch.setattr(
+        "orcho_mcp.run_control.delivery._sdk_decide_delivery",
+        lambda *args, **kwargs: _sdk_result(
+            accepted=False,
+            status="pending",
+            terminal_outcome="halted",
+            blocker="delivery_decision_requires_resume",
+            reason=reason,
+        ),
+    )
+
+    result = decide_delivery("run1", "approve")
+
+    assert result.accepted is False
+    assert result.blocker == "delivery_decision_requires_resume"
+    assert result.reason == reason
+
+
 def test_decide_delivery_projects_published_commit_sha(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
