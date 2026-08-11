@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.7.0 - 2026-08-11
+
 ### Added
 
 - `orcho_workspace_cleanup_report` previews what a workspace cleanup would
@@ -20,6 +22,8 @@
 - A stopped delivery or correction gate is published as context rather than a
   decision surface: it keeps its explanation but offers no actions, no default,
   and no ready `orcho_delivery_decide` call until the run is resumed.
+- Requires `orcho-core>=0.7.0,<0.8` and reads the core 0.7 workspace-cleanup
+  and delivery-decidability contracts.
 
 ## 0.6.0 - 2026-07-28
 
