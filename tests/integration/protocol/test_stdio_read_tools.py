@@ -403,8 +403,9 @@ async def test_stdio_delivery_gate_correction_call_tool(fake_workspace):
         fake_workspace, "20260101_000001",
         meta={
             "project": "/repo/checkout",
-            "status": "halted",
-            "halt_reason": "commit_delivery_pending",
+            # A live parked gate: a stopped run would project the resume-first
+            # presentation with no ready delivery calls (ADR 0175).
+            "status": "awaiting_commit_decision",
             "task": "delivery gate stdio smoke",
             "commit_delivery": {
                 "status": "pending",

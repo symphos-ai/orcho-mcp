@@ -82,7 +82,7 @@ def test_approved_pending_delivery_full_artifacts(fake_workspace):
     write_run(
         fake_workspace, _RUN,
         meta=meta(
-            status="halted",
+            status="awaiting_commit_decision",
             project="/repo/checkout",
             commit_delivery=commit_delivery(
                 status="pending",
@@ -101,6 +101,7 @@ def test_approved_pending_delivery_full_artifacts(fake_workspace):
     proj = project_delivery_gate(_RUN)
 
     assert proj.kind == "delivery_decision_required"
+    assert proj.decidable is True
     assert proj.release == "approved"
     assert proj.target_checkout == "/repo/checkout"
     assert proj.retained_worktree == "/repo/worktree"
@@ -124,6 +125,45 @@ def test_approved_pending_delivery_full_artifacts(fake_workspace):
         assert na.args["run_id"] == _RUN
 
 
+def test_stopped_gate_preserves_kind_reason_without_delivery_calls(
+    fake_workspace, monkeypatch,
+):
+    reason = "run status 'halted' is stopped; resume first before deciding delivery"
+    write_run(
+        fake_workspace, _RUN,
+        meta=meta(
+            status="awaiting_commit_decision",
+            commit_delivery=commit_delivery(
+                status="pending", release_verdict="APPROVED", action="approve",
+                changed_paths=["src/a.py"],
+            ),
+        ),
+        diff_patch=diff_patch_text("src/a.py"),
+    )
+    monkeypatch.setattr(
+        "orcho_mcp.services.delivery_gate._sdk_delivery_decision_state",
+        lambda *args, **kwargs: SimpleNamespace(
+            decidable=False,
+            kind="delivery",
+            available_actions=(),
+            blocked_actions=(),
+            default_action=None,
+            reason=reason,
+            scope_disclosure=(),
+        ),
+    )
+
+    proj = project_delivery_gate(_RUN)
+
+    assert proj.decidable is False
+    assert proj.kind == "delivery_decision_required"
+    assert proj.reason == reason
+    assert proj.default_action is None
+    assert proj.available_actions == []
+    assert proj.blocked_actions == []
+    assert proj.next_actions == []
+
+
 # (b) rejected correction + fix_requested correction --------------------------
 
 
@@ -131,7 +171,7 @@ def test_rejected_pending_is_correction(fake_workspace):
     write_run(
         fake_workspace, _RUN,
         meta=meta(
-            status="halted",
+            status="awaiting_commit_decision",
             commit_delivery=commit_delivery(
                 status="pending",
                 action="fix",
@@ -180,21 +220,18 @@ def test_fix_requested_status_is_correction(fake_workspace):
 
     assert proj.kind == "correction_decision_required"
     assert proj.diff.degraded is False
-    # Correction-followup contract: fix already requested → only ``halt`` remains; the inert ``fix``
-    # repeat joins the blocked shipping/skip set and is never offered.
-    assert _action_names(proj) == ["halt"]
-    assert proj.blocked_actions == ["fix", "approve", "apply", "skip"]
+    # A stopped correction is retained-change context, not a same-place
+    # delivery decision; resume routes it into the supported follow-up path.
+    assert proj.decidable is False
+    assert _action_names(proj) == []
+    assert proj.blocked_actions == []
     # A retained-change decision is core-owned. This fixture has no isolated
     # retained worktree, so correction is typed as blocked rather than being
     # promoted into a fresh from_run_plan child.
     assert proj.continuation_subject == "retained_change"
     assert proj.continuation_blocked is True
     assert not [na for na in proj.next_actions if na.tool == "orcho_run_start"]
-    # The residual halt decide call is still present.
-    assert any(
-        na.tool == "orcho_delivery_decide" and na.args.get("action") == "halt"
-        for na in proj.next_actions
-    )
+    assert proj.next_actions == []
 
 
 def test_retained_worktree_correction_uses_one_resume_input_action(fake_workspace):
@@ -222,14 +259,15 @@ def test_retained_worktree_correction_uses_one_resume_input_action(fake_workspac
 
     assert gate.continuation_subject == "retained_change"
     assert gate.continuation_blocked is False
-    for actions in (gate.next_actions, diagnosis.next_actions):
-        assert len(actions) == 1
-        action = actions[0]
-        assert action.tool == "orcho_run_resume"
-        assert action.kind == "operator_input_required"
-        assert action.args == {"run_id": _RUN}
-        assert action.choices == ["followup", "exit"]
-        assert "from_run_plan" not in action.model_dump_json()
+    assert gate.decidable is False
+    assert gate.next_actions == []
+    assert len(diagnosis.next_actions) == 1
+    action = diagnosis.next_actions[0]
+    assert action.tool == "orcho_run_resume"
+    assert action.kind == "operator_input_required"
+    assert action.args == {"run_id": _RUN}
+    assert action.choices == ["followup", "exit"]
+    assert "from_run_plan" not in action.model_dump_json()
 
 
 # (c) terminal status / no commit_delivery -> direct --------------------------

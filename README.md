@@ -34,6 +34,7 @@ version: [docs.orcho.dev](https://docs.orcho.dev/start/let-your-agent-drive/).</
 > - **Decide**: ``orcho_phase_handoff_decide`` resolves runtime-published phase-handoff actions; ``orcho_delivery_gate`` / ``orcho_delivery_decide`` expose and resolve post-release delivery or correction. Decision tools never invent actions and never spawn a pipeline process.
 > - **Inspect**: ``orcho_run_evidence`` answers "What happened / what proves it?"; ``orcho_run_diff`` answers "What changed?"
 > - **Measure**: ``orcho_run_metrics`` answers "How much did it consume?" with tokens, duration, phase breakdown, and cost-reference fields when available.
+> - **Reclaim**: ``orcho_workspace_cleanup_report`` previews what retained checkouts could be freed and what is protected; ``orcho_workspace_cleanup_reclaim`` acts only on a selection the operator confirmed.
 >
 > Live progress: ``orcho_run_watch`` emits ordered ``notifications/progress`` when the MCP request carries a ``progressToken``. Clients that don't carry one poll ``orcho_run_status`` / ``orcho_run_events_tail`` against the same run state.
 
@@ -164,6 +165,7 @@ Tool naming is consistent: every run-lifecycle tool is `orcho_run_<verb>`. State
 | **Decide** | `orcho_phase_handoff_decide`, `orcho_delivery_decide` |
 | **Inspect** | `orcho_run_evidence`, `orcho_run_diff` |
 | **Measure** | `orcho_run_metrics` |
+| **Reclaim** | `orcho_workspace_cleanup_report`, `orcho_workspace_cleanup_reclaim` |
 
 When choosing a read tool, start from the question:
 
@@ -173,6 +175,15 @@ When choosing a read tool, start from the question:
 | What happened / what proves it? | `orcho_run_evidence` |
 | How much did it consume? | `orcho_run_metrics` |
 | What changed? | `orcho_run_diff` |
+| What disk can I get back, and what is still at risk? | `orcho_workspace_cleanup_report` |
+
+Reclaiming space is deliberately two calls. `orcho_workspace_cleanup_report`
+is read-only and mints a `confirm_token` for the exact selection it just
+showed; `orcho_workspace_cleanup_reclaim` refuses any token that does not
+match the live workspace. A model cannot tidy up on its own initiative, and a
+selection that changed after the operator reviewed it is refused rather than
+swept. Separate tool names also mean a client that allowlists the preview has
+not thereby allowlisted the removal.
 
 For an end-to-end walkthrough of the full control loop with code, see [`docs/control_loop_walkthrough.md`](docs/control_loop_walkthrough.md).
 
@@ -206,6 +217,9 @@ For contributor-facing architecture and test guidance:
   describes the package boundaries enforced by the architecture tests.
 - [`docs/architecture/observation_delivery.md`](docs/architecture/observation_delivery.md)
   defines the durable replay contract for MCP observation and notification use.
+- [`docs/architecture/workspace_cleanup_confirmation.md`](docs/architecture/workspace_cleanup_confirmation.md)
+  explains the report/reclaim split and the confirmation token that keeps a
+  destructive sweep tied to a selection an operator actually reviewed.
 - [`docs/testing.md`](docs/testing.md) explains the test philosophy, layer model,
   fixture style, and verification commands.
 

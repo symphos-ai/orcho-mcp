@@ -97,6 +97,8 @@ from orcho_mcp.schemas import (
     TypedRunResult,
     TypedRunStartedResult,
     WorkflowRecipeList,
+    WorkspaceCleanupReceiptResult,
+    WorkspaceCleanupReportResult,
     WorkspaceInfo,
     WorkspaceMcpStateResult,
     WorkspacePendingDecisionsResult,
@@ -117,6 +119,10 @@ from orcho_mcp.services.run_reads import (
     get_workspace_mcp_state,
 )
 from orcho_mcp.services.workflow_recipes import list_workflow_recipes
+from orcho_mcp.services.workspace_cleanup import (
+    project_workspace_cleanup_report,
+    reclaim_workspace_cleanup_confirmed,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -273,6 +279,120 @@ def orcho_workspace_pending_decisions(
         - WorkspaceNotResolvedError — no $ORCHO_WORKSPACE / $ORCHO_WORKTREE.
     """
     return project_pending_decisions(limit=limit, include_stale=include_stale)
+
+
+# ── orcho_workspace_cleanup_report ───────────────────────────────────────────
+
+
+@mcp.tool()
+def orcho_workspace_cleanup_report(
+    older_than_days: int | None = None,
+    force: bool = False,
+) -> WorkspaceCleanupReportResult:
+    """Preview what a workspace cleanup would reclaim. Changes nothing.
+
+    A long-lived workspace accumulates retained checkouts from finished runs.
+    This is the read-only half of reclaiming that space: it runs the engine's
+    real selection and reports what it picked, what it is holding back, and
+    why — without touching a single file.
+
+    **Read the buckets, not just the totals.** ``reclaimable_*`` is what the
+    matching reclaim call would remove. ``protected_*`` is what the engine
+    refuses to touch because the work is still at risk — dirty, unpushed, or
+    resumable — and the per-reason breakdown says which. ``inert_*`` covers
+    references with no retained checkout left at all (never recorded, or
+    already reclaimed); counting those as reclaimable space would badly
+    overstate what a sweep can free, which is why they are a separate bucket.
+
+    **``confirm_token`` is the handshake.** It fingerprints this exact
+    selection and is the only value ``orcho_workspace_cleanup_reclaim``
+    accepts. Show the operator this report, get their decision, then pass the
+    token back. If the workspace changes in between — a run finishes, someone
+    else sweeps — the token stops matching and the reclaim refuses rather
+    than removing something nobody looked at.
+
+    ``next_actions`` is non-empty only when something is actually
+    reclaimable, and is always ``operator_input_required``: choosing tier and
+    disposition is the operator's call, not a step to take on a report's
+    say-so.
+
+    Args:
+        older_than_days: run-root retention cutoff in days (default 30).
+            Runs newer than this keep their run root regardless of tier.
+        force: override the engine's value protections. Requires an explicit
+            ``older_than_days`` — forcing against the default window is
+            refused, because the point of forcing is a deliberate cutoff.
+
+    Errors:
+        - WorkspaceNotResolvedError — no $ORCHO_WORKSPACE / $ORCHO_WORKTREE.
+        - ValueError — non-positive cutoff, or ``force`` without a cutoff.
+    """
+    return project_workspace_cleanup_report(
+        older_than_days=older_than_days, force=force
+    )
+
+
+# ── orcho_workspace_cleanup_reclaim ──────────────────────────────────────────
+
+
+@mcp.tool()
+def orcho_workspace_cleanup_reclaim(
+    tier: Literal["worktrees", "both"],
+    disposition: Literal["archive", "delete"],
+    confirm_token: str,
+    older_than_days: int | None = None,
+    force: bool = False,
+) -> WorkspaceCleanupReceiptResult:
+    """Remove reclaimable checkouts confirmed by a prior cleanup report.
+
+    **Destructive.** This is the acting half of workspace cleanup: it deletes
+    or archives retained checkouts, and under ``tier='both'`` their run roots
+    too. Call ``orcho_workspace_cleanup_report`` first, show the operator what
+    it selected, and only then call this with that report's ``confirm_token``.
+
+    The token is re-verified against the live workspace before anything is
+    touched. A token that was never issued, or one issued against a selection
+    that has since changed, raises ``WorkspaceCleanupConfirmationError`` and
+    nothing is removed — so a cleanup can never run against a state the
+    operator did not see. ``older_than_days`` and ``force`` must match the
+    report the token came from; they participate in the fingerprint.
+
+    Choose the two axes deliberately. ``tier='worktrees'`` reclaims the
+    physical checkouts and leaves each run's durable artifacts (evidence,
+    events, receipts) in place; ``tier='both'`` also removes the run roots
+    themselves, discarding that history for runs past the cutoff.
+    ``disposition='archive'`` writes an archive before removing, so the
+    content is recoverable and ``bytes_reclaimed`` stays below
+    ``bytes_selected``; ``disposition='delete'`` does not.
+
+    The engine writes a durable receipt *before* it changes anything; the
+    result copies that receipt's facts and points at it via ``receipt_path``.
+    A sweep can partially fail: read ``error_count`` and ``errors`` rather
+    than treating any returned receipt as a clean result.
+
+    Args:
+        tier: ``worktrees`` (checkouts only) or ``both`` (checkouts plus run
+            roots past the cutoff).
+        disposition: ``archive`` (recoverable) or ``delete`` (outright).
+        confirm_token: the ``confirm_token`` from a matching cleanup report.
+        older_than_days: run-root retention cutoff in days (default 30). Must
+            match the report the token came from.
+        force: override value protections; requires an explicit
+            ``older_than_days``. Must match the report the token came from.
+
+    Errors:
+        - WorkspaceCleanupConfirmationError — token missing, stale, or issued
+          against a different selection. Nothing was removed.
+        - WorkspaceNotResolvedError — no $ORCHO_WORKSPACE / $ORCHO_WORKTREE.
+        - ValueError — non-positive cutoff, or ``force`` without a cutoff.
+    """
+    return reclaim_workspace_cleanup_confirmed(
+        tier=tier,
+        disposition=disposition,
+        confirm_token=confirm_token,
+        older_than_days=older_than_days,
+        force=force,
+    )
 
 
 # ── orcho_run_history ────────────────────────────────────────────────────────────
@@ -1537,6 +1657,8 @@ __all__ = [
     "orcho_workspace_info",
     "orcho_workspace_state",
     "orcho_workspace_pending_decisions",
+    "orcho_workspace_cleanup_report",
+    "orcho_workspace_cleanup_reclaim",
     "orcho_run_history",
     "orcho_run_status",
     "orcho_run_metrics",

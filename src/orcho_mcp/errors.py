@@ -49,6 +49,18 @@ class WorkspaceNotResolvedError(OrchoMCPError):
     """Workspace context was needed but couldn't be derived from env or args."""
 
 
+class WorkspaceCleanupConfirmationError(OrchoMCPError):
+    """A cleanup reclaim was attempted without a matching confirmation token.
+
+    ``orcho_workspace_cleanup_reclaim`` removes checkouts, so it refuses to
+    act on a selection nobody reviewed. The token it requires is issued by
+    ``orcho_workspace_cleanup_report`` and fingerprints that exact selection;
+    it stops matching as soon as the workspace changes. Raised, not returned,
+    so a refusal can never be mistaken for an empty sweep: the failure travels
+    the typed-error channel and the success schema stays a receipt.
+    """
+
+
 class PipelineSpawnError(OrchoMCPError):
     """Failed to spawn a pipeline subprocess."""
 

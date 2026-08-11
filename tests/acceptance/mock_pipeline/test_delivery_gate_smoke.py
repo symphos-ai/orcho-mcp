@@ -280,7 +280,17 @@ def test_correction_followup_then_supersede_scenario(fake_workspace):
         diff_patch="diff --git a/src/a.py b/src/a.py\n",
     )
 
-    # ── transition 1: MCP operator decision marks the correction gate ────────
+    # ── transition 1: stopped gate refuses, resume re-parks, then decide ────
+    stopped = orcho_delivery_decide(
+        parent, "fix", note="operator requested a correction follow-up",
+    )
+    assert stopped.accepted is False
+    assert stopped.blocker == "delivery_decision_requires_resume"
+    persisted_path = fake_workspace / "runspace" / "runs" / parent / "meta.json"
+    parked = json.loads(persisted_path.read_text(encoding="utf-8"))
+    parked["status"] = "awaiting_commit_decision"
+    persisted_path.write_text(json.dumps(parked), encoding="utf-8")
+
     decided = orcho_delivery_decide(
         parent, "fix", note="operator requested a correction follow-up",
     )
@@ -297,16 +307,9 @@ def test_correction_followup_then_supersede_scenario(fake_workspace):
 
     gate = project_delivery_gate(parent)
     assert gate.kind == "correction_decision_required"
-    assert [a.action for a in gate.available_actions] == ["halt"]
-    gate_resumes = [na for na in gate.next_actions if na.tool == "orcho_run_resume"]
-    assert len(gate_resumes) == 1
-    assert gate_resumes[0].args == {"run_id": parent}
-    assert gate_resumes[0].kind == "operator_input_required"
-    assert gate_resumes[0].choices == ["followup", "exit"]
-    gate_ctx = gate_resumes[0].context or {}
-    assert gate_ctx.get("continuation_subject") == "retained_change"
-    assert gate_ctx.get("diff_source") == "worktree"
-    assert "from_run_plan" not in gate_resumes[0].model_dump_json()
+    assert gate.decidable is False
+    assert gate.available_actions == []
+    assert gate.next_actions == []
 
     diag = project_run_diagnosis(parent)
     assert diag.condition == "correction_followup_required"
