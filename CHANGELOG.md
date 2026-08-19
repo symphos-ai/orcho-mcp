@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 0.8.0 - 2026-08-20
+
+### Changed
+
+- Requires `orcho-core` 0.8.0, which makes Orcho usable on native Windows
+  (UTF-8 git output, concurrent stderr drain, sandbox auth passthrough) and
+  moves `claude-glm` setup into the runtime adapter. Stalled-command evidence
+  surfaced through the MCP tools now carries per-stream byte counts.
+
 ## 0.7.0 - 2026-08-11
 
 ### Added
