@@ -20,9 +20,21 @@ from orcho_mcp.schemas.shared import (
     ContinuationSubjectLiteral,
     NextActionRecord,
     ProviderPressure,
-    RecommendedNextActionLiteral,
     RecoveryLineage,
 )
+
+# ``inspect_or_cancel`` is a diagnosis-only core verdict for an in-flight
+# startup stall. It must not enter ``RecommendedNextActionLiteral`` because
+# that shared recovery-lineage vocabulary is also published by run status.
+DiagnosisRecommendedNextActionLiteral = Literal[
+    "resume_source_run",
+    "resume_active_child",
+    "delivery_decision",
+    "start_followup",
+    "plan_artifact_continuation",
+    "stop_unknown",
+    "inspect_or_cancel",
+]
 
 
 class RuntimeOverrideArg(BaseModel):
@@ -707,6 +719,9 @@ class RunDiagnosis(BaseModel):
       typed ``continuation_subject`` / ``recommended_next_action`` still
       distinguish a plan-only continuation, a clean start-followup, and a
       ``stop_unknown`` dead-end.
+    - ``stalled`` — core observed that a running startup command exceeded its
+      durable progress budget. Inspect it and, only when this MCP server owns
+      control, cancel it; do not resume or watch it as an active run.
     - ``superseded_by_child`` — a newer unfinished follow-up child is
       continuing this run; resume the child (``recommended_run_id``).
     - ``blocked_worktree`` — a follow-up blocked because the parent's
@@ -747,6 +762,7 @@ class RunDiagnosis(BaseModel):
         "closed_by_followup",
         "recover_via_source_run",
         "resume_inert_terminal",
+        "stalled",
         "superseded_by_child",
         "blocked_worktree",
         "provider_pressure",
@@ -765,12 +781,15 @@ class RunDiagnosis(BaseModel):
                     "``unknown``). ``None`` for conditions that carry no "
                     "lineage subject (e.g. ``needs_decision``).",
     )
-    recommended_next_action: RecommendedNextActionLiteral | None = Field(
+    recommended_next_action: DiagnosisRecommendedNextActionLiteral | None = Field(
         default=None,
         description="The typed next action a captain should take "
                     "(``resume_source_run`` / ``resume_active_child`` / "
                     "``delivery_decision`` / ``start_followup`` / "
-                    "``plan_artifact_continuation`` / ``stop_unknown``). "
+                    "``plan_artifact_continuation`` / ``stop_unknown`` / "
+                    "``inspect_or_cancel``). The latter is diagnosis-only "
+                    "for a core-classified startup stall and is not part of "
+                    "the shared recovery recommendation vocabulary. "
                     "``None`` when no lineage recommendation applies.",
     )
     recovery_lineage: RecoveryLineage | None = Field(

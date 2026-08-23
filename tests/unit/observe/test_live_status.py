@@ -1,8 +1,8 @@
 """L1 unit tests for ``orcho_run_live_status``.
 
 Calls the ``@mcp.tool`` handler as a plain Python function against
-synthetic run state from ``tests/fixtures/mcp_workspace.py``. Covers the
-six mandatory live-status scenarios — running phase, running subtask,
+synthetic run state from ``tests/fixtures/mcp_workspace.py``. Covers healthy
+phase-empty startup, core-owned startup stalls, running phase and subtask,
 awaiting phase-handoff, clean terminal success, the legacy inconsistent
 terminal (``done`` + ``final_acceptance`` reject), and a halted run whose
 release was rejected — plus the bounded-payload guarantee.
@@ -14,12 +14,16 @@ scenario needs.
 """
 from __future__ import annotations
 
+import json
+from datetime import UTC, datetime, timedelta
+
 from sdk import phase_handoff_decide
 
+from orcho_mcp.observe import live_status
 from orcho_mcp.observe.live_status import _resume_meaningful_from_diagnosis
 from orcho_mcp.services.run_projection import project_run_diagnosis
 from orcho_mcp.tools import orcho_run_live_status
-from tests.fixtures.mcp_workspace import event, meta, write_run
+from tests.fixtures.mcp_workspace import event, meta, supervisor_state, write_run
 
 
 def _final_acceptance(verdict: str, approved: bool, **extra) -> dict:
@@ -70,6 +74,111 @@ def test_running_phase(fake_workspace):
     assert card.terminal is None
     assert card.consistency_flags == []
     assert card.next_seq == 3
+
+
+def test_reporter_phase_empty_payload_is_starting(fake_workspace):
+    """The reporter's pre-phase payload is healthy startup, not a fake phase."""
+    write_run(
+        fake_workspace,
+        "run_reporter_starting",
+        meta=meta(status=None, project="/p/x", task="t"),
+    )
+
+    card = orcho_run_live_status("run_reporter_starting")
+
+    assert card.state_class == "starting"
+    assert card.status is None
+    assert card.current_phase is None
+    assert card.current_subtask is None
+    assert card.last_activity is None
+    assert card.pending_handoff is None
+    assert card.terminal is None
+    assert card.next_seq == 0
+    assert card.consistency_flags == []
+    assert card.provider_pressure is None
+    assert "poll" in card.next_action
+
+
+def test_phase_empty_nonterminal_cards_never_classify_as_running_phase(
+    fake_workspace,
+):
+    """Every phase-empty non-terminal fallback is the typed ``starting`` state."""
+    cases = {
+        "run_empty_running": "running",
+        "run_empty_gate": "awaiting_gate_decision",
+        "run_empty_unknown": None,
+    }
+    for run_id, status in cases.items():
+        write_run(
+            fake_workspace,
+            run_id,
+            meta=meta(status=status, project="/p/x", task="t"),
+        )
+
+        card = orcho_run_live_status(run_id)
+
+        assert card.current_phase is None
+        assert card.current_subtask is None
+        assert card.state_class == "starting"
+        assert card.state_class != "running_phase"
+
+
+def test_card_projects_diagnosis_once_for_classification_and_action(
+    fake_workspace, monkeypatch,
+):
+    """One core diagnosis feeds the complete card instead of duplicate reads."""
+    run_id = "run_single_diagnosis"
+    write_run(
+        fake_workspace,
+        run_id,
+        meta=meta(status="running", project="/p/x", task="t"),
+    )
+    calls = 0
+    original = live_status.project_run_diagnosis
+
+    def counted(run_id_arg: str):
+        nonlocal calls
+        calls += 1
+        return original(run_id_arg)
+
+    monkeypatch.setattr(live_status, "project_run_diagnosis", counted)
+
+    card = orcho_run_live_status(run_id)
+
+    assert card.state_class == "starting"
+    assert calls == 1
+
+
+def test_core_stalled_startup_card_inspects_or_cancels(fake_workspace):
+    """A real core stall is not presented as an active polling/watch run."""
+    run_id = "run_core_stalled"
+    run_dir = write_run(
+        fake_workspace,
+        run_id,
+        meta=meta(status="running", project="/p/x", task="t"),
+        supervisor_state=supervisor_state(
+            run_id=run_id, status="running", project_dir="/p/x",
+        ),
+    )
+    (run_dir / "startup_command.json").write_text(
+        json.dumps({
+            "armed_at": (datetime.now(UTC) - timedelta(seconds=130)).isoformat(),
+            "budget_s": 120,
+            "baseline_events_size": 0,
+            "baseline_output_size": 0,
+            "command": {"identity": "git status", "cwd": "/p/x"},
+        }),
+        encoding="utf-8",
+    )
+
+    card = orcho_run_live_status(run_id)
+
+    assert card.state_class == "stalled"
+    assert card.terminal is None
+    assert "inspect" in card.next_action
+    assert "orcho_run_cancel" in card.next_action
+    assert "orcho_run_resume" not in card.next_action
+    assert "orcho_run_watch" not in card.next_action
 
 
 # ── (2) running implement subtask ────────────────────────────────────────────

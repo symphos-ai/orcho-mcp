@@ -190,7 +190,10 @@ For an end-to-end walkthrough of the full control loop with code, see [`docs/con
 ### Current public-alpha boundaries
 
 - `orcho_run_live_status` is a bounded mono-run card. Cross runs use the
-  broader status, event, evidence, and sub-run projections.
+  broader status, event, evidence, and sub-run projections. Its closed
+  `state_class` distinguishes healthy phase-empty `starting` from core-owned
+  `stalled`; stalled runs are diagnosed/inspected and cancelled only when MCP
+  owns control, never resumed or watched as active.
 - `orcho_workspace_pending_decisions` currently aggregates phase handoffs; it
   is not a universal inbox for every delivery and cross-gate decision.
 - a CLI-started or otherwise foreign run can be fully inspected, but mutation

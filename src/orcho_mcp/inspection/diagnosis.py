@@ -65,6 +65,7 @@ _KNOWN_CONDITIONS = frozenset({
     "closed_by_followup",
     "recover_via_source_run",
     "resume_inert_terminal",
+    "stalled",
     "superseded_by_child",
     "blocked_worktree",
     "provider_pressure",
@@ -127,6 +128,20 @@ def _resume_action(
         tool="orcho_run_resume",
         args={"run_id": run_id},
         optional=optional,
+        kind="ready_call",
+    )
+
+
+def _cancel_action(run_id: str) -> NextActionRecord:
+    """Ready-to-forward graceful cancel for an MCP-controllable stalled run."""
+    return NextActionRecord(
+        intent=(
+            "Cancel this stalled MCP-managed run gracefully after inspecting "
+            "its current status and evidence."
+        ),
+        tool="orcho_run_cancel",
+        args={"run_id": run_id},
+        optional=False,
         kind="ready_call",
     )
 
@@ -383,12 +398,34 @@ def _stop_unknown_actions(
     ]
 
 
+def _stalled_actions(proj: RunDiagnosisProjection) -> list[NextActionRecord]:
+    """Inspect a core-classified startup stall, with cancel when controllable.
+
+    ``control='inspect_only'`` is an existing mutation boundary, not advisory
+    metadata. A foreign run therefore receives only read actions; only a
+    durably MCP-managed run gets a ready ``orcho_run_cancel`` record.
+    """
+    actions = [
+        _status_action(proj.run_id, optional=False),
+        _evidence_errors_action(proj.run_id),
+    ]
+    if proj.control == "mcp_controllable":
+        actions.append(_cancel_action(proj.run_id))
+    return actions
+
+
 def _resolve_next_actions(
     proj: RunDiagnosisProjection,
 ) -> tuple[str, list[NextActionRecord]]:
     """Map a diagnosis projection to (wire condition, typed next_actions)."""
     run_id = proj.run_id
     cond = proj.condition
+
+    if cond == "stalled":
+        # Core owns the stall verdict; a stalled run is neither resumable nor
+        # active, so never offer a resume or a watch loop from this branch.
+        # This precedes every legacy continuation special case.
+        return cond, _stalled_actions(proj)
 
     if (
         proj.status == "halted"

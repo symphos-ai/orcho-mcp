@@ -616,6 +616,11 @@ def orcho_run_live_status(run_id: str) -> RunLiveStatusCard:
 
     Branch on ``state_class`` (a closed set):
 
+    - ``starting`` — non-terminal startup has no open phase or subtask yet;
+      polling is healthy while it progresses.
+    - ``stalled`` — core detected an over-budget startup without durable
+      progress; inspect / diagnose it and, only when MCP owns control, cancel
+      it. Do not resume or watch it as an active run.
     - ``running_phase`` — executing a phase, no subtask in flight
       (``current_phase`` set).
     - ``running_subtask`` — executing a ``subtask_dag`` subtask
@@ -1548,6 +1553,10 @@ def orcho_run_diagnose(run_id: str) -> RunDiagnosis:
 
     ``condition`` (first-match priority):
       - ``active`` — running; watch / poll it (no resume needed).
+      - ``stalled`` — core detected an over-budget startup without durable
+        progress; inspect it and, when ``control='mcp_controllable'``, cancel
+        it. ``recommended_next_action='inspect_or_cancel'`` is diagnosis-only:
+        it never offers resume or a watch loop.
       - ``needs_decision`` — paused on ``awaiting_phase_handoff``; an operator
         must record a phase-handoff decision before it can resume.
       - ``resume_inert_terminal`` — terminal (terminal success or a terminal
