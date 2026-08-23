@@ -383,6 +383,13 @@ paused or terminal — call `orcho_run_live_status(run_id)`. That is the
 fastest answer to "where is the run right now"; the loop below is for
 continuously following the run.
 
+Treat `state_class="starting"` as healthy pre-phase startup: poll the live
+card again while it progresses. Treat `state_class="stalled"` differently:
+call `orcho_run_diagnose(run_id)`, inspect `orcho_run_status` and
+`orcho_run_evidence(slice="errors")`, and cancel only when diagnose reports
+`control="mcp_controllable"` via `orcho_run_cancel`. Do **not** resume or
+re-enter the watch loop for a stalled run.
+
 The pattern is a short bounded watch, a summary fallback on
 timeout/disconnect, and a reconnect from the cursor — repeated until the
 run reaches a handoff or terminal state.

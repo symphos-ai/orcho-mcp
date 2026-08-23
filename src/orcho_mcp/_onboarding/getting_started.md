@@ -145,6 +145,16 @@ This is a single-shot progress snapshot: it reports the active
 `current_subtask` with its `index` / `total` position so you can tell how
 far along the run is. Poll it periodically to follow progress.
 
+Read `state_class` before choosing the next call:
+
+- `starting` means startup is healthy but no phase has opened yet; poll the
+  live card again.
+- `stalled` means core found an over-budget startup with no durable progress.
+  Call `orcho_run_diagnose`, inspect `orcho_run_status` and
+  `orcho_run_evidence(slice="errors")`, and use `orcho_run_cancel` only when
+  diagnose reports `control="mcp_controllable"`. Do not resume or watch a
+  stalled run as if it were active.
+
 For hands-off waiting, long-poll instead:
 
 ```text
@@ -267,6 +277,7 @@ first few runs.
 | Which profiles exist? | `orcho_profiles_list` |
 | Start a run | `orcho_run_start` |
 | Check progress | `orcho_run_live_status` |
+| Diagnose a stalled startup | `orcho_run_diagnose` |
 | See reviewer findings | `orcho_run_evidence(slice="findings")` |
 | Decide a paused handoff | `orcho_phase_handoff_decide` |
 | Continue after approve | `orcho_run_resume` |
