@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+## 0.8.1 - 2026-08-23
+
+### Changed
+
+- Requires `orcho-core` 0.8.3, which closes the Windows startup-hang family
+  (a run could block forever before its first phase, could not be cancelled,
+  and reported itself healthy the whole time).
+- The live status card no longer calls a stopped run healthy. `state_class`
+  gains `starting` (launched, no phase yet) and `stalled` (core's startup
+  stall verdict), and `running_phase` now requires a real open phase instead
+  of being the fall-through for any phase-empty card. A stalled card carries
+  an inspect-or-cancel next action rather than "keep polling".
+- `orcho_run_diagnose` surfaces core's `stalled` condition instead of
+  flattening it into `active`, and does not advertise such a run as resumable.
+
 ## 0.8.0 - 2026-08-20
 
 ### Changed
