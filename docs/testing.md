@@ -59,16 +59,20 @@ should not need to open docs or parse logs to decide what to do next.
 
 `orcho_run_live_status` answers "where is this run right now, and what should I
 do?" in a single bounded call. It returns a `RunLiveStatusCard` with one closed
-`state_class` (`running_phase` / `running_subtask` / `awaiting_handoff` /
-`terminal_success` / `terminal_halted` / `terminal_inconsistent`) plus the live
-phase/subtask position, the last activity (truncated preview), any pending
-handoff, and a terminal slice. It composes existing projections — merged status
-(meta + supervisor fallback), the handoff read-model, and a narrow
-`meta.phases.final_acceptance` read — and never spills full phase bodies,
-critiques, or raw logs, so it is safe for high-frequency polling. A contradiction
-between a terminal-success status and a rejected `final_acceptance` is surfaced
-explicitly in `consistency_flags`, never hidden. The L1 contract for all six
-states lives in `tests/unit/observe/test_live_status.py`.
+`state_class` (`starting` / `stalled` / `running_phase` / `running_subtask` /
+`awaiting_handoff` / `terminal_success` / `terminal_halted` /
+`terminal_inconsistent`) plus the live phase/subtask position, the last activity
+(truncated preview), any pending handoff, and a terminal slice. `starting` is a
+healthy phase-empty startup and continues polling; `stalled` is a core-owned
+startup verdict that routes to diagnose/inspection and, only for an
+MCP-controllable run, cancellation — never resume or watch. It composes existing
+projections — merged status (meta + supervisor fallback), the handoff read-model,
+and a narrow `meta.phases.final_acceptance` read — and never spills full phase
+bodies, critiques, or raw logs, so it is safe for high-frequency polling. A
+contradiction between a terminal-success status and a rejected
+`final_acceptance` is surfaced explicitly in `consistency_flags`, never hidden.
+The L1 contract for all eight states lives in
+`tests/unit/observe/test_live_status.py`.
 
 The executable smoke for that contract is
 `tests/acceptance/mock_pipeline/test_self_discovery_flow.py`. It starts a real
@@ -94,7 +98,7 @@ of `orcho-core/examples/golden-api` and cover this matrix:
 | Halt path | `halt` choice args, then status inspection | Halt has no advertised followup and flips status synchronously. |
 | Halt diagnosis | `diagnose_halted_run` recipe: status, `orcho_run_evidence(slice="errors")`, `orcho_run_events_summary` | A halted run can be classified without log scraping. |
 | Subtask progress | `orcho_run_watch(until="subtask")` reads `summary.current_subtask`; `orcho_run_evidence(slice="receipts")` | Per-subtask state and done-criteria attestation surface for `subtask_dag` runs without parsing the event stream. |
-| Live status snapshot | `orcho_run_live_status` at any point in the run | One typed `state_class` card with bounded previews classifies the run (running / awaiting handoff / terminal); a `done`-plus-rejected `final_acceptance` contradiction appears in `consistency_flags` rather than reading as a clean ship. |
+| Live status snapshot | `orcho_run_live_status` at any point in the run | One typed `state_class` card with bounded previews classifies healthy `starting`, actionable core-owned `stalled`, running, handoff, and terminal states; a `done`-plus-rejected `final_acceptance` contradiction appears in `consistency_flags` rather than reading as a clean ship. |
 
 Manual dogfood reports should record the `run_id`, final status, tools/resources
 used, handoff choice table, artefact table, and any step where the client had to

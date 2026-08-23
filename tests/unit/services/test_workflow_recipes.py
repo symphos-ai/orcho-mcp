@@ -183,14 +183,53 @@ def test_progress_recipes_offer_single_shot_live_status_before_watching() -> Non
                 watch for watch in watches if watch > tool_steps.index(live_step)
             ), f"{name}.{live_step.id}: live status must precede its watch"
 
-        # A status read is allowed only before resume's state-classification
-        # decision.  It is not a progress-position fallback after the run has
-        # started/resumed.
+        # A status read is allowed only for the explicit stalled-state
+        # inspection branch. It is not a progress-position fallback after the
+        # run has started/resumed.
         progress_anchor = min(tool_steps.index(step) for step in live_steps)
-        assert all(
-            step.tool != "orcho_run_status"
+        status_steps = {
+            step.id
             for step in tool_steps[progress_anchor:]
-        ), f"{name}: do not steer post-start progress through orcho_run_status"
+            if step.tool == "orcho_run_status"
+        }
+        assert status_steps <= {"inspect_stalled_status"}, (
+            f"{name}: do not steer ordinary post-start progress through "
+            "orcho_run_status"
+        )
+
+
+def test_observe_recipe_routes_starting_and_stalled_states() -> None:
+    """Healthy startup keeps polling; a core stall routes to inspect/cancel."""
+    recipe = next(
+        recipe
+        for recipe in list_workflow_recipes().recipes
+        if recipe.name == "observe_active_run"
+    )
+    description = recipe.description.lower()
+    assert "state_class=starting" in description
+    assert "keep polling" in description
+    assert "state_class=stalled" in description
+    assert "never resume or watch" in description
+
+    tool_steps = {
+        step.id: step.tool
+        for step in recipe.steps
+        if isinstance(step, RecipeToolStep)
+    }
+    assert tool_steps["diagnose_stalled"] == "orcho_run_diagnose"
+    assert tool_steps["inspect_stalled_errors"] == "orcho_run_evidence"
+    assert tool_steps["cancel_stalled"] == "orcho_run_cancel"
+    assert "orcho_run_resume" not in tool_steps.values()
+
+    branches = {
+        step.id: step
+        for step in recipe.steps
+        if isinstance(step, RecipeBranchStep)
+    }
+    assert branches["if_stalled"].when == {"state_class": "stalled"}
+    assert branches["if_stalled_mcp_controllable"].when == {
+        "control": "mcp_controllable",
+    }
 
 
 def test_inspect_delivery_gate_branches_on_all_kinds() -> None:

@@ -232,6 +232,16 @@ class TestObserveActiveRun:
             'paused or terminal — call `orcho_run_live_status(run_id)`.'
         ) in text
 
+    def test_template_distinguishes_starting_from_stalled(self) -> None:
+        """Only healthy startup continues polling; stalled runs are inspected."""
+        text = orcho_observe_active_run(run_id="r-1")
+        assert 'state_class="starting"' in text
+        assert 'state_class="stalled"' in text
+        assert "orcho_run_diagnose" in text
+        assert "orcho_run_cancel" in text
+        assert "Do **not** resume or" in text
+        assert "re-enter the watch loop" in text
+
     def test_template_recommends_bounded_timeout(self) -> None:
         """A short bounded watch is the whole point — the template must
         surface timeout_s rather than leaning on the 1h default."""

@@ -1256,6 +1256,7 @@ _CONDITION_CLOSED_BY_FOLLOWUP = "closed_by_followup"
 _CONDITION_BLOCKED_WORKTREE = "blocked_worktree"
 _CONDITION_RECOVER_VIA_SOURCE_RUN = "recover_via_source_run"
 _CONDITION_RESUME_INERT_TERMINAL = "resume_inert_terminal"
+_CONDITION_STALLED = "stalled"
 _CONDITION_ACTIVE = "active"
 
 # Conditions where core's ``run_diagnosis`` already encodes the correct
@@ -1275,6 +1276,7 @@ _CORE_RESOLVED_CONDITIONS = frozenset({
     _CONDITION_RECOVER_VIA_SOURCE_RUN,
     _CONDITION_RESUME_INERT_TERMINAL,
     _CONDITION_CLOSED_BY_FOLLOWUP,
+    _CONDITION_STALLED,
 })
 
 
@@ -1788,6 +1790,23 @@ def _project_run_diagnosis(
             missing_facts=list(diagnosis.missing_facts),
             source_run_id=diagnosis.source_run_id,
             recommended_run_id=diagnosis.recommended_run_id,
+            recovery_lineage=recovery_lineage,
+        )
+
+    # (8) stalled — core observed an over-budget startup with no durable
+    # progress. MCP deliberately does not read startup_command.json, event
+    # sizes, timestamps, or PID data itself: preserve core's verdict, reason,
+    # and diagnosis-only recommendation verbatim.
+    if cond == _CONDITION_STALLED:
+        return RunDiagnosisProjection(
+            condition=cond,
+            reason=diagnosis.reason,
+            run_id=run_id,
+            status=status,
+            halt_reason=halt_reason,
+            parent_run_id=parent_run_id,
+            continuation_subject=diagnosis.continuation_subject,
+            recommended_next_action=diagnosis.recommended_next_action,
             recovery_lineage=recovery_lineage,
         )
 

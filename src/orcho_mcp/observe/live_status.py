@@ -70,6 +70,8 @@ _LIVE_ACTIVITY_PREVIEW_MAX = 256
 # State-class labels — mirror the closed ``RunLiveStatusCard.state_class``
 # Literal so the classifier stays in one vocabulary.
 _StateClass = Literal[
+    "starting",
+    "stalled",
     "running_phase",
     "running_subtask",
     "awaiting_handoff",
@@ -111,6 +113,7 @@ _NON_RESUMABLE_CONDITIONS = frozenset({
     "blocked_worktree",
     "recover_via_source_run",
     "resume_inert_terminal",
+    "stalled",
     "active",
 })
 
@@ -137,9 +140,11 @@ def _resume_meaningful_from_diagnosis(diag: RunDiagnosisProjection) -> bool:
 
 def _classify_state(
     status: str | None,
+    current_phase: str | None,
     current_subtask: CurrentSubtaskRecord | None,
     tc: TerminalConsistencyProjection,
     pending: PendingHandoffSummary | None,
+    diagnosis: RunDiagnosisProjection,
 ) -> _StateClass:
     """Classify the run's live state into one closed ``state_class``.
 
@@ -147,10 +152,9 @@ def _classify_state(
     decision even when stale terminal fields sit underneath; a terminal
     success whose final_acceptance contradicts it surfaces as
     ``terminal_inconsistent`` (never hidden); otherwise a halted / failed
-    terminal, then a running subtask, then a running phase. A non-running,
-    non-terminal pause the closed Literal cannot name (e.g.
-    ``awaiting_gate_decision``) falls through conservatively to
-    ``running_phase`` ("still in progress, keep polling").
+    terminal, then a running subtask. A core-classified startup stall follows
+    those existing priorities. ``running_phase`` requires a real open phase;
+    every remaining phase-empty, non-terminal position is ``starting``.
     """
     if pending is not None:
         return "awaiting_handoff"
@@ -160,7 +164,11 @@ def _classify_state(
         return "terminal_halted"
     if current_subtask is not None:
         return "running_subtask"
-    return "running_phase"
+    if diagnosis.condition == "stalled":
+        return "stalled"
+    if current_phase is not None:
+        return "running_phase"
+    return "starting"
 
 
 def _build_last_activity(
@@ -262,6 +270,7 @@ def _live_next_action(
     state_class: _StateClass,
     pending: PendingHandoffSummary | None,
     resume_meaningful: bool,
+    diagnosis: RunDiagnosisProjection,
     superseded_child: str | None = None,
     disposition: DeliveryDisposition = _EMPTY_DISPOSITION,
 ) -> str:
@@ -283,6 +292,21 @@ def _live_next_action(
             "decide via orcho_phase_handoff_decide, then orcho_run_resume "
             "to continue"
         )
+    if state_class == "stalled":
+        # ``inspect_or_cancel`` is core's diagnosis-only verdict. The card
+        # never promotes a foreign/inspect-only run into a ready mutation.
+        if diagnosis.recommended_next_action == "inspect_or_cancel":
+            if diagnosis.control == "mcp_controllable":
+                return (
+                    "startup is stalled — inspect orcho_run_status and "
+                    "orcho_run_evidence, then orcho_run_cancel if appropriate"
+                )
+            return (
+                "startup is stalled — inspect orcho_run_status and "
+                "orcho_run_evidence; this MCP server cannot cancel a "
+                "foreign run"
+            )
+        return "startup is stalled — inspect orcho_run_status and orcho_run_evidence"
     if state_class == "terminal_inconsistent":
         return (
             "run reports terminal success but final_acceptance is REJECTED — "
@@ -308,6 +332,8 @@ def _live_next_action(
             "inspect orcho_run_evidence for findings and orcho_run_diff for "
             "changes"
         )
+    if state_class == "starting":
+        return "poll orcho_run_live_status for startup progress"
     return "poll orcho_run_live_status (or orcho_run_watch) for further progress"
 
 
@@ -357,15 +383,26 @@ def build_run_live_status(run_id: str) -> RunLiveStatusCard:
     # (it only resolves findings/default_action when actually paused).
     hint = build_handoff_hint(run_id, snap)
 
-    state_class = _classify_state(status, snap.current_subtask, tc, pending)
+    # Diagnose exactly once per card. The core-owned condition drives both the
+    # state class and the action wording; this module never re-checks startup
+    # liveness artifacts (timestamps, event sizes, output, or PID state).
+    diagnosis = project_run_diagnosis(run_id)
+    state_class = _classify_state(
+        status,
+        snap.current_phase,
+        snap.current_subtask,
+        tc,
+        pending,
+        diagnosis,
+    )
 
     # ``resume_meaningful`` (and the terminal next_action) come from the single
     # unified ``project_run_diagnosis`` authority — the same classifier behind
     # ``orcho_run_diagnose`` and the resume pre-flight — so the live card never
     # advertises a resume those surfaces would block. Only terminal cards carry
     # ``resume_meaningful``; the running / awaiting paths do not need it, so the
-    # heavier diagnosis (lineage + gate reads) stays off the hot poll path and
-    # is computed lazily only for a terminal ``state_class``.
+    # diagnosis is already computed above for the state/action contract and is
+    # reused here rather than read again for terminal cards.
     resume_meaningful = False
     provider_pressure: ProviderPressure | None = None
     # The delivery disposition is a terminal-only read: computed lazily here so
@@ -373,9 +410,7 @@ def build_run_live_status(run_id: str) -> RunLiveStatusCard:
     # read. Defaults to the empty disposition for every non-terminal card.
     disposition = _EMPTY_DISPOSITION
     if state_class in _TERMINAL_CLASSES:
-        resume_meaningful = _resume_meaningful_from_diagnosis(
-            project_run_diagnosis(run_id),
-        )
+        resume_meaningful = _resume_meaningful_from_diagnosis(diagnosis)
         # Core-typed provider pressure, from the SAME source + shared helper as
         # status / diagnose / evidence / summary. Only meaningful on a terminal
         # card; the running / awaiting paths skip it to keep the hot poll cheap.
@@ -407,6 +442,7 @@ def build_run_live_status(run_id: str) -> RunLiveStatusCard:
             state_class,
             pending,
             resume_meaningful,
+            diagnosis,
             tc.superseded_by_followup,
             disposition,
         )
