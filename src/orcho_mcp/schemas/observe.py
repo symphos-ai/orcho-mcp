@@ -949,6 +949,11 @@ class RunLiveStatusCard(BaseModel):
 
     ``state_class`` is the single classification a caller branches on:
 
+    - ``starting`` — a non-terminal run has no open phase or subtask yet;
+      polling is healthy while startup progresses;
+    - ``stalled`` — core diagnosed an over-budget startup with no durable
+      progress; inspect it and, when MCP owns the run, cancel it rather than
+      resuming or watching it as active;
     - ``running_phase`` — executing a phase, no subtask in flight;
     - ``running_subtask`` — executing a ``subtask_dag`` subtask
       (``current_subtask`` carries index/total/goal/state);
@@ -968,6 +973,8 @@ class RunLiveStatusCard(BaseModel):
                     "fallback). Same value ``orcho_run_status`` returns.",
     )
     state_class: Literal[
+        "starting",
+        "stalled",
         "running_phase",
         "running_subtask",
         "awaiting_handoff",

@@ -147,6 +147,7 @@ flowchart TD
     Active{"condition = active?"}
     Handoff{"condition = needs_decision?"}
     Delivery{"delivery decision condition?"}
+    Stalled{"condition = stalled?"}
     Redirect{"redirected continuation?"}
     Resumable{"resumable stop?"}
     Terminal{"inert terminal?"}
@@ -159,7 +160,9 @@ flowchart TD
     Handoff -->|no| Delivery
     Delivery -->|yes| Gate["orcho_delivery_gate"]
     Gate --> GateDecision["operator chooses an available delivery action"]
-    Delivery -->|no| Redirect
+    Delivery -->|no| Stalled
+    Stalled -->|yes| StallInspect["diagnose / inspect; cancel only when MCP-controllable"]
+    Stalled -->|no| Redirect
     Redirect -->|source checkpoint| ResumeSource["resume recommended_run_id"]
     Redirect -->|active child| ResumeChild["resume recommended_run_id"]
     Redirect -->|plan artifact| PlanRun["start a new run with from_run_plan"]
@@ -266,7 +269,7 @@ Two read-side boundaries follow from the same gap:
 
 - `orcho_run_live_status` is a single-project card whose closed `state_class`
   vocabulary has no cross-gate value. An `awaiting_gate_decision` run falls
-  back to `running_phase`; cross captains must branch on
+  back to phase-empty `starting`, never `running_phase`; cross captains must branch on
   `orcho_run_status.meta.status` and the event-summary pending action instead.
 - `orcho_workspace_pending_decisions` is currently a phase-handoff inbox. It
   does not unify runner-owned cross gates and post-release delivery decisions
@@ -368,6 +371,11 @@ pretend the mutation succeeded.
 
 Control authority is independent of lifecycle state. A run can be active,
 paused, or terminal and still be `inspect_only`.
+
+For a core-classified `stalled` startup, this axis gates the only mutation the
+diagnosis permits: `mcp_controllable` may receive `orcho_run_cancel` after
+inspection, while `inspect_only` receives diagnosis/status/evidence only.
+Neither branch resumes or watches the stalled run as active.
 
 ## `next_actions` execution contract
 

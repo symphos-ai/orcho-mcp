@@ -2,12 +2,15 @@
 
 ``project_run_diagnosis`` is the single typed classifier shared by the
 resume pre-flight guard (GC-2) and ``orcho_run_diagnose`` (GC-1). These
-tests pin all six priority branches and the deterministic priority order:
+tests pin the priority branches and the deterministic priority order:
 ``needs_decision`` outranks everything, an active follow-up child
 supersedes an otherwise-inert terminal parent, and a blocked follow-up
 worktree recommends the parent only when the parent is known.
 """
 from __future__ import annotations
+
+import json
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sdk import phase_handoff_decide
@@ -612,6 +615,75 @@ def test_diagnose_active_watch_and_status(fake_workspace):
     assert tools == {"orcho_run_watch", "orcho_run_status"}
     assert all(na.kind == "ready_call" for na in diag.next_actions)
     assert all(na.args == {"run_id": "20260101_000001"} for na in diag.next_actions)
+
+
+def test_core_startup_stall_projects_to_diagnose_without_resume_or_watch(
+    fake_workspace,
+):
+    """MCP forwards core's real startup-artifact verdict without reading it."""
+    run_id = "20260101_000001"
+    run_dir = write_run(
+        fake_workspace,
+        run_id,
+        meta=meta(status="running", project="/p/x", task="t"),
+        supervisor_state=supervisor_state(
+            run_id=run_id, status="running", project_dir="/p/x",
+        ),
+    )
+    # The startup artifact is intentionally created only as core's durable
+    # classifier input. MCP production code receives its verdict solely from
+    # sdk.run_control.run_diagnosis.
+    (run_dir / "startup_command.json").write_text(
+        json.dumps({
+            "armed_at": (datetime.now(UTC) - timedelta(seconds=130)).isoformat(),
+            "budget_s": 120,
+            "baseline_events_size": 0,
+            "baseline_output_size": 0,
+            "command": {"identity": "git status", "cwd": "/p/x"},
+        }),
+        encoding="utf-8",
+    )
+
+    projected = project_run_diagnosis(run_id)
+    diag = orcho_run_diagnose(run_id)
+
+    assert projected.condition == "stalled"
+    assert projected.recommended_next_action == "inspect_or_cancel"
+    assert "startup has been idle" in projected.reason
+    assert diag.condition == "stalled"
+    assert diag.recommended_next_action == "inspect_or_cancel"
+    assert diag.available_actions == []
+    tools = {action.tool for action in diag.next_actions}
+    assert tools == {"orcho_run_status", "orcho_run_evidence", "orcho_run_cancel"}
+    assert all(action.tool != "orcho_run_resume" for action in diag.next_actions)
+    assert all(action.tool != "orcho_run_watch" for action in diag.next_actions)
+
+
+def test_stalled_foreign_run_remains_inspect_only(fake_workspace):
+    """A cancel recommendation must honour the durable control boundary."""
+    run_id = "20260101_000001"
+    run_dir = write_run(
+        fake_workspace,
+        run_id,
+        meta=meta(status="running", project="/p/x", task="t"),
+    )
+    (run_dir / "startup_command.json").write_text(
+        json.dumps({
+            "armed_at": (datetime.now(UTC) - timedelta(seconds=130)).isoformat(),
+            "budget_s": 120,
+            "baseline_events_size": 0,
+            "baseline_output_size": 0,
+        }),
+        encoding="utf-8",
+    )
+
+    diag = orcho_run_diagnose(run_id)
+
+    assert diag.condition == "stalled"
+    assert diag.control == "inspect_only"
+    assert {action.tool for action in diag.next_actions} == {
+        "orcho_run_status", "orcho_run_evidence",
+    }
 
 
 @pytest.mark.parametrize(

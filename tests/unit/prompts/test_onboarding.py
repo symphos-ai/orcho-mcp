@@ -152,6 +152,17 @@ def test_watch_progress_routes_single_shot_and_long_poll_intents() -> None:
     assert re.search(r"not to check progress\s+position", watch_progress)
 
 
+def test_watch_progress_distinguishes_starting_and_stalled() -> None:
+    """Onboarding treats phase-empty startup as healthy and stalls as action."""
+    watch_progress = _section(orcho_getting_started(), "5. Watch progress")
+
+    assert "`starting` means startup is healthy" in watch_progress
+    assert "`stalled` means core found" in watch_progress
+    assert "orcho_run_diagnose" in watch_progress
+    assert "orcho_run_cancel" in watch_progress
+    assert "Do not resume or watch a" in watch_progress
+
+
 def test_quick_reference_routes_progress_to_live_status_not_status() -> None:
     """Quick-reference tool selection keeps progress and lifecycle separate."""
     quick_reference = _section(orcho_getting_started(), "Quick reference")

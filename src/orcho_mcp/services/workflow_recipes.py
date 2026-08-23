@@ -345,7 +345,11 @@ def _observe_active_run() -> WorkflowRecipe:
         description=(
             "Follow an in-flight run. Take a single-shot orcho_run_live_status "
             "for the current position (phase / subtask index/total / pause / "
-            "terminal) — the fastest 'where is the run right now' answer — then "
+            "terminal) — the fastest 'where is the run right now' answer. "
+            "state_class=starting is healthy pre-phase startup: keep polling. "
+            "state_class=stalled is actionable: diagnose and inspect it, then "
+            "cancel only if control=mcp_controllable; never resume or watch a "
+            "stalled run as active. Otherwise, "
             "keep following with a resilient observation loop: a "
             "short bounded orcho_run_watch, then orcho_run_events_summary as "
             "the reconnect fallback, then watch again. Keep timeout_s short "
@@ -369,6 +373,36 @@ def _observe_active_run() -> WorkflowRecipe:
                 # entering the continuous watch loop.
                 id="live_status",
                 tool="orcho_run_live_status",
+                args={"run_id": "${run_id}"},
+            ),
+            RecipeBranchStep(
+                id="if_stalled",
+                when={"state_class": "stalled"},
+                next="diagnose_stalled",
+            ),
+            RecipeToolStep(
+                id="diagnose_stalled",
+                tool="orcho_run_diagnose",
+                args={"run_id": "${run_id}"},
+            ),
+            RecipeToolStep(
+                id="inspect_stalled_status",
+                tool="orcho_run_status",
+                args={"run_id": "${run_id}"},
+            ),
+            RecipeToolStep(
+                id="inspect_stalled_errors",
+                tool="orcho_run_evidence",
+                args={"run_id": "${run_id}", "slice": "errors"},
+            ),
+            RecipeBranchStep(
+                id="if_stalled_mcp_controllable",
+                when={"control": "mcp_controllable"},
+                next="cancel_stalled",
+            ),
+            RecipeToolStep(
+                id="cancel_stalled",
+                tool="orcho_run_cancel",
                 args={"run_id": "${run_id}"},
             ),
             RecipeToolStep(

@@ -33,7 +33,7 @@ Observation tools share the same prefix but never touch the process:
 | Tool | Purpose |
 |---|---|
 | `orcho_run_watch` | Long-poll a live run; emits `notifications/progress` when the request carries a `progressToken`. A watch timeout is observer loss, not run failure. |
-| `orcho_run_live_status` | Lightweight live-progress projection for a running pipeline. |
+| `orcho_run_live_status` | Lightweight live-progress projection: healthy phase-empty startup is `starting`; a core-owned startup stall is `stalled` and routes to diagnosis/inspection rather than resume/watch. |
 | `orcho_run_events_summary` | Aggregated event-stream projection (counts per kind/phase). |
 | `orcho_run_diff` | What changed? File stats, bounded preview, or full patch from the run's retained diff, optionally scoped to a path or phase. |
 
@@ -827,6 +827,7 @@ terminal parent.
 | `condition` | Meaning | `next_actions` |
 |---|---|---|
 | `active` | Running. | `ready_call` `orcho_run_watch` + `orcho_run_status` — no resume needed. |
+| `stalled` | Core observed that a running startup exceeded its durable progress budget. | Inspect `orcho_run_status` and `orcho_run_evidence(slice="errors")`; `orcho_run_cancel(run_id)` is ready only when `control="mcp_controllable"`. `available_actions=[]`; never resume or watch. |
 | `needs_decision` | Paused on `awaiting_phase_handoff`; an operator must record a decision first. | Typed decide calls (see below); `available_actions` carries the verbs. |
 | `needs_delivery_decision` | Parked at a post-release delivery / correction gate. | Inspect `orcho_delivery_gate`; choose one of its ready `orcho_delivery_decide` calls. |
 | `recover_via_source_run` | This run is a terminal / rejected recovery run, but durable lineage points at a *resumable source* run that still owns the retained checkpoint / worktree. | `ready_call` `orcho_run_resume(run_id=recommended_run_id)` — resume the source, **not** a `from_run_plan` against this inert run. |
