@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from mcp.server.fastmcp import FastMCP
 
+from orcho_mcp import __version__
+
 # Server-level intent→tool map. Clients read this to pick the right tool by
 # what they want to do, instead of scanning every tool description. Keep it
 # compact and neutral; the per-tool docstrings carry the detail.
@@ -31,3 +33,14 @@ orcho_handoff_advice), then orcho_run_resume to continue
 For live progress prefer orcho_run_live_status over orcho_run_status."""
 
 mcp = FastMCP("orcho", instructions=INSTRUCTIONS)
+
+# Report Orcho's own version in the ``initialize`` handshake's ``serverInfo``.
+# FastMCP takes no ``version=`` across our supported SDK range (``mcp>=1.2,<2``)
+# and never forwards one to the low-level server it builds, so that server's
+# ``create_initialization_options()`` falls back to ``pkg_version("mcp")`` —
+# publishing the *SDK's* version under Orcho's name (e.g. "orcho 1.29.1", a
+# release Orcho has never cut). Setting it here is the only lever the SDK
+# offers, and it keeps a single owner for version identity: ``__version__``
+# reads the installed ``orcho-mcp`` distribution metadata, so this can't drift
+# from ``pyproject.toml`` on the next release.
+mcp._mcp_server.version = __version__
