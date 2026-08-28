@@ -190,11 +190,17 @@ def _resolve_raw_findings(
     Source precedence:
       1. ``meta.phase_handoff.findings`` when it is a **non-empty** list —
          preserves the runtime's curated set;
-      2. ``list_findings(run_id, phases=(phase,))`` as a defensive
-         fallback when meta does not carry findings, including the
-         ``findings: []`` shape (empty list = "not embedded here",
+      2. ``meta.phase_handoff.artifacts.findings`` — where the engine's
+         payload builder actually nests them. A verification-gate pause
+         carries its severity, body and required fix only here, so reading
+         the top level alone reported every gate rejection with a null
+         ``findings_summary``: the operator was told the run was REJECTED
+         and nothing about what to fix;
+      3. ``list_findings(run_id, phases=(phase,))`` as a defensive
+         fallback when meta carries findings in neither place, including
+         the ``findings: []`` shape (empty list = "not embedded here",
          evidence may still have something);
-      3. ``[]`` on any failure or empty result — the handoff read-model
+      4. ``[]`` on any failure or empty result — the handoff read-model
          must never block on the evidence path.
 
     Returns the untrimmed source items; observe owns the bounded
@@ -203,6 +209,10 @@ def _resolve_raw_findings(
     raw = handoff_payload.get("findings")
     if isinstance(raw, list) and raw:
         return list(raw)
+    artifacts = handoff_payload.get("artifacts")
+    nested = artifacts.get("findings") if isinstance(artifacts, dict) else None
+    if isinstance(nested, list) and nested:
+        return list(nested)
     try:
         phases_kw = (phase,) if phase else None
         sdk_results = _sdk_list_findings(run_id, runs_dir=runs_dir, cwd=None, phases=phases_kw)

@@ -40,7 +40,10 @@ class RunsSupervisor:
 
     Spawns / tracks / cancels / reaps pipeline subprocesses. Recovery on
     restart scans the runs directory for stale ``mcp_supervisor.json`` files
-    and either re-attaches (live pid) or marks orphaned (dead pid).
+    and marks orphaned the ``running`` entries whose pid is dead; a live pid
+    is left alone (without a ``Popen`` we cannot reap it properly). The probe
+    is driven once per process by ``orcho_mcp.server._recover_abandoned_runs``
+    — it settles nothing unless something calls it.
     """
 
     def __init__(self, max_runs: int | None = None):
