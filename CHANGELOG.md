@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+## 0.8.2 - 2026-08-29
+
+Two defects that made a paused or abandoned run unreadable from the client
+side, both found in a field report against 0.8.5.
+
+### Changed
+
+- Requires `orcho-core` 0.9.0. That release makes the dead-run detection this
+  server relays actually fire: the liveness predicate behind `stalled` could
+  never become true on a real run, so `orcho_run_diagnose` answered `active`
+  for runs whose processes had been gone for hours.
+
+### Fixed
+
+- A paused verification gate now tells the operator what was rejected. The
+  engine writes its findings — severity, evidence, and the required fix —
+  under `meta.phase_handoff.artifacts.findings`; this server read only the
+  payload's top level, so every gate pause arrived as `verdict: REJECTED` with
+  `findings_summary: null` and nothing to act on. The reader now consults both,
+  and a contract test drives it from the engine's own payload builder rather
+  than a hand-written fixture, which is how the mismatch survived.
+- A run abandoned by a dead server process is settled instead of being
+  reported as live work forever. Runs are detached children reaped by a task
+  inside this process; when the process itself goes away — a client restart, or
+  a kill that takes the tree with it — nothing is left to record that the run
+  ended. The recovery probe that exists for exactly this was never called
+  outside the test suite. It now runs once per server start, before the first
+  client request, and marks orphaned only those `running` entries whose
+  recorded pid is proven dead. A probe failure is reported on stderr and never
+  blocks startup.
+
+
 ## 0.8.1 - 2026-08-23
 
 ### Changed
