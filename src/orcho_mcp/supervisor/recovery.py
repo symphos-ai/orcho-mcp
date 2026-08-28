@@ -11,7 +11,9 @@ re-attach.
 
 Composed into ``RunsSupervisor`` via a thin delegation method in
 ``manager.py``; this module exports the operation as a top-level
-function that takes the supervisor as its first argument.
+function that takes the supervisor as its first argument. It is driven
+once per server process by ``orcho_mcp.server._recover_abandoned_runs``,
+before the first client request.
 """
 from __future__ import annotations
 

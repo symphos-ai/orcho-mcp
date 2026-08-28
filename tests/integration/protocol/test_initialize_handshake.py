@@ -11,6 +11,8 @@ provides both server and client).
 """
 from __future__ import annotations
 
+import importlib.metadata
+
 import pytest
 
 pytest.importorskip("mcp.client.stdio")
@@ -74,6 +76,33 @@ async def test_initialize_returns_empty_catalog():
         # Don't pin the exact set — _prompts/ evolves. Just verify the
         # canonical implement prompt is registered.
         assert "tasks/implement" in prompt_names
+
+
+@pytest.mark.anyio
+async def test_initialize_reports_orcho_version_not_sdk_version():
+    """``serverInfo.version`` is Orcho's version, never the MCP SDK's.
+
+    FastMCP accepts no ``version=`` and doesn't forward one to the low-level
+    server, whose ``create_initialization_options()`` then falls back to
+    ``pkg_version("mcp")``. That published the SDK's version under Orcho's
+    name (the observed "orcho 1.29.1", a release Orcho never cut), so a user
+    saw a third, wrong number alongside PyPI's and ``orcho --version``'s.
+
+    Compares against ``orcho_mcp.__version__`` rather than a literal: both
+    read the installed distribution metadata, so the assertion holds under
+    editable, wheel, and source-checkout installs alike.
+    """
+    import orcho_mcp
+
+    async with initialized_stdio_session() as (_session, init_result):
+        assert init_result.serverInfo.name == "orcho"
+        assert init_result.serverInfo.version == orcho_mcp.__version__
+
+        # The actual regression guard: the SDK fallback must not be what we
+        # publish. Skipped in the unlikely event the two genuinely coincide.
+        sdk_version = importlib.metadata.version("mcp")
+        if orcho_mcp.__version__ != sdk_version:
+            assert init_result.serverInfo.version != sdk_version
 
 
 @pytest.fixture

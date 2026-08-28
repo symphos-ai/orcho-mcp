@@ -67,6 +67,43 @@ def _register_handlers() -> None:
     register_inspect_only_error_delivery(mcp)
 
 
+def _recover_abandoned_runs() -> None:
+    """Flip runs abandoned by a previous server process to ``orphaned``.
+
+    A run is a detached child of this server, reaped by an asyncio task
+    inside it. When the server process itself goes away — a client restart,
+    or a kill that takes the whole process tree with it — that task dies
+    with the process, and nothing is left to record that the run ended:
+    ``mcp_supervisor.json`` keeps saying ``running``, ``meta.json`` keeps
+    saying ``running``, and every read surface keeps reporting a run that
+    ceased to exist as live work.
+
+    The supervisor's recovery probe exists for exactly that, and only helps
+    if something calls it. It runs once per server start, before the first
+    client request, and touches only ``running`` entries whose recorded pid
+    is proven dead — a live run under another supervisor is left alone, and
+    a paused (``awaiting_phase_handoff``) run is not an orphan even though
+    its pid is expected to be gone.
+
+    Never fatal: a failed probe leaves exactly the stale state it was meant
+    to clear, which is not a reason to refuse to start. Diagnostics go to
+    stderr — stdio stdout carries protocol frames only.
+    """
+    from orcho_mcp.supervisor import get_supervisor
+
+    try:
+        orphaned = get_supervisor().recover()
+    except Exception as exc:  # noqa: BLE001 — startup must survive any probe failure
+        print(f"orcho-mcp: run recovery skipped ({exc})", file=sys.stderr)
+        return
+    if orphaned:
+        print(
+            f"orcho-mcp: marked {len(orphaned)} abandoned run(s) orphaned: "
+            + ", ".join(orphaned),
+            file=sys.stderr,
+        )
+
+
 def main(argv: list[str] | None = None) -> int:
     """Console-script entry. Parse args, then hand control to FastMCP's stdio loop."""
     parser = argparse.ArgumentParser(
@@ -93,6 +130,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.parse_args(argv)
     _register_handlers()
+    _recover_abandoned_runs()
     anyio.run(run_stdio_with_resource_notifications, mcp)
     return 0
 
