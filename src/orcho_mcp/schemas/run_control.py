@@ -16,6 +16,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from orcho_mcp.schemas.criteria import CriterionReadinessField, omit_absent_keys
 from orcho_mcp.schemas.shared import (
     ContinuationSubjectLiteral,
     NextActionRecord,
@@ -880,6 +881,10 @@ class RunDiagnosis(BaseModel):
                     "``mcp_supervisor.json`` exists). ``None`` when ``control`` "
                     "is ``None``.",
     )
+    criterion_readiness: CriterionReadinessField = None
+
+    # Absent key, not a null field — see ``RunStatus.criterion_readiness``.
+    _omit = omit_absent_keys("criterion_readiness")
 
 
 __all__ = [

@@ -197,7 +197,9 @@ def test_plan_allowed_modifications_from_parsed_plan(fake_workspace) -> None:
         parsed_plan={
             "short_summary": "s",
             "planning_context": "pc",
-            "tasks": [],
+            # Core validates the durable plan body: a real plan has at
+            # least one task, and (ADR 0188) typed acceptance criteria.
+            "tasks": [{"id": "T1", "goal": "do the thing"}],
             "allowed_modifications": ["docs/**", "src/util/*.py"],
         },
     )
@@ -228,7 +230,9 @@ def test_all_slice_carries_advisory_and_allowed_modifications(fake_workspace) ->
         parsed_plan={
             "short_summary": "s",
             "planning_context": "pc",
-            "tasks": [],
+            # Core validates the durable plan body: a real plan has at
+            # least one task, and (ADR 0188) typed acceptance criteria.
+            "tasks": [{"id": "T1", "goal": "do the thing"}],
             "allowed_modifications": ["docs/**"],
         },
     )

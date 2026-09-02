@@ -6,7 +6,11 @@ one-line shims. Tests call the handlers as plain Python functions.
 """
 from __future__ import annotations
 
+import json
+
 import pytest
+from pipeline.plan_artifacts import write_parsed_plan_artifact
+from pipeline.plan_parser import parse_plan
 
 from orcho_mcp.errors import RunNotFoundError
 from orcho_mcp.schemas.read import PhaseCost, RunEconomics
@@ -224,7 +228,13 @@ def _write_run_with_artefacts(
         meta=meta(status="running", project="/p/x", task="t"),
     )
     if parsed_plan:
-        (run_dir / "parsed_plan.json").write_text("{\"x\": 1}", encoding="utf-8")
+        plan = parse_plan(json.dumps({
+            "short_summary": "artefact presence fixture",
+            "planning_context": "status reader",
+            "acceptance_criteria": [],
+            "tasks": [{"id": "t1", "goal": "inspect artefacts"}],
+        }))
+        write_parsed_plan_artifact(run_dir, plan, attempt=1)
     if diff:
         (run_dir / "diff.patch").write_text(
             "diff --git a/x b/x\n+ hi\n", encoding="utf-8",

@@ -325,3 +325,253 @@ def test_run_status_schema_publishes_lossless_cross_execution_graph() -> None:
     assert operation["properties"]["executor"]["enum"] == [
         "child_phase", "child_scheduled_gate",
     ]
+
+
+def test_criterion_contract_is_published_on_the_read_and_action_surface():
+    """M8: the ADR 0188 contract clients see is the one MCP promises.
+
+    Pins the shapes a client branches on — the discriminated ``method``, the
+    state enum in core's canonical order, the summary keys — and the two
+    absence rules that a Pydantic default would silently violate:
+    ``criterion_matrix`` and the unused human-decision keys are published as
+    optional NON-NULLABLE properties, so no client is told to expect ``null``.
+    """
+    committed = _load_committed_schema()
+    evidence = next(
+        t for t in committed["tools"] if t["name"] == "orcho_run_evidence"
+    )
+    defs = evidence["outputSchema"]["$defs"]
+
+    assert {
+        "CriterionMatrixRecord",
+        "CriterionMatrixSummaryRecord",
+        "CriterionRowRecord",
+        "CriterionGateRefRecord",
+        "CriterionProofRefRecord",
+        "CriterionMethodGates",
+        "CriterionMethodInspection",
+        "CriterionMethodManual",
+        "PlanCriterionRecord",
+        "TaskAcceptanceRefsRecord",
+    } <= set(defs)
+
+    # The snapshot key-sorts schema objects, so this pins the property SET;
+    # payload key ORDER is pinned by the byte-equivalence tests against the
+    # core SDK, which is where it is actually load-bearing.
+    row = defs["CriterionRowRecord"]["properties"]
+    assert set(row) == {
+        "criterion_id", "intent", "verify", "executors", "method",
+        "proof_refs", "state", "reason", "blocking",
+    }
+    assert row["verify"]["enum"] == ["executable", "agent_assertion", "human"]
+    assert row["state"]["enum"] == [
+        "proven", "failed", "stale", "missing", "not_selected",
+        "advisory", "accepted", "rejected", "pending",
+    ]
+    assert row["method"]["discriminator"] == {
+        "propertyName": "kind",
+        "mapping": {
+            "gates": "#/$defs/CriterionMethodGates",
+            "inspection": "#/$defs/CriterionMethodInspection",
+            "manual": "#/$defs/CriterionMethodManual",
+        },
+    }
+    # Each arm declares only its own keys — no null placeholders.
+    assert set(defs["CriterionMethodGates"]["properties"]) == {"kind", "gate_refs"}
+    assert set(defs["CriterionMethodInspection"]["properties"]) == {"kind"}
+    assert set(defs["CriterionMethodManual"]["properties"]) == {
+        "kind", "instructions",
+    }
+    assert defs["CriterionProofRefRecord"]["properties"]["kind"]["enum"] == [
+        "receipt", "finding", "claim", "human_decision",
+    ]
+    assert set(defs["CriterionMatrixSummaryRecord"]["properties"]) == {
+        "total", "blocking_open", "ready", "counts_by_state",
+        "pending_human_ids",
+    }
+
+    # Absent, not null: a plain ``$ref`` with no ``anyOf: [..., null]`` arm,
+    # and not required.
+    matrix = evidence["outputSchema"]["properties"]["criterion_matrix"]
+    assert matrix["$ref"] == "#/$defs/CriterionMatrixRecord"
+    assert "anyOf" not in matrix
+    assert "criterion_matrix" not in evidence["outputSchema"].get("required", [])
+
+    # Typed criteria on the plan slice — never a list of strings.
+    criteria = defs["PlanSliceRecord"]["properties"]["acceptance_criteria"]
+    assert criteria["items"] == {"$ref": "#/$defs/PlanCriterionRecord"}
+
+    # The durable decision log is readable from the same tool, so a client
+    # that reconnects can resolve a ``human_decision`` proof ref.
+    decisions = evidence["outputSchema"]["properties"]["criterion_decisions"]
+    assert {"$ref": "#/$defs/HumanCriterionDecisionRecord"} in [
+        arm.get("items", {}) for arm in decisions["anyOf"] if "items" in arm
+    ]
+
+
+def test_published_criterion_schema_is_as_strict_as_the_contract():
+    """The schema clients validate against must not be weaker than the contract.
+
+    A permissive schema is worse than no schema: it invites a client to trust
+    a shape MCP does not actually guarantee, and it lets a truncated payload
+    pass as valid. Each assertion below is a rule the interface contract
+    states — required keys, non-empty collections, the id grammar — expressed
+    where a client can actually see it.
+    """
+    committed = _load_committed_schema()
+    evidence = next(
+        t for t in committed["tools"] if t["name"] == "orcho_run_evidence"
+    )
+    defs = evidence["outputSchema"]["$defs"]
+
+    # Every row key is mandatory — none may be defaulted in by a reader.
+    assert set(defs["CriterionRowRecord"]["required"]) == {
+        "criterion_id", "intent", "verify", "executors", "method",
+        "proof_refs", "state", "reason", "blocking",
+    }
+    # A criterion always has an owner.
+    assert defs["CriterionRowRecord"]["properties"]["executors"]["minItems"] == 1
+    # Row and criterion ids follow the ADR 0188 grammar.
+    assert defs["CriterionRowRecord"]["properties"]["criterion_id"]["pattern"] == (
+        "^C[1-9][0-9]*$"
+    )
+    assert defs["PlanCriterionRecord"]["properties"]["id"]["pattern"] == (
+        "^C[1-9][0-9]*$"
+    )
+    # A ``gates`` method names at least one gate; a ``manual`` one carries text.
+    assert defs["CriterionMethodGates"]["properties"]["gate_refs"]["minItems"] == 1
+    assert defs["CriterionMethodManual"]["properties"]["instructions"][
+        "minLength"
+    ] == 1
+    # A gate identity needs a real command and hook (``phase`` may be empty for
+    # the non-phase-anchored hooks).
+    gate = defs["CriterionGateRefRecord"]["properties"]
+    assert gate["command"]["minLength"] == 1
+    assert gate["hook"]["minLength"] == 1
+    assert "minLength" not in gate["phase"]
+    # Every summary key is mandatory and the counters are non-negative.
+    assert set(defs["CriterionMatrixSummaryRecord"]["required"]) == {
+        "total", "blocking_open", "ready", "counts_by_state", "pending_human_ids",
+    }
+    summary = defs["CriterionMatrixSummaryRecord"]["properties"]
+    assert summary["total"]["minimum"] == 0
+    assert summary["blocking_open"]["minimum"] == 0
+    # The matrix cannot be conjured from a partial payload.
+    assert set(defs["CriterionMatrixRecord"]["required"]) == {"rows", "summary"}
+
+    # ``counts_by_state`` is a closed contract, not a free mapping: only known
+    # states, only positive counts.
+    counts = defs["CriterionMatrixSummaryRecord"]["properties"]["counts_by_state"]
+    assert counts["propertyNames"]["enum"] == [
+        "proven", "failed", "stale", "missing", "not_selected",
+        "advisory", "accepted", "rejected", "pending",
+    ]
+    assert counts["additionalProperties"] == {
+        "exclusiveMinimum": 0, "type": "integer",
+    }
+
+    # No criterion model accepts an unknown key. Pydantic's default is to DROP
+    # one, which would let MCP repair a malformed core payload into a
+    # plausible-looking wire payload; the published schema says otherwise.
+    for name in (
+        "CriterionGateRefRecord",
+        "PlanCriterionRecord",
+        "TaskAcceptanceRefsRecord",
+        "CriterionMethodGates",
+        "CriterionMethodInspection",
+        "CriterionMethodManual",
+        "CriterionProofRefRecord",
+        "CriterionRowRecord",
+        "CriterionMatrixSummaryRecord",
+        "CriterionMatrixRecord",
+    ):
+        assert defs[name]["additionalProperties"] is False, name
+
+
+def test_criterion_decide_publishes_an_optional_verdict_and_both_outcomes():
+    """M8: the elicitation path is reachable through the generated schema.
+
+    ``decision`` must be optional on the INPUT schema — that is what lets a
+    client call the tool without a verdict and reach the elicitation /
+    operator-input branch instead of failing validation at the boundary.
+    """
+    committed = _load_committed_schema()
+    tool = next(
+        t for t in committed["tools"] if t["name"] == "orcho_criterion_decide"
+    )
+
+    props = tool["inputSchema"]["properties"]
+    assert tool["inputSchema"]["required"] == ["run_id", "criterion_id"]
+    assert props["decision"]["anyOf"][0]["enum"] == ["accept", "reject"]
+
+    defs = tool["outputSchema"]["$defs"]
+    assert {
+        "CriterionDecisionRecordedResult",
+        "CriterionDecisionInputRequiredResult",
+        "HumanCriterionDecisionRecord",
+    } <= set(defs)
+
+    decision = defs["HumanCriterionDecisionRecord"]
+    assert set(decision["required"]) == {
+        "decision_id", "run_id", "criterion_id", "decision", "recorded_at",
+    }
+    # The optional audit keys are optional, non-nullable, and non-empty when
+    # present — the three properties together are what make "absent" the only
+    # legitimate spelling of "unused".
+    for key in ("note", "actor", "supersedes"):
+        assert decision["properties"][key] == {
+            "minLength": 1,
+            "title": key.replace("_", " ").title(),
+            "type": "string",
+        }, key
+    # ``recorded_at`` is an opaque string, not a format-coerced datetime.
+    assert decision["properties"]["recorded_at"]["type"] == "string"
+    assert "format" not in decision["properties"]["recorded_at"]
+    assert decision["additionalProperties"] is False
+
+    # A recorded decision may report an unavailable readback WITHOUT
+    # retracting the decision — both keys absent-not-null.
+    recorded = defs["CriterionDecisionRecordedResult"]["properties"]
+    assert recorded["matrix"]["$ref"] == "#/$defs/CriterionMatrixRecord"
+    assert "anyOf" not in recorded["matrix"]
+    assert recorded["matrix_error"]["type"] == "string"
+    assert set(defs["CriterionDecisionRecordedResult"]["required"]) == {
+        "run_id", "criterion_id", "decision",
+    }
+
+
+def test_criterion_descriptions_teach_the_trust_discipline():
+    """M11: the published descriptions tell captains what counts as proof.
+
+    The M11 claim is an ``agent_assertion`` — a reviewer reads the tool text
+    and judges whether it teaches the right instinct. This test does not
+    replace that judgement; it pins the specific load-bearing sentences so a
+    later edit cannot quietly delete them and leave the reviewed claim
+    describing text that no longer exists.
+
+    The instinct being taught: proof comes from official receipts and typed
+    human decisions. Prose does not become proof by being confident.
+    """
+    committed = _load_committed_schema()
+    descriptions = {
+        tool["name"]: tool.get("description") or "" for tool in committed["tools"]
+    }
+
+    evidence = descriptions["orcho_run_evidence"]
+    assert "Trust discipline" in evidence
+    assert "only a fresh official gate receipt" in evidence
+    assert "only a typed human decision" in evidence
+    assert (
+        "a developer claim, a\n        reviewer finding, a transcript command, "
+        "or a command-name-only match\n        is NEVER proof" in evidence
+    )
+    assert "nothing here is\n        recomputed by the MCP server" in evidence
+
+    decide = descriptions["orcho_criterion_decide"]
+    assert "**Never decide on the operator's behalf.**" in decide
+    assert (
+        "Do not infer ``accept`` from a\n    passing test, a reviewer finding, "
+        "a transcript line, a phase-handoff\n    decision, or an approving "
+        "remark in chat." in decide
+    )
+    assert "Nothing is written." in decide

@@ -23,6 +23,10 @@ when a parent is the resume target it rides as the ``run_id`` arg of
 from __future__ import annotations
 
 from orcho_mcp.schemas import NextActionRecord, RecoveryLineage, RunDiagnosis
+from orcho_mcp.services.criterion_projection import (
+    gate_actions_on_criteria,
+    read_criterion_readiness,
+)
 from orcho_mcp.services.run_projection import (
     ProviderPressureProjection,
     RunDiagnosisProjection,
@@ -611,6 +615,9 @@ def inspect_run_diagnosis(run_id: str) -> RunDiagnosis:
     """
     proj = project_run_diagnosis(run_id)
     condition, next_actions = _resolve_next_actions(proj)
+    # Same single criterion projection path as status / delivery / the
+    # evidence matrix slice; never a second derivation of readiness.
+    criterion_readiness = read_criterion_readiness(run_id)
     reason = proj.reason
     provider_pressure = None
 
@@ -632,13 +639,19 @@ def inspect_run_diagnosis(run_id: str) -> RunDiagnosis:
         decision_recorded=proj.decision_artifact_exists,
         decision_state=proj.decision_state,
         decision_degraded_reason=proj.decision_degraded_reason,
-        next_actions=next_actions,
+        # Routed through the shared criterion-aware gate, so a run diagnosed
+        # as resumable still leads with the criterion only an operator can
+        # clear.
+        next_actions=gate_actions_on_criteria(
+            run_id, next_actions, criterion_readiness,
+        ),
         continuation_subject=proj.continuation_subject,
         recommended_next_action=proj.recommended_next_action,
         recovery_lineage=_recovery_lineage_wire(proj),
         provider_pressure=provider_pressure,
         control=proj.control,
         control_reason=proj.control_reason,
+        criterion_readiness=criterion_readiness,
     )
 
 

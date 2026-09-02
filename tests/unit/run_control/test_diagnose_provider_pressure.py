@@ -188,6 +188,7 @@ def test_non_residual_conditions_not_overridden(monkeypatch, condition, extra):
         return _present_runtime_pp(rid)
 
     monkeypatch.setattr(diag_mod, "project_provider_pressure", _pp)
+    monkeypatch.setattr(diag_mod, "read_criterion_readiness", lambda rid: None)
 
     d = inspect_run_diagnosis("r1")
 
@@ -220,6 +221,7 @@ def test_parked_until_reset_next_actions(monkeypatch):
             wait_hint="~30m",
         ),
     )
+    monkeypatch.setattr(diag_mod, "read_criterion_readiness", lambda rid: None)
 
     d = inspect_run_diagnosis("r1")
 
@@ -255,6 +257,7 @@ def test_exhausted_without_reset_next_actions(monkeypatch):
             retry_state="exhausted",
         ),
     )
+    monkeypatch.setattr(diag_mod, "read_criterion_readiness", lambda rid: None)
 
     d = inspect_run_diagnosis("r1")
 

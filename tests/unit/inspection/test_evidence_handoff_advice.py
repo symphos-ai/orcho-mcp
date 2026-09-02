@@ -207,6 +207,7 @@ def test_all_slice_includes_handoff_advice(monkeypatch) -> None:
     from sdk.verification_timeline import VerificationTimelineProjection
 
     import orcho_mcp.inspection.evidence as ev
+    import orcho_mcp.services.criterion_projection as cp
 
     _patch(monkeypatch, _evidence())
     # Stub every other SDK seam so slice="all" does not touch a real run.
@@ -230,6 +231,7 @@ def test_all_slice_includes_handoff_advice(monkeypatch) -> None:
             has_contract=False,
             goal="",
             acceptance_criteria=(),
+            task_acceptance_refs=(),
             owned_files=(),
             commands_to_run=(),
             risks=(),
@@ -237,6 +239,12 @@ def test_all_slice_includes_handoff_advice(monkeypatch) -> None:
         ),
     )
     monkeypatch.setattr(ev, "_sdk_list_findings", lambda *a, **k: [])
+    monkeypatch.setattr(
+        cp, "_sdk_get_criterion_matrix", lambda *a, **k: None,
+    )
+    monkeypatch.setattr(
+        cp, "_sdk_list_criterion_decisions", lambda *a, **k: [],
+    )
     monkeypatch.setattr(ev, "_sdk_list_evidence_commands", lambda *a, **k: [])
     monkeypatch.setattr(ev, "_sdk_list_evidence_artifacts", lambda *a, **k: [])
     monkeypatch.setattr(

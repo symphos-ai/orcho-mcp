@@ -96,6 +96,12 @@ from orcho_mcp.schemas import (
     VerificationReceiptRecord,
     VerificationTimelineRecord,
 )
+from orcho_mcp.services.criterion_projection import (
+    list_human_decisions,
+    project_criterion_matrix,
+    project_plan_criteria,
+    project_task_acceptance_refs,
+)
 from orcho_mcp.services.delivery_gate import (
     _extract_commit_delivery,
     _extract_delivery_branch,
@@ -785,6 +791,8 @@ def inspect_run_evidence(
         "scope_expansion",
         "delivery",
         "correction",
+        "criterion_matrix",
+        "criterion_decisions",
     }
     if slice not in valid_slices:
         raise InvalidPlanError(
@@ -843,7 +851,16 @@ def inspect_run_evidence(
                 subtask_count=p.subtask_count,
                 has_contract=p.has_contract,
                 goal=p.goal,
-                acceptance_criteria=list(p.acceptance_criteria),
+                # ADR 0188 typed criteria, forwarded from the SDK. Core's
+                # single ingress normalizer has already typed any legacy
+                # ``list[str]`` artifact, so this projection never
+                # stringifies, classifies, or invents an ID.
+                acceptance_criteria=project_plan_criteria(p.acceptance_criteria),
+                # Same SDK read, same plan: the criteria and the per-task
+                # edges that point at them can never disagree.
+                task_acceptance_refs=project_task_acceptance_refs(
+                    p.task_acceptance_refs,
+                ),
                 owned_files=list(p.owned_files),
                 commands_to_run=list(p.commands_to_run),
                 risks=list(p.risks),
@@ -1046,6 +1063,24 @@ def inspect_run_evidence(
             # ``suggested_actions`` are advisory, never auto-applied. ``None``
             # when core recorded no fixed-point block.
             out["correction"] = _project_correction(run_id)
+
+        if "criterion_decisions" in want:
+            # The durable journal behind every ``human_decision`` proof ref.
+            # A client that reconnects after a resume reads the decision
+            # itself here — the matrix only cites its id. Forwarded from core
+            # through the same single projection path; an unused optional key
+            # stays absent rather than becoming ``null``.
+            out["criterion_decisions"] = list_human_decisions(run_id)
+
+        if "criterion_matrix" in want:
+            # ADR 0188 traceability, forwarded from core through the single
+            # criterion projection path. No row state, readiness, receipt
+            # freshness, gate selection, executor, or blocking consequence is
+            # recomputed here. ``None`` means the run has NO criterion
+            # contract; ``EvidenceResult`` then omits the key entirely rather
+            # than emitting ``null``, keeping "absent" distinct from the
+            # explicit empty matrix a criteria-less new-format plan produces.
+            out["criterion_matrix"] = project_criterion_matrix(run_id)
 
         if needs_timeline:
             # Availability is guaranteed by the precondition check above. The

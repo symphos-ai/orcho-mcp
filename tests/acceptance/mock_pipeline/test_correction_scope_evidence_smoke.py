@@ -100,7 +100,10 @@ def _parsed_plan() -> dict:
     return {
         "short_summary": "smoke plan",
         "planning_context": "pc",
-        "tasks": [],
+        # Core validates the durable plan body, so a real plan has at least
+        # one task; an empty ``tasks`` list makes the whole artifact unreadable
+        # and (correctly) fails evidence composition rather than degrading.
+        "tasks": [{"id": "T1", "goal": "do the thing"}],
         "allowed_modifications": ["docs/**", "src/util/*.py"],
     }
 
