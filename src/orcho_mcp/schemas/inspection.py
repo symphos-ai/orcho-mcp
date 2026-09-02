@@ -9,10 +9,19 @@ surfaces; ``services/run_artifacts.py`` (resources path) and
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field
 
+from orcho_mcp.schemas.criteria import (
+    CriterionMatrixRecord,
+    CriterionReadinessField,
+    HumanCriterionDecisionRecord,
+    PlanCriterionRecord,
+    TaskAcceptanceRefsRecord,
+    non_nullable_optional,
+    omit_absent_keys,
+)
 from orcho_mcp.schemas.shared import NextActionRecord, ProviderPressure
 
 # ── orcho_run_evidence ─────────────────────────────────────────────────────
@@ -52,7 +61,14 @@ class FindingRecord(BaseModel):
 
 
 class PlanSliceRecord(BaseModel):
-    """Compact plan projection — short enough for an LLM context window."""
+    """Compact plan projection — short enough for an LLM context window.
+
+    ``acceptance_criteria`` carries ADR 0188 **typed** criteria — stable IDs,
+    verification class, and complete gate identities — never stringified
+    prose. Core's single ingress normalizer types legacy ``list[str]`` plans
+    upstream, so a caller can rely on the object shape for every run.
+    ``task_acceptance_refs`` links each plan task to those criteria by ID.
+    """
 
     source: str
     short_summary: str
@@ -60,7 +76,27 @@ class PlanSliceRecord(BaseModel):
     subtask_count: int
     has_contract: bool
     goal: str | None = None
-    acceptance_criteria: list[str] = Field(default_factory=list)
+    acceptance_criteria: list[PlanCriterionRecord] = Field(
+        default_factory=list,
+        description=(
+            "Typed plan acceptance criteria (ADR 0188), in plan order. Each "
+            "carries ``id`` / ``intent`` / ``verify`` plus the key its class "
+            "admits: complete ``gate_refs`` for ``executable``, "
+            "``human_instructions`` for ``human``, neither for "
+            "``agent_assertion``."
+        ),
+    )
+    task_acceptance_refs: list[TaskAcceptanceRefsRecord] = Field(
+        default_factory=list,
+        description=(
+            "Per-task references into ``acceptance_criteria``, by criterion "
+            "ID only, in plan order. One entry per plan task INCLUDING a task "
+            "that references no criterion (empty list) — so the reference "
+            "graph is complete and 'owns nothing' stays distinguishable from "
+            "'missing'. Read from the same core SDK plan projection as "
+            "``acceptance_criteria``, so the two can never disagree."
+        ),
+    )
     owned_files: list[str] = Field(default_factory=list)
     commands_to_run: list[str] = Field(default_factory=list)
     risks: list[str] = Field(default_factory=list)
@@ -729,6 +765,21 @@ class EvidenceResult(BaseModel):
         decision. Inherited-vs-current receipts behind an approved gate-rerun
         child live in the ``verification_timeline`` + ``receipts`` slices
         (DeliverySummaryRecord)
+      - ``"criterion_decisions"`` — the append-only human-criterion decision
+        log in durable write order: ``decision_id`` (what a ``human_decision``
+        proof ref cites), ``run_id``, ``criterion_id``, ``decision``,
+        ``recorded_at`` (core's opaque canonical timestamp), plus ``note`` /
+        ``actor`` / ``supersedes`` when used — absent, never ``null``, when
+        not. ``[]`` for a run with no decisions (list of
+        HumanCriterionDecisionRecord)
+      - ``"criterion_matrix"`` — the ADR 0188 criterion matrix: one row per
+        plan criterion (id / intent / verify / executors / discriminated
+        ``method`` / ``proof_refs`` / ``state`` / ``reason`` / ``blocking``)
+        plus the summary (``total`` / ``blocking_open`` / ``ready`` /
+        ``counts_by_state`` in core's canonical state order /
+        ``pending_human_ids``). Forwarded from core verbatim. The key is
+        omitted entirely — never ``null`` — for a run with no criterion
+        contract (CriterionMatrixRecord)
       - ``"correction"`` — ADR 0098 correction fixed-point / non-convergence:
         ``non_converging`` (an operator-decision condition), ``repeated``
         blockers, ``parent_run_id`` / ``child_run_id``, advisory
@@ -753,6 +804,42 @@ class EvidenceResult(BaseModel):
     scope_expansion: ScopeExpansionSliceRecord | None = None
     delivery: DeliverySummaryRecord | None = None
     correction: CorrectionSliceRecord | None = None
+    criterion_decisions: list[HumanCriterionDecisionRecord] | None = Field(
+        default=None,
+        description=(
+            "The run's append-only human-criterion decision log (ADR 0188), "
+            "in durable write order — the durable record behind every "
+            "``{\"kind\": \"human_decision\"}`` proof ref, so a client that "
+            "reconnects after a resume can read who decided what, when, with "
+            "what note, and which earlier decision it superseded. Records are "
+            "forwarded field for field: ``recorded_at`` is core's opaque "
+            "canonical timestamp, and an unused ``note`` / ``actor`` / "
+            "``supersedes`` key is absent rather than ``null``. ``[]`` for a "
+            "run with no recorded decisions; ``None`` when the slice was not "
+            "requested."
+        ),
+    )
+    criterion_matrix: Annotated[
+        CriterionMatrixRecord | None,
+        Field(
+            default=None,
+            json_schema_extra=non_nullable_optional,
+            description=(
+                "ADR 0188 criterion matrix: one row per plan criterion in "
+                "plan order, plus the readiness summary. Forwarded from core "
+                "unchanged — MCP never recomputes a row state, readiness, "
+                "receipt freshness, gate selection, executors, or blocking "
+                "consequences. The key is OMITTED (never ``null``) for a run "
+                "with no criterion contract; a new-format plan with no "
+                "criteria is present with ``rows: []`` and the zeroed summary."
+            ),
+        ),
+    ] = None
+
+    # Explicit dump policy: ``criterion_matrix`` is an absent key, not a null
+    # slice. Every other optional slice above keeps its historical ``null``,
+    # so this is deliberately per-key rather than a model-wide exclude_none.
+    _omit = omit_absent_keys("criterion_matrix")
 
 
 # ── orcho_run_diff ───────────────────────────────────────────────────────────
@@ -873,6 +960,12 @@ class DeliveryGateProjection(BaseModel):
     ``pr_intent.suggested_command`` is deliberately ``None``: the durable
     "run this to open a PR" command is stale once the PR is open, so the live
     link is read from ``pr_url`` instead.
+
+    ``criterion_readiness`` is the ADR 0188 summary read through the single
+    criterion projection path shared with ``orcho_run_status``,
+    ``orcho_run_diagnose``, and the ``criterion_matrix`` evidence slice, so a
+    criterion blocker reads identically on every surface. An open blocking
+    criterion is core's release gap, not an MCP-side veto of ``decidable``.
 
     ``available_actions`` comes from orcho-core's read-only
     ``delivery_decision_state`` surface and lists only actions the SDK says are
@@ -1002,8 +1095,13 @@ class DeliveryGateProjection(BaseModel):
             "``None`` — the live link is ``pr_url``, not a stale open-PR command."
         ),
     )
+    criterion_readiness: CriterionReadinessField = None
     message: str | None = None
     next_actions: list[NextActionRecord] = Field(default_factory=list)
+
+    # Absent key, not a null field — a run with no criterion contract has no
+    # criterion readiness to report, and ``null`` would read as "ready: unknown".
+    _omit = omit_absent_keys("criterion_readiness")
 
 
 __all__ = [

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import re
+from typing import Any
 
 from sdk import (
     collect_evidence as _sdk_collect_evidence,
@@ -23,7 +24,11 @@ from sdk import (
     load_meta as _sdk_load_meta,
 )
 
-from orcho_mcp.errors import RunNotFoundError, WorkspaceNotResolvedError
+from orcho_mcp.errors import (
+    InvalidPlanError,
+    RunNotFoundError,
+    WorkspaceNotResolvedError,
+)
 from orcho_mcp.services.errors import map_sdk_errors
 from orcho_mcp.services.run_lookup import find_run_dir
 
@@ -124,26 +129,42 @@ def get_run_commit_decision_raw(run_id: str) -> dict:
     return data
 
 
-def get_run_allowed_modifications(run_id: str) -> list[str]:
-    """Return the plan's top-level ``allowed_modifications`` globs.
+def _plan_body(run_id: str) -> dict[str, Any]:
+    """The inner plan body of the durable ``parsed_plan.json`` artifact.
 
-    Reads the durable ``parsed_plan.json`` artifact (via
-    :func:`get_run_parsed_plan_raw`) and projects its top-level
-    ``allowed_modifications`` list — the declared in-plan modification globs
-    (ADR 0087). The SDK ``PlanSummary`` does not carry this field, so the
-    durable plan artifact is the single source.
+    The artifact is the ``{"artifact_version": N, "plan": {...}}`` envelope
+    core writes, and the fields the plan slice needs (``allowed_modifications``,
+    per-task ``acceptance_refs``) live in the inner body. A body handed over
+    without the envelope is accepted as-is so an older / hand-written artifact
+    still projects.
+
+    Fully defensive: an unknown run, a missing / unreadable / non-dict
+    ``parsed_plan.json`` yields ``{}`` — never an exception — so the plan slice
+    degrades cleanly instead of taking down the whole evidence read.
+    """
+    try:
+        artifact = get_run_parsed_plan_raw(run_id)
+    except (RunNotFoundError, WorkspaceNotResolvedError, InvalidPlanError):
+        return {}
+    if not isinstance(artifact, dict):
+        return {}
+    inner = artifact.get("plan")
+    return inner if isinstance(inner, dict) else artifact
+
+
+def get_run_allowed_modifications(run_id: str) -> list[str]:
+    """Return the plan's declared ``allowed_modifications`` globs.
+
+    Reads the durable ``parsed_plan.json`` artifact (via :func:`_plan_body`)
+    and projects its ``allowed_modifications`` list — the declared in-plan
+    modification globs (ADR 0087). The SDK ``PlanSummary`` does not carry this
+    field, so the durable plan artifact is the single source.
 
     Fully defensive like the other evidence reads: an unknown run, a missing /
     unreadable ``parsed_plan.json``, or a non-list ``allowed_modifications``
     all yield ``[]`` — never an exception — so the plan slice degrades cleanly.
     """
-    try:
-        plan = get_run_parsed_plan_raw(run_id)
-    except (RunNotFoundError, WorkspaceNotResolvedError):
-        return []
-    if not isinstance(plan, dict):
-        return []
-    raw = plan.get("allowed_modifications")
+    raw = _plan_body(run_id).get("allowed_modifications")
     if not isinstance(raw, list):
         return []
     return [str(x) for x in raw if x is not None]

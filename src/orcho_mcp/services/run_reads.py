@@ -38,6 +38,7 @@ from orcho_mcp.schemas import (
     EventRecord,
     EventsTailResult,
     FollowupLineage,
+    NextActionRecord,
     RecoveryLineage,
     RecoveryRecommendation,
     RunMetrics,
@@ -47,6 +48,10 @@ from orcho_mcp.schemas import (
     WorktreeContinuity,
 )
 from orcho_mcp.schemas.read import PhaseCost, RunEconomics
+from orcho_mcp.services.criterion_projection import (
+    gate_actions_on_criteria,
+    read_criterion_readiness,
+)
 from orcho_mcp.services.errors import map_sdk_errors
 from orcho_mcp.services.meta_summary import summarize_run_meta
 from orcho_mcp.services.run_events import read_run_events
@@ -317,6 +322,12 @@ def get_run_status(
     )
 
     pending = project_pending_handoff(s.run_ref.run_id)
+    # ADR 0188 criterion readiness, read ONCE through the single criterion
+    # projection path shared with diagnose / delivery / the evidence matrix
+    # slice — so all four agree on blockers, readiness, AND the next action by
+    # construction. Only an actual SDK ``None`` omits the key for a run with
+    # no criterion contract; version skew or malformed evidence fails closed.
+    criterion_readiness = read_criterion_readiness(s.run_ref.run_id)
     status_actions = [a.to_dict() for a in s.next_actions]
     if pending.is_pending_handoff:
         if pending.decision_state == "recorded":
@@ -339,7 +350,18 @@ def get_run_status(
         # RunStatus (see sdk.status.load_status). Pure pass-through —
         # no transformation, no enrichment — so the suggestions stay
         # consistent across consumers (CLI, MCP, future Web UI).
-        next_actions=status_actions,
+        # An open blocking criterion leads the list through the shared
+        # criterion-aware gate, so the snapshot never reports "not ready"
+        # beside a next action that ignores why.
+        next_actions=[
+            a.model_dump()
+            for a in gate_actions_on_criteria(
+                s.run_ref.run_id,
+                [NextActionRecord.model_validate(a) for a in status_actions],
+                criterion_readiness,
+            )
+        ],
+        criterion_readiness=criterion_readiness,
         decision_state=pending.decision_state if pending.is_pending_handoff else None,
         decision_degraded_reason=pending.decision_degraded_reason if pending.is_pending_handoff else None,
         # SDK enumerates readable artefacts for a resolved run. Pure

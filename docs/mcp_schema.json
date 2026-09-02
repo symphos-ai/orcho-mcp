@@ -535,6 +535,616 @@
   ],
   "tools": [
     {
+      "description": "Record an operator's verdict on one ``human`` acceptance criterion.\n\n    A ``human`` criterion (ADR 0188) is satisfied by exactly one thing: a\n    person exercised it and said so. This tool is how that verdict becomes\n    durable proof. Read the criterion first with ``orcho_run_evidence``\n    ``slice=\"criterion_matrix\"`` — its ``method.instructions`` say what the\n    operator must actually do, and the row's ``state`` says whether it is\n    still ``pending``.\n\n    **Never decide on the operator's behalf.** Do not infer ``accept`` from a\n    passing test, a reviewer finding, a transcript line, a phase-handoff\n    decision, or an approving remark in chat. If you do not hold an explicit\n    human verdict, call this tool WITHOUT ``decision``:\n\n      - a client that supports MCP form elicitation is asked natively for\n        ``decision`` (required, ``accept`` | ``reject``) and an optional\n        ``note``; a cancelled form records nothing;\n      - a client without that capability gets\n        ``outcome=\"operator_input_required\"`` carrying the exact missing-input\n        schema and a ready-call to replay. Nothing is written. Ask the human,\n        then call again with ``decision``.\n\n    Everything else belongs to orcho-core and is validated BEFORE any write:\n    the criterion must exist in this run's accepted plan, its class must be\n    ``human``, the run must be the one named, and the append-only decision log\n    must accept the record. An unknown criterion, a non-human criterion, a\n    wrong-run decision, and a conflicting/duplicate decision all fail with\n    ``InvalidPlanError`` and leave the durable artifact byte-identical.\n\n    On success the response carries the durable decision record (including the\n    ``decision_id`` a matrix ``proof_ref`` cites) and the criterion matrix as\n    it stands AFTER the write, so the readiness transition is visible without\n    a second call.\n\n    Args:\n        run_id: the run whose plan declares the criterion.\n        criterion_id: the plan criterion ID (e.g. ``\"C3\"``).\n        decision: the operator's verdict. Omit ONLY to reach the\n            elicitation / operator-input path described above.\n        note: optional operator rationale, recorded verbatim.\n        actor: optional operator identity, recorded verbatim.\n\n    Errors:\n      - RunNotFoundError — unknown run_id.\n      - InvalidPlanError — unknown / non-human criterion, wrong run, invalid\n        payload, conflicting decision, or a core build without the criterion\n        SDK. Nothing is written in any of these cases.\n    ",
+      "inputSchema": {
+        "properties": {
+          "actor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Actor"
+          },
+          "criterion_id": {
+            "title": "Criterion Id",
+            "type": "string"
+          },
+          "decision": {
+            "anyOf": [
+              {
+                "enum": [
+                  "accept",
+                  "reject"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Decision"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Note"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "criterion_id"
+        ],
+        "title": "orcho_criterion_decideArguments",
+        "type": "object"
+      },
+      "name": "orcho_criterion_decide",
+      "outputSchema": {
+        "$defs": {
+          "CriterionDecisionInputRequiredResult": {
+            "description": "Returned when the operator's verdict is still missing.\n\nReached only when ``decision`` was omitted and the client does not\nadvertise MCP form elicitation. **Nothing is written.** The record carries\nthe exact missing-input schema and a complete ready-call, so the caller\ncollects one explicit ``accept`` / ``reject`` from a human and replays the\ncall. A decision is never inferred from chat prose.",
+            "properties": {
+              "criterion_id": {
+                "title": "Criterion Id",
+                "type": "string"
+              },
+              "instructions": {
+                "description": "The criterion's own ``human_instructions`` — what the operator must actually do before deciding. Absent when the criterion could not be read.",
+                "title": "Instructions",
+                "type": "string"
+              },
+              "next_actions": {
+                "items": {
+                  "$ref": "#/$defs/NextActionRecord"
+                },
+                "title": "Next Actions",
+                "type": "array"
+              },
+              "outcome": {
+                "const": "operator_input_required",
+                "default": "operator_input_required",
+                "title": "Outcome",
+                "type": "string"
+              },
+              "reason": {
+                "title": "Reason",
+                "type": "string"
+              },
+              "run_id": {
+                "title": "Run Id",
+                "type": "string"
+              }
+            },
+            "required": [
+              "run_id",
+              "criterion_id",
+              "reason"
+            ],
+            "title": "CriterionDecisionInputRequiredResult",
+            "type": "object"
+          },
+          "CriterionDecisionRecordedResult": {
+            "description": "Returned when a typed decision was recorded by core.\n\n``outcome`` reports the DURABLE fact and nothing else: reaching this\nmodel means the decision is written. ``matrix`` is a convenience readback\ntaken *after* the write, through the same single projection path every\nother criterion surface uses, so a caller normally sees the readiness\ntransition its decision caused without a second tool call.\n\nThe two are deliberately decoupled. A readback that fails — an unreadable\nartifact, a version-skewed payload — must NOT be reported as a failed\ndecision: the journal has already changed, a retry would be refused as a\nduplicate, and the operator would have no way to tell a lost write from a\nrecorded one. In that case ``matrix`` is absent and ``matrix_error`` names\nwhy, so the caller re-reads it with ``orcho_run_evidence``\n(``slice=\"criterion_matrix\"``) instead of re-deciding.",
+            "properties": {
+              "criterion_id": {
+                "title": "Criterion Id",
+                "type": "string"
+              },
+              "decision": {
+                "$ref": "#/$defs/HumanCriterionDecisionRecord"
+              },
+              "matrix": {
+                "$ref": "#/$defs/CriterionMatrixRecord"
+              },
+              "matrix_error": {
+                "description": "Why the post-write matrix readback was unavailable. Present ONLY together with an absent ``matrix``; the decision itself is recorded either way. Re-read the matrix with ``orcho_run_evidence`` slice='criterion_matrix' — do not re-issue the decision.",
+                "minLength": 1,
+                "title": "Matrix Error",
+                "type": "string"
+              },
+              "outcome": {
+                "const": "decision_recorded",
+                "default": "decision_recorded",
+                "title": "Outcome",
+                "type": "string"
+              },
+              "run_id": {
+                "title": "Run Id",
+                "type": "string"
+              }
+            },
+            "required": [
+              "run_id",
+              "criterion_id",
+              "decision"
+            ],
+            "title": "CriterionDecisionRecordedResult",
+            "type": "object"
+          },
+          "CriterionGateRefRecord": {
+            "additionalProperties": false,
+            "description": "The complete scheduled-gate identity a criterion refers to.\n\nAll three keys are always present. A command name alone is NOT a gate\nidentity: the same command scheduled under one hook for two phases is two\ndistinct official gates. ``phase`` is non-empty only for the phase-anchored\nhooks (``before_phase`` / ``after_phase``); ``before_delivery`` /\n``on_resume`` / ``manual_only`` carry ``\"\"``, matching the durable ledger.",
+            "properties": {
+              "command": {
+                "minLength": 1,
+                "title": "Command",
+                "type": "string"
+              },
+              "hook": {
+                "minLength": 1,
+                "title": "Hook",
+                "type": "string"
+              },
+              "phase": {
+                "title": "Phase",
+                "type": "string"
+              }
+            },
+            "required": [
+              "command",
+              "hook",
+              "phase"
+            ],
+            "title": "CriterionGateRefRecord",
+            "type": "object"
+          },
+          "CriterionMatrixRecord": {
+            "additionalProperties": false,
+            "description": "The criterion matrix: one row per plan criterion, plus the summary.\n\nAbsent vs empty is meaningful. A run predating the contract (or with no\naccepted plan) has **no matrix at all** — the SDK returns ``None`` and the\nowning wire model omits the key entirely. A new-format plan that declares\nno criteria has an explicit empty matrix: ``rows: []`` with the exact\nzeroed summary. ``null`` is never emitted for either case.",
+            "properties": {
+              "rows": {
+                "items": {
+                  "$ref": "#/$defs/CriterionRowRecord"
+                },
+                "title": "Rows",
+                "type": "array"
+              },
+              "summary": {
+                "$ref": "#/$defs/CriterionMatrixSummaryRecord"
+              }
+            },
+            "required": [
+              "rows",
+              "summary"
+            ],
+            "title": "CriterionMatrixRecord",
+            "type": "object"
+          },
+          "CriterionMatrixSummaryRecord": {
+            "additionalProperties": false,
+            "description": "The reducer's aggregate verdict for a run.\n\n``ready == (blocking_open == 0)`` is core's invariant, forwarded — not\nre-derived here. ``counts_by_state`` holds only present states with\npositive counts, keyed in ``sdk.CRITERION_STATE_ORDER``; it is a plain\nmapping precisely so its **insertion order survives** serialization.",
+            "properties": {
+              "blocking_open": {
+                "minimum": 0,
+                "title": "Blocking Open",
+                "type": "integer"
+              },
+              "counts_by_state": {
+                "additionalProperties": {
+                  "exclusiveMinimum": 0,
+                  "type": "integer"
+                },
+                "description": "Counts for the states PRESENT in the rows, keyed in core's canonical state order. Only present states appear, and only with a positive count — a zero entry and an unknown state name are both contract breaks, not merely unusual.",
+                "propertyNames": {
+                  "enum": [
+                    "proven",
+                    "failed",
+                    "stale",
+                    "missing",
+                    "not_selected",
+                    "advisory",
+                    "accepted",
+                    "rejected",
+                    "pending"
+                  ]
+                },
+                "title": "Counts By State",
+                "type": "object"
+              },
+              "pending_human_ids": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Pending Human Ids",
+                "type": "array"
+              },
+              "ready": {
+                "title": "Ready",
+                "type": "boolean"
+              },
+              "total": {
+                "minimum": 0,
+                "title": "Total",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "total",
+              "blocking_open",
+              "ready",
+              "counts_by_state",
+              "pending_human_ids"
+            ],
+            "title": "CriterionMatrixSummaryRecord",
+            "type": "object"
+          },
+          "CriterionMethodGates": {
+            "additionalProperties": false,
+            "description": "``executable`` — proved by the named official gates.",
+            "properties": {
+              "gate_refs": {
+                "items": {
+                  "$ref": "#/$defs/CriterionGateRefRecord"
+                },
+                "minItems": 1,
+                "title": "Gate Refs",
+                "type": "array"
+              },
+              "kind": {
+                "const": "gates",
+                "default": "gates",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "gate_refs"
+            ],
+            "title": "CriterionMethodGates",
+            "type": "object"
+          },
+          "CriterionMethodInspection": {
+            "additionalProperties": false,
+            "description": "``agent_assertion`` — inspected by an agent. Advisory, never proof.",
+            "properties": {
+              "kind": {
+                "const": "inspection",
+                "default": "inspection",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "title": "CriterionMethodInspection",
+            "type": "object"
+          },
+          "CriterionMethodManual": {
+            "additionalProperties": false,
+            "description": "``human`` — decided by an operator following ``instructions``.",
+            "properties": {
+              "instructions": {
+                "minLength": 1,
+                "title": "Instructions",
+                "type": "string"
+              },
+              "kind": {
+                "const": "manual",
+                "default": "manual",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "instructions"
+            ],
+            "title": "CriterionMethodManual",
+            "type": "object"
+          },
+          "CriterionProofRefRecord": {
+            "additionalProperties": false,
+            "description": "One pointer to the durable artefact that supports a row's state.",
+            "properties": {
+              "id": {
+                "minLength": 1,
+                "title": "Id",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "receipt",
+                  "finding",
+                  "claim",
+                  "human_decision"
+                ],
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "title": "CriterionProofRefRecord",
+            "type": "object"
+          },
+          "CriterionRowRecord": {
+            "additionalProperties": false,
+            "description": "One criterion's row of the matrix — exactly one row per plan criterion.\n\nEvery field is core's, in core's order. ``executors`` arrives non-empty\nfrom the SDK; MCP never assigns ``reviewer`` / ``human`` / a task ID\nitself. ``state``, ``reason``, and ``blocking`` are the reducer's verdict:\nno MCP module recomputes them, and no developer claim, reviewer finding,\ntranscript command, or command-name-only match can turn a row ``proven``.",
+            "properties": {
+              "blocking": {
+                "title": "Blocking",
+                "type": "boolean"
+              },
+              "criterion_id": {
+                "pattern": "^C[1-9][0-9]*$",
+                "title": "Criterion Id",
+                "type": "string"
+              },
+              "executors": {
+                "description": "The task ids (or the class's canonical executor) that own this criterion, in a deterministic order. Never empty: every criterion has an owner, and an empty list would read as 'nobody is responsible'.",
+                "items": {
+                  "type": "string"
+                },
+                "minItems": 1,
+                "title": "Executors",
+                "type": "array"
+              },
+              "intent": {
+                "minLength": 1,
+                "title": "Intent",
+                "type": "string"
+              },
+              "method": {
+                "discriminator": {
+                  "mapping": {
+                    "gates": "#/$defs/CriterionMethodGates",
+                    "inspection": "#/$defs/CriterionMethodInspection",
+                    "manual": "#/$defs/CriterionMethodManual"
+                  },
+                  "propertyName": "kind"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/CriterionMethodGates"
+                  },
+                  {
+                    "$ref": "#/$defs/CriterionMethodInspection"
+                  },
+                  {
+                    "$ref": "#/$defs/CriterionMethodManual"
+                  }
+                ],
+                "title": "Method"
+              },
+              "proof_refs": {
+                "items": {
+                  "$ref": "#/$defs/CriterionProofRefRecord"
+                },
+                "title": "Proof Refs",
+                "type": "array"
+              },
+              "reason": {
+                "title": "Reason",
+                "type": "string"
+              },
+              "state": {
+                "enum": [
+                  "proven",
+                  "failed",
+                  "stale",
+                  "missing",
+                  "not_selected",
+                  "advisory",
+                  "accepted",
+                  "rejected",
+                  "pending"
+                ],
+                "title": "State",
+                "type": "string"
+              },
+              "verify": {
+                "enum": [
+                  "executable",
+                  "agent_assertion",
+                  "human"
+                ],
+                "title": "Verify",
+                "type": "string"
+              }
+            },
+            "required": [
+              "criterion_id",
+              "intent",
+              "verify",
+              "executors",
+              "method",
+              "proof_refs",
+              "state",
+              "reason",
+              "blocking"
+            ],
+            "title": "CriterionRowRecord",
+            "type": "object"
+          },
+          "HumanCriterionDecisionRecord": {
+            "additionalProperties": false,
+            "description": "One durable operator decision on a ``human`` criterion.\n\nThe durable JSON shape, forwarded field for field:\n\n* ``decision_id`` is writer-assigned and is exactly what a\n  ``{\"kind\": \"human_decision\"}`` proof ref cites;\n* ``recorded_at`` is core's canonical RFC 3339 UTC string\n  (``YYYY-MM-DDTHH:MM:SS[.ffffff]Z``), carried **opaquely** — MCP never\n  parses, re-formats, or re-normalizes it;\n* ``note`` / ``actor`` / ``supersedes`` are absent when unused. Core\n  never writes ``null`` for them and rejects ``null`` on read, so the\n  wire omits the key rather than emitting one.\n\nSupersession is core's: the log is append-only, the first decision omits\n``supersedes``, and a later one names the current head. Stale and branched\nchains are rejected by the durable writer before anything is written.",
+            "properties": {
+              "actor": {
+                "minLength": 1,
+                "title": "Actor",
+                "type": "string"
+              },
+              "criterion_id": {
+                "pattern": "^C[1-9][0-9]*$",
+                "title": "Criterion Id",
+                "type": "string"
+              },
+              "decision": {
+                "enum": [
+                  "accept",
+                  "reject"
+                ],
+                "title": "Decision",
+                "type": "string"
+              },
+              "decision_id": {
+                "minLength": 1,
+                "title": "Decision Id",
+                "type": "string"
+              },
+              "note": {
+                "minLength": 1,
+                "title": "Note",
+                "type": "string"
+              },
+              "recorded_at": {
+                "description": "Core's canonical RFC 3339 UTC timestamp (YYYY-MM-DDTHH:MM:SS[.ffffff]Z). Opaque — do not reparse.",
+                "minLength": 1,
+                "title": "Recorded At",
+                "type": "string"
+              },
+              "run_id": {
+                "minLength": 1,
+                "title": "Run Id",
+                "type": "string"
+              },
+              "supersedes": {
+                "minLength": 1,
+                "title": "Supersedes",
+                "type": "string"
+              }
+            },
+            "required": [
+              "decision_id",
+              "run_id",
+              "criterion_id",
+              "decision",
+              "recorded_at"
+            ],
+            "title": "HumanCriterionDecisionRecord",
+            "type": "object"
+          },
+          "NextActionRecord": {
+            "description": "One suggested follow-up tool call surfaced in tool responses.\n\nWorkflow-decision responses carry these records so the LLM does not\nhave to remember workflow patterns from documentation; the suggested\nnext steps ride in the payload.\n\nMirrors :class:`sdk.actions.Action` on the orcho-core side. The base\npass-through (``intent``/``tool``/``args``/``optional``) stays\nstate-derived and drift-free; the ``kind`` family below is MCP-wire\nenrichment computed entirely on the MCP side from state the server\nalready has, so it requires no new data from the core and the\ndefaults reproduce the historical pass-through record exactly.\n\nCall-readiness invariant (checked via the typed ``kind`` field, never\nby parsing ``intent``):\n\n- ``kind='ready_call'`` ⇒ ``args`` already contains every required\n  parameter of the target tool's actual signature (e.g.\n  ``orcho_run_resume`` ⇒ ``args`` has ``run_id``;\n  ``orcho_phase_handoff_decide`` ⇒ ``args`` has ``action`` and, where\n  the chosen verb mandates it, ``feedback``). The record is safe to\n  forward verbatim.\n- ``kind='operator_input_required'`` ⇒ the final decision args MAY be\n  omitted, but ONLY when ``choices`` and/or ``input_schema`` are\n  present to tell the operator what input is still needed.\n\n``intent`` stays human-readable and is NOT a contractual signal.",
+            "properties": {
+              "args": {
+                "additionalProperties": true,
+                "description": "Pre-filled arguments matching the target tool's input schema. Values are safe to forward as-is. When a follow-up requires operator input, that input is not represented as a placeholder inside this dict.",
+                "title": "Args",
+                "type": "object"
+              },
+              "choices": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "When operator input is a choice among a fixed set (e.g. the available phase-handoff decision verbs), the allowed values. ``None`` (default) for ready-to-forward calls.",
+                "title": "Choices"
+              },
+              "context": {
+                "anyOf": [
+                  {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Structured, machine-readable recovery context for this action that is NOT a parameter of the target tool (so it must not ride in ``args``), yet a typed client needs to branch on it. A retained-change correction records its durable continuation facts here (subject, blocked state, diff source, and reason). Read these typed keys — never the ``intent`` prose. ``None`` (default) when the action carries no extra context.",
+                "title": "Context"
+              },
+              "input_schema": {
+                "anyOf": [
+                  {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "When operator input is free-form (e.g. required retry ``feedback``), a description of the expected input. ``None`` (default) for ready-to-forward calls.",
+                "title": "Input Schema"
+              },
+              "intent": {
+                "description": "One-sentence human-readable description of what this action would accomplish. Clients SHOULD surface this verbatim in their UI.",
+                "title": "Intent",
+                "type": "string"
+              },
+              "kind": {
+                "default": "ready_call",
+                "description": "Typed call-readiness signal. ``ready_call`` (default) means ``args`` already carries every required parameter of the target tool, so the record is safe to forward verbatim. ``operator_input_required`` means a final decision argument is intentionally omitted and the caller must collect operator input first, as described by ``choices`` and/or ``input_schema``. This typed field — not ``intent`` text — is the contractual readiness signal.",
+                "enum": [
+                  "ready_call",
+                  "operator_input_required"
+                ],
+                "title": "Kind",
+                "type": "string"
+              },
+              "optional": {
+                "default": true,
+                "description": "True (default) when this is one of several valid follow-ups. False when the workflow has a single deterministic next step (e.g. ``orcho_run_resume`` after ``continue`` / ``retry_feedback`` / ``continue_with_waiver`` decision).",
+                "title": "Optional",
+                "type": "boolean"
+              },
+              "requires_operator_input": {
+                "default": false,
+                "description": "True iff ``kind == 'operator_input_required'``: the caller must gather operator input before invoking the tool. False (default) for ready-to-forward calls.",
+                "title": "Requires Operator Input",
+                "type": "boolean"
+              },
+              "tool": {
+                "description": "Name of the MCP tool the caller should invoke (e.g. ``orcho_run_start``, ``orcho_phase_handoff_decide``, ``orcho_run_resume``).",
+                "title": "Tool",
+                "type": "string"
+              }
+            },
+            "required": [
+              "intent",
+              "tool"
+            ],
+            "title": "NextActionRecord",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "result": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/CriterionDecisionRecordedResult"
+              },
+              {
+                "$ref": "#/$defs/CriterionDecisionInputRequiredResult"
+              }
+            ],
+            "title": "Result"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "title": "orcho_criterion_decideOutput",
+        "type": "object"
+      }
+    },
+    {
       "description": "Resolve a parked post-release delivery / correction gate.\n\n    Pure state transition through the orcho-core SDK — never spawns a\n    process and never applies a patch in MCP. Use ``orcho_delivery_gate`` first\n    to inspect the gate and read its ``available_actions`` / ``blocked_actions``.\n\n    Actions:\n      - ``approve``: commit the retained worktree diff into the target checkout.\n      - ``apply``: apply the retained diff without committing it.\n      - ``fix``: mark the run correction-ready after a rejected release verdict.\n      - ``skip``: close the gate without changing the target checkout.\n      - ``halt``: leave the retained worktree in place for manual inspection.\n\n    The return value mirrors core's typed decision result. Refused business\n    decisions are returned as ``accepted=False`` with a ``blocker`` such as\n    ``no_pending_delivery_gate``, ``release_blocked``, or\n    ``verification_blocked``; missing runs / bad arguments use MCP errors.\n    ",
       "inputSchema": {
         "properties": {
@@ -720,6 +1330,64 @@
       "name": "orcho_delivery_gate",
       "outputSchema": {
         "$defs": {
+          "CriterionMatrixSummaryRecord": {
+            "additionalProperties": false,
+            "description": "The reducer's aggregate verdict for a run.\n\n``ready == (blocking_open == 0)`` is core's invariant, forwarded — not\nre-derived here. ``counts_by_state`` holds only present states with\npositive counts, keyed in ``sdk.CRITERION_STATE_ORDER``; it is a plain\nmapping precisely so its **insertion order survives** serialization.",
+            "properties": {
+              "blocking_open": {
+                "minimum": 0,
+                "title": "Blocking Open",
+                "type": "integer"
+              },
+              "counts_by_state": {
+                "additionalProperties": {
+                  "exclusiveMinimum": 0,
+                  "type": "integer"
+                },
+                "description": "Counts for the states PRESENT in the rows, keyed in core's canonical state order. Only present states appear, and only with a positive count — a zero entry and an unknown state name are both contract breaks, not merely unusual.",
+                "propertyNames": {
+                  "enum": [
+                    "proven",
+                    "failed",
+                    "stale",
+                    "missing",
+                    "not_selected",
+                    "advisory",
+                    "accepted",
+                    "rejected",
+                    "pending"
+                  ]
+                },
+                "title": "Counts By State",
+                "type": "object"
+              },
+              "pending_human_ids": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Pending Human Ids",
+                "type": "array"
+              },
+              "ready": {
+                "title": "Ready",
+                "type": "boolean"
+              },
+              "total": {
+                "minimum": 0,
+                "title": "Total",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "total",
+              "blocking_open",
+              "ready",
+              "counts_by_state",
+              "pending_human_ids"
+            ],
+            "title": "CriterionMatrixSummaryRecord",
+            "type": "object"
+          },
           "DeliveryActionRecord": {
             "description": "One delivery / correction action the operator may take at the gate.\n\n``creates_commit`` is the load-bearing flag: only ``approve`` writes a\nnew commit to the target checkout. ``apply`` lands the diff uncommitted;\n``fix`` / ``skip`` / ``halt`` never commit. ``effect`` is a one-line\nhuman-readable description of what choosing the action does.",
             "properties": {
@@ -925,7 +1593,7 @@
             "type": "object"
           }
         },
-        "description": "Typed projection of an Orcho-managed post-release delivery gate.\n\n``kind`` is the single classification signal and is derived ONLY from\nthe authoritative ``meta`` commit-delivery ``status`` (never from\nterminal log prose):\n\n  - ``delivery_decision_required`` — a ``pending`` delivery on an\n    APPROVED release; the operator chooses approve / apply / skip / halt.\n  - ``correction_decision_required`` — a rejected release or a\n    ``fix_requested`` state; the operator normally chooses fix / halt for a\n    current rejected release. This is an *available correction-flow state*,\n    NOT an executed delivery.\n  - ``delivery_completed`` — an Orcho-managed delivery already landed in\n    the target checkout (``committed`` / ``applied_uncommitted``). Terminal:\n    no decision is offered. ``published`` is ``True`` and ``pr_url`` carries\n    the live link when a pull request was opened; ``delivery_notices``\n    carries the human-readable delivery lines. This is distinct from\n    ``direct_checkout_or_running`` — the delivery ran and completed, it is\n    not a direct edit or a still-running run.\n  - ``direct_checkout_or_running`` — no pending commit-delivery gate in\n    meta and no completed Orcho delivery (a direct checkout edit, a\n    still-running run, or a skipped / halted / failed terminal); no\n    approve / apply / fix is offered.\n\nOn a ``delivery_completed`` gate whose delivery was published,\n``pr_intent.suggested_command`` is deliberately ``None``: the durable\n\"run this to open a PR\" command is stale once the PR is open, so the live\nlink is read from ``pr_url`` instead.\n\n``available_actions`` comes from orcho-core's read-only\n``delivery_decision_state`` surface and lists only actions the SDK says are\ncurrently safe. ``blocked_actions`` names delivery actions currently\nrefused by hard guards such as a rejected release verdict or incomplete\nrequired verification. ``next_actions`` carries one ``ready_call`` to\n``orcho_delivery_decide`` per available action.",
+        "description": "Typed projection of an Orcho-managed post-release delivery gate.\n\n``kind`` is the single classification signal and is derived ONLY from\nthe authoritative ``meta`` commit-delivery ``status`` (never from\nterminal log prose):\n\n  - ``delivery_decision_required`` — a ``pending`` delivery on an\n    APPROVED release; the operator chooses approve / apply / skip / halt.\n  - ``correction_decision_required`` — a rejected release or a\n    ``fix_requested`` state; the operator normally chooses fix / halt for a\n    current rejected release. This is an *available correction-flow state*,\n    NOT an executed delivery.\n  - ``delivery_completed`` — an Orcho-managed delivery already landed in\n    the target checkout (``committed`` / ``applied_uncommitted``). Terminal:\n    no decision is offered. ``published`` is ``True`` and ``pr_url`` carries\n    the live link when a pull request was opened; ``delivery_notices``\n    carries the human-readable delivery lines. This is distinct from\n    ``direct_checkout_or_running`` — the delivery ran and completed, it is\n    not a direct edit or a still-running run.\n  - ``direct_checkout_or_running`` — no pending commit-delivery gate in\n    meta and no completed Orcho delivery (a direct checkout edit, a\n    still-running run, or a skipped / halted / failed terminal); no\n    approve / apply / fix is offered.\n\nOn a ``delivery_completed`` gate whose delivery was published,\n``pr_intent.suggested_command`` is deliberately ``None``: the durable\n\"run this to open a PR\" command is stale once the PR is open, so the live\nlink is read from ``pr_url`` instead.\n\n``criterion_readiness`` is the ADR 0188 summary read through the single\ncriterion projection path shared with ``orcho_run_status``,\n``orcho_run_diagnose``, and the ``criterion_matrix`` evidence slice, so a\ncriterion blocker reads identically on every surface. An open blocking\ncriterion is core's release gap, not an MCP-side veto of ``decidable``.\n\n``available_actions`` comes from orcho-core's read-only\n``delivery_decision_state`` surface and lists only actions the SDK says are\ncurrently safe. ``blocked_actions`` names delivery actions currently\nrefused by hard guards such as a rejected release verdict or incomplete\nrequired verification. ``next_actions`` carries one ``ready_call`` to\n``orcho_delivery_decide`` per available action.",
         "properties": {
           "available_actions": {
             "items": {
@@ -977,6 +1645,10 @@
             ],
             "default": null,
             "title": "Continuation Subject"
+          },
+          "criterion_readiness": {
+            "$ref": "#/$defs/CriterionMatrixSummaryRecord",
+            "description": "ADR 0188 criterion readiness, forwarded from core's reducer: ``total`` / ``blocking_open`` / ``ready`` / ``counts_by_state`` (canonical state order) / ``pending_human_ids``. Never recomputed on the MCP side. The full rows live on ``orcho_run_evidence`` slice ``criterion_matrix``. The key is omitted for a run with no criterion contract."
           },
           "decidable": {
             "default": false,
@@ -2257,6 +2929,64 @@
       "name": "orcho_run_diagnose",
       "outputSchema": {
         "$defs": {
+          "CriterionMatrixSummaryRecord": {
+            "additionalProperties": false,
+            "description": "The reducer's aggregate verdict for a run.\n\n``ready == (blocking_open == 0)`` is core's invariant, forwarded — not\nre-derived here. ``counts_by_state`` holds only present states with\npositive counts, keyed in ``sdk.CRITERION_STATE_ORDER``; it is a plain\nmapping precisely so its **insertion order survives** serialization.",
+            "properties": {
+              "blocking_open": {
+                "minimum": 0,
+                "title": "Blocking Open",
+                "type": "integer"
+              },
+              "counts_by_state": {
+                "additionalProperties": {
+                  "exclusiveMinimum": 0,
+                  "type": "integer"
+                },
+                "description": "Counts for the states PRESENT in the rows, keyed in core's canonical state order. Only present states appear, and only with a positive count — a zero entry and an unknown state name are both contract breaks, not merely unusual.",
+                "propertyNames": {
+                  "enum": [
+                    "proven",
+                    "failed",
+                    "stale",
+                    "missing",
+                    "not_selected",
+                    "advisory",
+                    "accepted",
+                    "rejected",
+                    "pending"
+                  ]
+                },
+                "title": "Counts By State",
+                "type": "object"
+              },
+              "pending_human_ids": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Pending Human Ids",
+                "type": "array"
+              },
+              "ready": {
+                "title": "Ready",
+                "type": "boolean"
+              },
+              "total": {
+                "minimum": 0,
+                "title": "Total",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "total",
+              "blocking_open",
+              "ready",
+              "counts_by_state",
+              "pending_human_ids"
+            ],
+            "title": "CriterionMatrixSummaryRecord",
+            "type": "object"
+          },
           "NextActionRecord": {
             "description": "One suggested follow-up tool call surfaced in tool responses.\n\nWorkflow-decision responses carry these records so the LLM does not\nhave to remember workflow patterns from documentation; the suggested\nnext steps ride in the payload.\n\nMirrors :class:`sdk.actions.Action` on the orcho-core side. The base\npass-through (``intent``/``tool``/``args``/``optional``) stays\nstate-derived and drift-free; the ``kind`` family below is MCP-wire\nenrichment computed entirely on the MCP side from state the server\nalready has, so it requires no new data from the core and the\ndefaults reproduce the historical pass-through record exactly.\n\nCall-readiness invariant (checked via the typed ``kind`` field, never\nby parsing ``intent``):\n\n- ``kind='ready_call'`` ⇒ ``args`` already contains every required\n  parameter of the target tool's actual signature (e.g.\n  ``orcho_run_resume`` ⇒ ``args`` has ``run_id``;\n  ``orcho_phase_handoff_decide`` ⇒ ``args`` has ``action`` and, where\n  the chosen verb mandates it, ``feedback``). The record is safe to\n  forward verbatim.\n- ``kind='operator_input_required'`` ⇒ the final decision args MAY be\n  omitted, but ONLY when ``choices`` and/or ``input_schema`` are\n  present to tell the operator what input is still needed.\n\n``intent`` stays human-readable and is NOT a contractual signal.",
             "properties": {
@@ -2632,6 +3362,10 @@
             "default": null,
             "description": "One-line factual reason behind ``control`` (e.g. the resolved durable project_dir, or that no ``mcp_supervisor.json`` exists). ``None`` when ``control`` is ``None``.",
             "title": "Control Reason"
+          },
+          "criterion_readiness": {
+            "$ref": "#/$defs/CriterionMatrixSummaryRecord",
+            "description": "ADR 0188 criterion readiness, forwarded from core's reducer: ``total`` / ``blocking_open`` / ``ready`` / ``counts_by_state`` (canonical state order) / ``pending_human_ids``. Never recomputed on the MCP side. The full rows live on ``orcho_run_evidence`` slice ``criterion_matrix``. The key is omitted for a run with no criterion contract."
           },
           "decision_degraded_reason": {
             "anyOf": [
@@ -3847,7 +4581,7 @@
       }
     },
     {
-      "description": "What happened / what proves it?\n\n    Typed evidence slices for reconstructing why the run reached its current\n    state: plan contract, findings, commands, artifacts, errors, receipts,\n    verification, delivery, correction, and cross-run children. Use this for\n    audit / post-mortem / proof; use ``orcho_run_status`` for the live operator\n    snapshot, ``orcho_run_metrics`` for consumption, and ``orcho_run_diff`` for\n    patch content.\n\n    The full evidence bundle (``collect_evidence``) is exhaustive; this\n    tool surfaces narrow projections control-loop clients actually\n    need: what the plan said, which findings blocked the run, which\n    commands the pipeline shelled out to, durable managed-command lifecycle\n    records, what artifacts landed, why the run halted, and the cross-run alias\n    linkage for cross-project parents.\n\n    ``slice``:\n      - ``\"all\"`` (default) — every slice populated in one response.\n      - ``\"plan\"`` — plan summary only, including the plan's declared\n        ``allowed_modifications`` globs (from the durable plan artifact).\n      - ``\"findings\"`` — flattened findings list (filterable). Each finding\n        carries an ``advisory`` flag: the latest non-approved ``validate_plan``\n        attempt's findings, forwarded into a successful whole-plan implement,\n        are advisory (visible, NOT an active release blocker). ``advisory``\n        isolates only that subset — findings are flattened across all attempts,\n        so ``advisory=False`` still includes historical/resolved entries and is\n        NOT the active-blocker set.\n      - ``\"commands\"`` — pipeline shell-outs plus bounded managed-command\n        lifecycle records. Managed records do not expose raw arguments and do\n        not satisfy scheduled verification.\n      - ``\"artifacts\"`` — files the run wrote.\n      - ``\"errors\"`` — errors + halt reason.\n      - ``\"sub_runs\"`` — cross-run child alias links (empty for\n        single-project runs).\n      - ``\"receipts\"`` — per-subtask delivery receipts for a\n        ``subtask_dag`` run: state (``done|incomplete|failed|skipped``)\n        plus the done-criteria self-attestation (``criteria_report``,\n        ``attestation_summary``, ``attestation_error``). A subtask that\n        executed but did not close its done-criteria is ``incomplete``\n        with the reason in ``attestation_error``. Empty for\n        ``whole_plan`` runs.\n      - ``\"verification_receipts\"`` — durable verification-environment\n        receipts for the developer-side phases: which\n        interpreter (``python``) and working directory (``cwd``) ran the\n        checks, the import checks (name / expected / actual / passed),\n        the exact commands + exit codes, the clean-tree note\n        (``temp_env_outside_checkout``), and the on-disk\n        ``artifact_path``. Empty when the run recorded no receipts.\n      - ``\"verification_timeline\"`` — the canonical scheduled-gate ledger.\n        Each row retains its full identity (``command`` / ``hook`` / ``phase``),\n        declaration and selection facts (``declared`` / ``selectable`` /\n        ``selected`` / ``selection_reason``), execution facts\n        (``execution_policy`` / ``consequence`` / ``executor`` / ``trigger``),\n        nullable terminal ``disposition``, and any ``receipt_evidence``.\n        Identity-scoped ``events`` retain their kind, outcome, reason, and\n        receipt evidence. MCP forwards these SDK facts without deriving a\n        command-level status or policy summary.\n      - ``\"verification_cockpit\"`` — the same canonical scheduled-gate ledger\n        projection under the cockpit view name. It has the identical rows and\n        identity-scoped events as ``verification_timeline`` and is built from\n        the same SDK read.\n      - ``\"handoff_advice\"`` — Stage 0/1 phase-handoff advisor evidence:\n        one record per advisor call (``handoff_id`` / ``phase`` /\n        ``recommended_action`` / ``applied_action`` / ``confidence`` /\n        ``resolved`` / ``repeated`` / ``outcome`` / ``finding_fingerprint`` /\n        token-usage + cost / ``advice_artifact``) plus an aggregate ``summary``\n        (``calls`` / ``applied_retries`` / ``resolved_retries`` / ``repeated`` /\n        ``stopped`` / ``unknown`` / ``usage``). ``resolved`` is tri-state\n        (True / False / None). A run with no advisor surface returns an empty\n        slice (``calls=[]``, zeroed summary), never an error.\n      - ``\"scope_expansion\"`` — the ADR 0110 scope-expansion audit recorded at\n        ``final_acceptance``: one item per out-of-plan path with its\n        ``classification`` (``notice`` / ``risk`` / ``blocker``), ``category``,\n        and supporting ``evidence``, plus the aggregate ``has_blocker``\n        decision-condition flag. A ``notice`` is informational ONLY — it never\n        forms an operator handoff / next_action; a ``blocker`` is surfaced via\n        ``has_blocker`` as the operator-decision condition. This is a SEPARATE\n        axis from the delivery ``scope_disclosure`` on ``orcho_delivery_gate``\n        (which names strict-mono sibling files behind a shipping block). Empty\n        slice (``items=[]``, ``has_blocker=False``) when the run recorded no\n        scope-expansion audit, never an error.\n      - ``\"delivery\"`` — the post-release commit-delivery outcome as typed\n        data: ``release_verdict`` (``approved`` / ``rejected`` / ``none``), the\n        raw ``decision_status`` + ``action``, and the distinguishable\n        ``applied`` / ``committed`` / ``skipped`` / ``failed`` booleans mapped\n        from the core ``CommitDeliveryStatus`` vocabulary, plus ``commit_sha`` /\n        ``halt_reason`` and the same ``implement_delivery`` audit as the\n        ``errors`` slice (single source). ``None`` when the run recorded no\n        commit-delivery decision. This is read-only evidence — NOT the\n        interactive ``orcho_delivery_gate``. The inherited-vs-current\n        verification receipts behind an approved gate-rerun child live in the\n        ``verification_timeline`` (``inherited`` + per-gate ``source_run_id``)\n        and ``receipts`` slices, not here.\n      - ``\"correction\"`` — the ADR 0098 correction fixed-point outcome:\n        ``non_converging`` (an operator-decision condition — the captain may\n        stop), the ``repeated`` blockers, ``parent_run_id`` / ``child_run_id``,\n        advisory ``suggested_actions`` (next-step hints, never auto-applied),\n        and ``reason``. ``None`` when core recorded no fixed-point block.\n\n    ``severity_min`` (only honoured when findings are returned):\n    minimum-criticality cutoff. ``\"P0\"`` returns only P0; ``\"P1\"``\n    returns P0 + P1; etc. ``None`` returns all severities.\n\n    ``phases`` (only honoured for findings): restrict to specific\n    finding-bearing phases (``plan_qa``, ``review``, ``final_qa``,\n    ``compliance_check``). ``None`` returns findings from all four.\n\n    Errors:\n      - RunNotFoundError — unknown run_id.\n      - InvalidPlanError — invalid ``slice`` value or invalid\n        ``severity_min`` value.\n    ",
+      "description": "What happened / what proves it?\n\n    Typed evidence slices for reconstructing why the run reached its current\n    state: plan contract, findings, commands, artifacts, errors, receipts,\n    verification, delivery, correction, and cross-run children. Use this for\n    audit / post-mortem / proof; use ``orcho_run_status`` for the live operator\n    snapshot, ``orcho_run_metrics`` for consumption, and ``orcho_run_diff`` for\n    patch content.\n\n    The full evidence bundle (``collect_evidence``) is exhaustive; this\n    tool surfaces narrow projections control-loop clients actually\n    need: what the plan said, which findings blocked the run, which\n    commands the pipeline shelled out to, durable managed-command lifecycle\n    records, what artifacts landed, why the run halted, and the cross-run alias\n    linkage for cross-project parents.\n\n    ``slice``:\n      - ``\"all\"`` (default) — every slice populated in one response.\n      - ``\"plan\"`` — plan summary only, including the plan's declared\n        ``allowed_modifications`` globs (from the durable plan artifact) and\n        the ADR 0188 typed ``acceptance_criteria`` (stable ``id``, ``verify``\n        class, and complete ``gate_refs`` / ``human_instructions``) plus the\n        per-task ``task_acceptance_refs`` that point at them by ID.\n      - ``\"findings\"`` — flattened findings list (filterable). Each finding\n        carries an ``advisory`` flag: the latest non-approved ``validate_plan``\n        attempt's findings, forwarded into a successful whole-plan implement,\n        are advisory (visible, NOT an active release blocker). ``advisory``\n        isolates only that subset — findings are flattened across all attempts,\n        so ``advisory=False`` still includes historical/resolved entries and is\n        NOT the active-blocker set.\n      - ``\"commands\"`` — pipeline shell-outs plus bounded managed-command\n        lifecycle records. Managed records do not expose raw arguments and do\n        not satisfy scheduled verification.\n      - ``\"artifacts\"`` — files the run wrote.\n      - ``\"errors\"`` — errors + halt reason.\n      - ``\"sub_runs\"`` — cross-run child alias links (empty for\n        single-project runs).\n      - ``\"receipts\"`` — per-subtask delivery receipts for a\n        ``subtask_dag`` run: state (``done|incomplete|failed|skipped``)\n        plus the done-criteria self-attestation (``criteria_report``,\n        ``attestation_summary``, ``attestation_error``). A subtask that\n        executed but did not close its done-criteria is ``incomplete``\n        with the reason in ``attestation_error``. Empty for\n        ``whole_plan`` runs.\n      - ``\"verification_receipts\"`` — durable verification-environment\n        receipts for the developer-side phases: which\n        interpreter (``python``) and working directory (``cwd``) ran the\n        checks, the import checks (name / expected / actual / passed),\n        the exact commands + exit codes, the clean-tree note\n        (``temp_env_outside_checkout``), and the on-disk\n        ``artifact_path``. Empty when the run recorded no receipts.\n      - ``\"verification_timeline\"`` — the canonical scheduled-gate ledger.\n        Each row retains its full identity (``command`` / ``hook`` / ``phase``),\n        declaration and selection facts (``declared`` / ``selectable`` /\n        ``selected`` / ``selection_reason``), execution facts\n        (``execution_policy`` / ``consequence`` / ``executor`` / ``trigger``),\n        nullable terminal ``disposition``, and any ``receipt_evidence``.\n        Identity-scoped ``events`` retain their kind, outcome, reason, and\n        receipt evidence. MCP forwards these SDK facts without deriving a\n        command-level status or policy summary.\n      - ``\"verification_cockpit\"`` — the same canonical scheduled-gate ledger\n        projection under the cockpit view name. It has the identical rows and\n        identity-scoped events as ``verification_timeline`` and is built from\n        the same SDK read.\n      - ``\"handoff_advice\"`` — Stage 0/1 phase-handoff advisor evidence:\n        one record per advisor call (``handoff_id`` / ``phase`` /\n        ``recommended_action`` / ``applied_action`` / ``confidence`` /\n        ``resolved`` / ``repeated`` / ``outcome`` / ``finding_fingerprint`` /\n        token-usage + cost / ``advice_artifact``) plus an aggregate ``summary``\n        (``calls`` / ``applied_retries`` / ``resolved_retries`` / ``repeated`` /\n        ``stopped`` / ``unknown`` / ``usage``). ``resolved`` is tri-state\n        (True / False / None). A run with no advisor surface returns an empty\n        slice (``calls=[]``, zeroed summary), never an error.\n      - ``\"scope_expansion\"`` — the ADR 0110 scope-expansion audit recorded at\n        ``final_acceptance``: one item per out-of-plan path with its\n        ``classification`` (``notice`` / ``risk`` / ``blocker``), ``category``,\n        and supporting ``evidence``, plus the aggregate ``has_blocker``\n        decision-condition flag. A ``notice`` is informational ONLY — it never\n        forms an operator handoff / next_action; a ``blocker`` is surfaced via\n        ``has_blocker`` as the operator-decision condition. This is a SEPARATE\n        axis from the delivery ``scope_disclosure`` on ``orcho_delivery_gate``\n        (which names strict-mono sibling files behind a shipping block). Empty\n        slice (``items=[]``, ``has_blocker=False``) when the run recorded no\n        scope-expansion audit, never an error.\n      - ``\"delivery\"`` — the post-release commit-delivery outcome as typed\n        data: ``release_verdict`` (``approved`` / ``rejected`` / ``none``), the\n        raw ``decision_status`` + ``action``, and the distinguishable\n        ``applied`` / ``committed`` / ``skipped`` / ``failed`` booleans mapped\n        from the core ``CommitDeliveryStatus`` vocabulary, plus ``commit_sha`` /\n        ``halt_reason`` and the same ``implement_delivery`` audit as the\n        ``errors`` slice (single source). ``None`` when the run recorded no\n        commit-delivery decision. This is read-only evidence — NOT the\n        interactive ``orcho_delivery_gate``. The inherited-vs-current\n        verification receipts behind an approved gate-rerun child live in the\n        ``verification_timeline`` (``inherited`` + per-gate ``source_run_id``)\n        and ``receipts`` slices, not here.\n      - ``\"criterion_decisions\"`` — the run's append-only human-criterion\n        decision log (ADR 0188) in durable write order. Each record carries\n        the ``decision_id`` a matrix ``human_decision`` proof ref cites, the\n        ``criterion_id``, the operator's ``accept`` / ``reject``, core's\n        canonical ``recorded_at`` timestamp (opaque — do not reparse it), and\n        the optional ``note`` / ``actor`` / ``supersedes`` when they were\n        used (the key is absent, never ``null``, when they were not). Read\n        this to answer \"who accepted this, when, and on what grounds?\"\n        without re-deciding; ``[]`` for a run with no recorded decisions.\n      - ``\"criterion_matrix\"`` — the ADR 0188 criterion matrix: one row per\n        plan acceptance criterion, in plan order, with the criterion's\n        ``intent`` / ``verify`` class, the ``executors`` that own it, a\n        discriminated ``method`` (``gates`` with full ``(command, hook,\n        phase)`` gate identities / ``inspection`` / ``manual`` with the\n        operator instructions), the ``proof_refs`` that support it\n        (``receipt`` / ``finding`` / ``claim`` / ``human_decision``), its\n        ``state``, ``reason``, and whether it is ``blocking``; plus the\n        ``summary`` (``total`` / ``blocking_open`` / ``ready`` /\n        ``counts_by_state`` / ``pending_human_ids``).\n\n        Trust discipline: only a fresh official gate receipt makes an\n        ``executable`` row ``proven``, and only a typed human decision\n        (``orcho_criterion_decide``) makes a ``human`` row ``accepted``. An\n        ``agent_assertion`` row is at most ``advisory`` — a developer claim, a\n        reviewer finding, a transcript command, or a command-name-only match\n        is NEVER proof. These states come from orcho-core; nothing here is\n        recomputed by the MCP server, so do not second-guess or re-derive them.\n\n        The key is OMITTED (never ``null``) for a run with no criterion\n        contract; a new-format plan that declares no criteria is present with\n        ``rows: []`` and the zeroed summary.\n      - ``\"correction\"`` — the ADR 0098 correction fixed-point outcome:\n        ``non_converging`` (an operator-decision condition — the captain may\n        stop), the ``repeated`` blockers, ``parent_run_id`` / ``child_run_id``,\n        advisory ``suggested_actions`` (next-step hints, never auto-applied),\n        and ``reason``. ``None`` when core recorded no fixed-point block.\n\n    ``severity_min`` (only honoured when findings are returned):\n    minimum-criticality cutoff. ``\"P0\"`` returns only P0; ``\"P1\"``\n    returns P0 + P1; etc. ``None`` returns all severities.\n\n    ``phases`` (only honoured for findings): restrict to specific\n    finding-bearing phases (``plan_qa``, ``review``, ``final_qa``,\n    ``compliance_check``). ``None`` returns findings from all four.\n\n    Errors:\n      - RunNotFoundError — unknown run_id.\n      - InvalidPlanError — invalid ``slice`` value or invalid\n        ``severity_min`` value.\n    ",
       "inputSchema": {
         "properties": {
           "phases": {
@@ -3960,6 +4694,201 @@
             "title": "CorrectionSliceRecord",
             "type": "object"
           },
+          "CriterionGateRefRecord": {
+            "additionalProperties": false,
+            "description": "The complete scheduled-gate identity a criterion refers to.\n\nAll three keys are always present. A command name alone is NOT a gate\nidentity: the same command scheduled under one hook for two phases is two\ndistinct official gates. ``phase`` is non-empty only for the phase-anchored\nhooks (``before_phase`` / ``after_phase``); ``before_delivery`` /\n``on_resume`` / ``manual_only`` carry ``\"\"``, matching the durable ledger.",
+            "properties": {
+              "command": {
+                "minLength": 1,
+                "title": "Command",
+                "type": "string"
+              },
+              "hook": {
+                "minLength": 1,
+                "title": "Hook",
+                "type": "string"
+              },
+              "phase": {
+                "title": "Phase",
+                "type": "string"
+              }
+            },
+            "required": [
+              "command",
+              "hook",
+              "phase"
+            ],
+            "title": "CriterionGateRefRecord",
+            "type": "object"
+          },
+          "CriterionMatrixRecord": {
+            "additionalProperties": false,
+            "description": "The criterion matrix: one row per plan criterion, plus the summary.\n\nAbsent vs empty is meaningful. A run predating the contract (or with no\naccepted plan) has **no matrix at all** — the SDK returns ``None`` and the\nowning wire model omits the key entirely. A new-format plan that declares\nno criteria has an explicit empty matrix: ``rows: []`` with the exact\nzeroed summary. ``null`` is never emitted for either case.",
+            "properties": {
+              "rows": {
+                "items": {
+                  "$ref": "#/$defs/CriterionRowRecord"
+                },
+                "title": "Rows",
+                "type": "array"
+              },
+              "summary": {
+                "$ref": "#/$defs/CriterionMatrixSummaryRecord"
+              }
+            },
+            "required": [
+              "rows",
+              "summary"
+            ],
+            "title": "CriterionMatrixRecord",
+            "type": "object"
+          },
+          "CriterionMatrixSummaryRecord": {
+            "additionalProperties": false,
+            "description": "The reducer's aggregate verdict for a run.\n\n``ready == (blocking_open == 0)`` is core's invariant, forwarded — not\nre-derived here. ``counts_by_state`` holds only present states with\npositive counts, keyed in ``sdk.CRITERION_STATE_ORDER``; it is a plain\nmapping precisely so its **insertion order survives** serialization.",
+            "properties": {
+              "blocking_open": {
+                "minimum": 0,
+                "title": "Blocking Open",
+                "type": "integer"
+              },
+              "counts_by_state": {
+                "additionalProperties": {
+                  "exclusiveMinimum": 0,
+                  "type": "integer"
+                },
+                "description": "Counts for the states PRESENT in the rows, keyed in core's canonical state order. Only present states appear, and only with a positive count — a zero entry and an unknown state name are both contract breaks, not merely unusual.",
+                "propertyNames": {
+                  "enum": [
+                    "proven",
+                    "failed",
+                    "stale",
+                    "missing",
+                    "not_selected",
+                    "advisory",
+                    "accepted",
+                    "rejected",
+                    "pending"
+                  ]
+                },
+                "title": "Counts By State",
+                "type": "object"
+              },
+              "pending_human_ids": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Pending Human Ids",
+                "type": "array"
+              },
+              "ready": {
+                "title": "Ready",
+                "type": "boolean"
+              },
+              "total": {
+                "minimum": 0,
+                "title": "Total",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "total",
+              "blocking_open",
+              "ready",
+              "counts_by_state",
+              "pending_human_ids"
+            ],
+            "title": "CriterionMatrixSummaryRecord",
+            "type": "object"
+          },
+          "CriterionMethodGates": {
+            "additionalProperties": false,
+            "description": "``executable`` — proved by the named official gates.",
+            "properties": {
+              "gate_refs": {
+                "items": {
+                  "$ref": "#/$defs/CriterionGateRefRecord"
+                },
+                "minItems": 1,
+                "title": "Gate Refs",
+                "type": "array"
+              },
+              "kind": {
+                "const": "gates",
+                "default": "gates",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "gate_refs"
+            ],
+            "title": "CriterionMethodGates",
+            "type": "object"
+          },
+          "CriterionMethodInspection": {
+            "additionalProperties": false,
+            "description": "``agent_assertion`` — inspected by an agent. Advisory, never proof.",
+            "properties": {
+              "kind": {
+                "const": "inspection",
+                "default": "inspection",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "title": "CriterionMethodInspection",
+            "type": "object"
+          },
+          "CriterionMethodManual": {
+            "additionalProperties": false,
+            "description": "``human`` — decided by an operator following ``instructions``.",
+            "properties": {
+              "instructions": {
+                "minLength": 1,
+                "title": "Instructions",
+                "type": "string"
+              },
+              "kind": {
+                "const": "manual",
+                "default": "manual",
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "instructions"
+            ],
+            "title": "CriterionMethodManual",
+            "type": "object"
+          },
+          "CriterionProofRefRecord": {
+            "additionalProperties": false,
+            "description": "One pointer to the durable artefact that supports a row's state.",
+            "properties": {
+              "id": {
+                "minLength": 1,
+                "title": "Id",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "receipt",
+                  "finding",
+                  "claim",
+                  "human_decision"
+                ],
+                "title": "Kind",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id"
+            ],
+            "title": "CriterionProofRefRecord",
+            "type": "object"
+          },
           "CriterionReportRecord": {
             "description": "One developer claim against a subtask done-criterion (P7).\n\n``met`` is the developer's explicit self-attestation and ``evidence`` is a\none-sentence claim — NOT verified truth. The reviewer / final_acceptance /\ntest gates remain the verification layer; this record only reports what was\nclaimed.",
             "properties": {
@@ -3988,6 +4917,105 @@
               "evidence"
             ],
             "title": "CriterionReportRecord",
+            "type": "object"
+          },
+          "CriterionRowRecord": {
+            "additionalProperties": false,
+            "description": "One criterion's row of the matrix — exactly one row per plan criterion.\n\nEvery field is core's, in core's order. ``executors`` arrives non-empty\nfrom the SDK; MCP never assigns ``reviewer`` / ``human`` / a task ID\nitself. ``state``, ``reason``, and ``blocking`` are the reducer's verdict:\nno MCP module recomputes them, and no developer claim, reviewer finding,\ntranscript command, or command-name-only match can turn a row ``proven``.",
+            "properties": {
+              "blocking": {
+                "title": "Blocking",
+                "type": "boolean"
+              },
+              "criterion_id": {
+                "pattern": "^C[1-9][0-9]*$",
+                "title": "Criterion Id",
+                "type": "string"
+              },
+              "executors": {
+                "description": "The task ids (or the class's canonical executor) that own this criterion, in a deterministic order. Never empty: every criterion has an owner, and an empty list would read as 'nobody is responsible'.",
+                "items": {
+                  "type": "string"
+                },
+                "minItems": 1,
+                "title": "Executors",
+                "type": "array"
+              },
+              "intent": {
+                "minLength": 1,
+                "title": "Intent",
+                "type": "string"
+              },
+              "method": {
+                "discriminator": {
+                  "mapping": {
+                    "gates": "#/$defs/CriterionMethodGates",
+                    "inspection": "#/$defs/CriterionMethodInspection",
+                    "manual": "#/$defs/CriterionMethodManual"
+                  },
+                  "propertyName": "kind"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/CriterionMethodGates"
+                  },
+                  {
+                    "$ref": "#/$defs/CriterionMethodInspection"
+                  },
+                  {
+                    "$ref": "#/$defs/CriterionMethodManual"
+                  }
+                ],
+                "title": "Method"
+              },
+              "proof_refs": {
+                "items": {
+                  "$ref": "#/$defs/CriterionProofRefRecord"
+                },
+                "title": "Proof Refs",
+                "type": "array"
+              },
+              "reason": {
+                "title": "Reason",
+                "type": "string"
+              },
+              "state": {
+                "enum": [
+                  "proven",
+                  "failed",
+                  "stale",
+                  "missing",
+                  "not_selected",
+                  "advisory",
+                  "accepted",
+                  "rejected",
+                  "pending"
+                ],
+                "title": "State",
+                "type": "string"
+              },
+              "verify": {
+                "enum": [
+                  "executable",
+                  "agent_assertion",
+                  "human"
+                ],
+                "title": "Verify",
+                "type": "string"
+              }
+            },
+            "required": [
+              "criterion_id",
+              "intent",
+              "verify",
+              "executors",
+              "method",
+              "proof_refs",
+              "state",
+              "reason",
+              "blocking"
+            ],
+            "title": "CriterionRowRecord",
             "type": "object"
           },
           "DeliverySummaryRecord": {
@@ -4777,6 +5805,65 @@
             "title": "HandoffAdviceUsageRecord",
             "type": "object"
           },
+          "HumanCriterionDecisionRecord": {
+            "additionalProperties": false,
+            "description": "One durable operator decision on a ``human`` criterion.\n\nThe durable JSON shape, forwarded field for field:\n\n* ``decision_id`` is writer-assigned and is exactly what a\n  ``{\"kind\": \"human_decision\"}`` proof ref cites;\n* ``recorded_at`` is core's canonical RFC 3339 UTC string\n  (``YYYY-MM-DDTHH:MM:SS[.ffffff]Z``), carried **opaquely** — MCP never\n  parses, re-formats, or re-normalizes it;\n* ``note`` / ``actor`` / ``supersedes`` are absent when unused. Core\n  never writes ``null`` for them and rejects ``null`` on read, so the\n  wire omits the key rather than emitting one.\n\nSupersession is core's: the log is append-only, the first decision omits\n``supersedes``, and a later one names the current head. Stale and branched\nchains are rejected by the durable writer before anything is written.",
+            "properties": {
+              "actor": {
+                "minLength": 1,
+                "title": "Actor",
+                "type": "string"
+              },
+              "criterion_id": {
+                "pattern": "^C[1-9][0-9]*$",
+                "title": "Criterion Id",
+                "type": "string"
+              },
+              "decision": {
+                "enum": [
+                  "accept",
+                  "reject"
+                ],
+                "title": "Decision",
+                "type": "string"
+              },
+              "decision_id": {
+                "minLength": 1,
+                "title": "Decision Id",
+                "type": "string"
+              },
+              "note": {
+                "minLength": 1,
+                "title": "Note",
+                "type": "string"
+              },
+              "recorded_at": {
+                "description": "Core's canonical RFC 3339 UTC timestamp (YYYY-MM-DDTHH:MM:SS[.ffffff]Z). Opaque — do not reparse.",
+                "minLength": 1,
+                "title": "Recorded At",
+                "type": "string"
+              },
+              "run_id": {
+                "minLength": 1,
+                "title": "Run Id",
+                "type": "string"
+              },
+              "supersedes": {
+                "minLength": 1,
+                "title": "Supersedes",
+                "type": "string"
+              }
+            },
+            "required": [
+              "decision_id",
+              "run_id",
+              "criterion_id",
+              "decision",
+              "recorded_at"
+            ],
+            "title": "HumanCriterionDecisionRecord",
+            "type": "object"
+          },
           "ImplementDeliveryRecord": {
             "description": "First-class typed projection of the implement delivery / waiver audit.\n\nThe delivery/waiver audit fields are surfaced as a typed projection on\nthe ``errors`` evidence slice — its natural home, since the breadcrumbs\narrive in the same errors-rollup. The projector in\n``inspection/evidence.py`` builds this from the already-fetched\n``eh.errors`` list, never from a second raw-meta read, so the typed\nrecord cannot drift from the raw breadcrumbs. ``RunStatus.meta`` carries\nthe same scalar audit fields in its summary projection\n(``meta.phases.implement`` + ``meta.phase_handoff_waiver``), and callers\nthat need the full persisted meta can pass ``include=[\"all\"]``; this\nrecord does not replace it.\n\nSourced by merging two rollup breadcrumb dicts:\n  - ``kind == 'implement_delivery'`` → ``delivery_status``,\n    ``delivery_waived``, ``waiver_id``, ``action``,\n    ``incomplete_subtasks``, ``missing_subtask_receipts``;\n  - ``kind == 'phase_handoff_waiver'`` → ``decided_by``.",
             "properties": {
@@ -4942,12 +6029,57 @@
             "title": "NextActionRecord",
             "type": "object"
           },
+          "PlanCriterionRecord": {
+            "additionalProperties": false,
+            "description": "One typed plan acceptance criterion, in its durable key order.\n\nProjected verbatim from the core SDK plan summary — MCP never stringifies\na criterion, invents an ID, or reclassifies one. Legacy ``list[str]``\nplans are normalized by core's single ingress normalizer *before* they\nreach this model, so ``acceptance_criteria`` never carries bare strings.\n\nClass-irrelevant keys are absent: ``gate_refs`` only for ``executable``\n(non-empty), ``human_instructions`` only for ``human`` (non-empty),\nneither for ``agent_assertion``. Those are validated, not merely\ndocumented — an ``executable`` criterion with no gate identity names no\nproof at all, and admitting one would let the plan slice advertise\ntraceability the run cannot deliver.",
+            "properties": {
+              "gate_refs": {
+                "items": {
+                  "$ref": "#/$defs/CriterionGateRefRecord"
+                },
+                "title": "Gate Refs",
+                "type": "array"
+              },
+              "human_instructions": {
+                "title": "Human Instructions",
+                "type": "string"
+              },
+              "id": {
+                "description": "Stable criterion id in the ``C<n>`` grammar (ADR 0188).",
+                "pattern": "^C[1-9][0-9]*$",
+                "title": "Id",
+                "type": "string"
+              },
+              "intent": {
+                "minLength": 1,
+                "title": "Intent",
+                "type": "string"
+              },
+              "verify": {
+                "enum": [
+                  "executable",
+                  "agent_assertion",
+                  "human"
+                ],
+                "title": "Verify",
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "intent",
+              "verify"
+            ],
+            "title": "PlanCriterionRecord",
+            "type": "object"
+          },
           "PlanSliceRecord": {
-            "description": "Compact plan projection — short enough for an LLM context window.",
+            "description": "Compact plan projection — short enough for an LLM context window.\n\n``acceptance_criteria`` carries ADR 0188 **typed** criteria — stable IDs,\nverification class, and complete gate identities — never stringified\nprose. Core's single ingress normalizer types legacy ``list[str]`` plans\nupstream, so a caller can rely on the object shape for every run.\n``task_acceptance_refs`` links each plan task to those criteria by ID.",
             "properties": {
               "acceptance_criteria": {
+                "description": "Typed plan acceptance criteria (ADR 0188), in plan order. Each carries ``id`` / ``intent`` / ``verify`` plus the key its class admits: complete ``gate_refs`` for ``executable``, ``human_instructions`` for ``human``, neither for ``agent_assertion``.",
                 "items": {
-                  "type": "string"
+                  "$ref": "#/$defs/PlanCriterionRecord"
                 },
                 "title": "Acceptance Criteria",
                 "type": "array"
@@ -5019,6 +6151,14 @@
               "subtask_count": {
                 "title": "Subtask Count",
                 "type": "integer"
+              },
+              "task_acceptance_refs": {
+                "description": "Per-task references into ``acceptance_criteria``, by criterion ID only, in plan order. One entry per plan task INCLUDING a task that references no criterion (empty list) — so the reference graph is complete and 'owns nothing' stays distinguishable from 'missing'. Read from the same core SDK plan projection as ``acceptance_criteria``, so the two can never disagree.",
+                "items": {
+                  "$ref": "#/$defs/TaskAcceptanceRefsRecord"
+                },
+                "title": "Task Acceptance Refs",
+                "type": "array"
               }
             },
             "required": [
@@ -5658,6 +6798,29 @@
             "title": "SubtaskReceiptRecord",
             "type": "object"
           },
+          "TaskAcceptanceRefsRecord": {
+            "additionalProperties": false,
+            "description": "One plan task's references to plan criteria, by ID only.\n\nA task never restates criterion text; ``acceptance_refs`` are IDs that\nresolve against :class:`PlanCriterionRecord` entries in the same plan.\n\nOne entry per plan task, including a task that references no criterion —\ndropping those would give a client a partial reference graph and no way\nto tell \"this task owns nothing\" from \"this task is missing\".",
+            "properties": {
+              "acceptance_refs": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Acceptance Refs",
+                "type": "array"
+              },
+              "task_id": {
+                "minLength": 1,
+                "title": "Task Id",
+                "type": "string"
+              }
+            },
+            "required": [
+              "task_id"
+            ],
+            "title": "TaskAcceptanceRefsRecord",
+            "type": "object"
+          },
           "VerificationCheckRecord": {
             "description": "One environment check from a verification-environment receipt.\n\nThe canonical check is ``pipeline_import``: it proves which\n``pipeline/__init__.py`` the phase's interpreter actually imported.\n``expected`` / ``actual`` are absolute paths (``None`` when the check\ncould not be confirmed); ``passed`` is True only when they matched.",
             "properties": {
@@ -5872,7 +7035,7 @@
             "type": "object"
           }
         },
-        "description": "Returned by ``orcho_run_evidence``.\n\nThe ``slice`` field echoes back the requested view; the matching\nfield on the result is populated, others stay ``None``. ``slice=\"all\"``\npopulates every slice for one-shot inspection.\n\nSlices:\n  - ``\"plan\"`` — plan summary incl. ``allowed_modifications`` from the\n    durable plan (PlanSliceRecord)\n  - ``\"findings\"`` — flattened reviewer findings, each with an ``advisory``\n    flag: the latest non-approved ``validate_plan`` attempt's findings,\n    forwarded into a successful whole-plan implement, are advisory (visible,\n    not an active release blocker). ``advisory`` isolates only that subset;\n    because findings are flattened across all attempts, ``advisory=False``\n    still includes historical/resolved entries and must NOT be read as\n    \"active\" (list of FindingRecord)\n  - ``\"commands\"`` — pipeline shell-outs plus bounded managed-command\n    lifecycle records (list)\n  - ``\"artifacts\"`` — files the run wrote (list)\n  - ``\"errors\"`` — errors + halt reason (ErrorsHaltSliceRecord)\n  - ``\"sub_runs\"`` — cross-run child aliases (list)\n  - ``\"receipts\"`` — per-subtask delivery receipts incl. done-criteria\n    attestation (list of SubtaskReceiptRecord)\n  - ``\"verification_receipts\"`` — durable verification-environment\n    receipts (interpreter / cwd / import checks / commands / exit\n    codes / clean-tree note) (list of VerificationReceiptRecord)\n  - ``\"verification_timeline\"`` — canonical scheduled-gate ledger rows\n    and identity-scoped events from the SDK (VerificationTimelineRecord)\n  - ``\"verification_cockpit\"`` — the same canonical ledger projection\n    under the cockpit view name (VerificationTimelineRecord)\n  - ``\"handoff_advice\"`` — Stage 0/1 phase-handoff advisor evidence:\n    per-call records (handoff_id / phase / recommended_action /\n    applied_action / confidence / resolved / repeated / outcome /\n    finding_fingerprint / usage+cost / advice_artifact) plus an aggregate\n    summary (calls / applied_retries / resolved_retries / repeated /\n    stopped / unknown / usage). Empty slice when the run has no advisor\n    surface (HandoffAdviceSliceRecord)\n  - ``\"scope_expansion\"`` — ADR 0110 scope-expansion audit from\n    ``final_acceptance``: per-path items (path / classification\n    notice|risk|blocker / category / evidence) plus the aggregate\n    ``has_blocker`` decision-condition flag. A ``notice`` is informational\n    only and never forms an operator handoff. This is a SEPARATE axis from\n    the delivery ``scope_disclosure`` on ``DeliveryGateProjection`` (which\n    names strict-mono sibling files behind a shipping block). Empty slice\n    when the run recorded no scope-expansion audit (ScopeExpansionSliceRecord)\n  - ``\"delivery\"`` — post-release commit-delivery outcome as typed data:\n    ``release_verdict`` (approved / rejected / none), the raw\n    ``decision_status`` + ``action``, and the distinguishable\n    ``applied`` / ``committed`` / ``skipped`` / ``failed`` booleans (mapped\n    from the core CommitDeliveryStatus vocabulary), ``commit_sha`` /\n    ``halt_reason``, plus the same ``implement_delivery`` audit as the\n    ``errors`` slice. ``None`` when the run recorded no commit-delivery\n    decision. Inherited-vs-current receipts behind an approved gate-rerun\n    child live in the ``verification_timeline`` + ``receipts`` slices\n    (DeliverySummaryRecord)\n  - ``\"correction\"`` — ADR 0098 correction fixed-point / non-convergence:\n    ``non_converging`` (an operator-decision condition), ``repeated``\n    blockers, ``parent_run_id`` / ``child_run_id``, advisory\n    ``suggested_actions`` (never auto-applied), and ``reason``. ``None``\n    when core recorded no fixed-point block (CorrectionSliceRecord)\n  - ``\"all\"`` — every slice in one response",
+        "description": "Returned by ``orcho_run_evidence``.\n\nThe ``slice`` field echoes back the requested view; the matching\nfield on the result is populated, others stay ``None``. ``slice=\"all\"``\npopulates every slice for one-shot inspection.\n\nSlices:\n  - ``\"plan\"`` — plan summary incl. ``allowed_modifications`` from the\n    durable plan (PlanSliceRecord)\n  - ``\"findings\"`` — flattened reviewer findings, each with an ``advisory``\n    flag: the latest non-approved ``validate_plan`` attempt's findings,\n    forwarded into a successful whole-plan implement, are advisory (visible,\n    not an active release blocker). ``advisory`` isolates only that subset;\n    because findings are flattened across all attempts, ``advisory=False``\n    still includes historical/resolved entries and must NOT be read as\n    \"active\" (list of FindingRecord)\n  - ``\"commands\"`` — pipeline shell-outs plus bounded managed-command\n    lifecycle records (list)\n  - ``\"artifacts\"`` — files the run wrote (list)\n  - ``\"errors\"`` — errors + halt reason (ErrorsHaltSliceRecord)\n  - ``\"sub_runs\"`` — cross-run child aliases (list)\n  - ``\"receipts\"`` — per-subtask delivery receipts incl. done-criteria\n    attestation (list of SubtaskReceiptRecord)\n  - ``\"verification_receipts\"`` — durable verification-environment\n    receipts (interpreter / cwd / import checks / commands / exit\n    codes / clean-tree note) (list of VerificationReceiptRecord)\n  - ``\"verification_timeline\"`` — canonical scheduled-gate ledger rows\n    and identity-scoped events from the SDK (VerificationTimelineRecord)\n  - ``\"verification_cockpit\"`` — the same canonical ledger projection\n    under the cockpit view name (VerificationTimelineRecord)\n  - ``\"handoff_advice\"`` — Stage 0/1 phase-handoff advisor evidence:\n    per-call records (handoff_id / phase / recommended_action /\n    applied_action / confidence / resolved / repeated / outcome /\n    finding_fingerprint / usage+cost / advice_artifact) plus an aggregate\n    summary (calls / applied_retries / resolved_retries / repeated /\n    stopped / unknown / usage). Empty slice when the run has no advisor\n    surface (HandoffAdviceSliceRecord)\n  - ``\"scope_expansion\"`` — ADR 0110 scope-expansion audit from\n    ``final_acceptance``: per-path items (path / classification\n    notice|risk|blocker / category / evidence) plus the aggregate\n    ``has_blocker`` decision-condition flag. A ``notice`` is informational\n    only and never forms an operator handoff. This is a SEPARATE axis from\n    the delivery ``scope_disclosure`` on ``DeliveryGateProjection`` (which\n    names strict-mono sibling files behind a shipping block). Empty slice\n    when the run recorded no scope-expansion audit (ScopeExpansionSliceRecord)\n  - ``\"delivery\"`` — post-release commit-delivery outcome as typed data:\n    ``release_verdict`` (approved / rejected / none), the raw\n    ``decision_status`` + ``action``, and the distinguishable\n    ``applied`` / ``committed`` / ``skipped`` / ``failed`` booleans (mapped\n    from the core CommitDeliveryStatus vocabulary), ``commit_sha`` /\n    ``halt_reason``, plus the same ``implement_delivery`` audit as the\n    ``errors`` slice. ``None`` when the run recorded no commit-delivery\n    decision. Inherited-vs-current receipts behind an approved gate-rerun\n    child live in the ``verification_timeline`` + ``receipts`` slices\n    (DeliverySummaryRecord)\n  - ``\"criterion_decisions\"`` — the append-only human-criterion decision\n    log in durable write order: ``decision_id`` (what a ``human_decision``\n    proof ref cites), ``run_id``, ``criterion_id``, ``decision``,\n    ``recorded_at`` (core's opaque canonical timestamp), plus ``note`` /\n    ``actor`` / ``supersedes`` when used — absent, never ``null``, when\n    not. ``[]`` for a run with no decisions (list of\n    HumanCriterionDecisionRecord)\n  - ``\"criterion_matrix\"`` — the ADR 0188 criterion matrix: one row per\n    plan criterion (id / intent / verify / executors / discriminated\n    ``method`` / ``proof_refs`` / ``state`` / ``reason`` / ``blocking``)\n    plus the summary (``total`` / ``blocking_open`` / ``ready`` /\n    ``counts_by_state`` in core's canonical state order /\n    ``pending_human_ids``). Forwarded from core verbatim. The key is\n    omitted entirely — never ``null`` — for a run with no criterion\n    contract (CriterionMatrixRecord)\n  - ``\"correction\"`` — ADR 0098 correction fixed-point / non-convergence:\n    ``non_converging`` (an operator-decision condition), ``repeated``\n    blockers, ``parent_run_id`` / ``child_run_id``, advisory\n    ``suggested_actions`` (never auto-applied), and ``reason``. ``None``\n    when core recorded no fixed-point block (CorrectionSliceRecord)\n  - ``\"all\"`` — every slice in one response",
         "properties": {
           "artifacts": {
             "anyOf": [
@@ -5914,6 +7077,26 @@
               }
             ],
             "default": null
+          },
+          "criterion_decisions": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/HumanCriterionDecisionRecord"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "The run's append-only human-criterion decision log (ADR 0188), in durable write order — the durable record behind every ``{\"kind\": \"human_decision\"}`` proof ref, so a client that reconnects after a resume can read who decided what, when, with what note, and which earlier decision it superseded. Records are forwarded field for field: ``recorded_at`` is core's opaque canonical timestamp, and an unused ``note`` / ``actor`` / ``supersedes`` key is absent rather than ``null``. ``[]`` for a run with no recorded decisions; ``None`` when the slice was not requested.",
+            "title": "Criterion Decisions"
+          },
+          "criterion_matrix": {
+            "$ref": "#/$defs/CriterionMatrixRecord",
+            "description": "ADR 0188 criterion matrix: one row per plan criterion in plan order, plus the readiness summary. Forwarded from core unchanged — MCP never recomputes a row state, readiness, receipt freshness, gate selection, executors, or blocking consequences. The key is OMITTED (never ``null``) for a run with no criterion contract; a new-format plan with no criteria is present with ``rows: []`` and the zeroed summary."
           },
           "delivery": {
             "anyOf": [
@@ -8353,6 +9536,64 @@
             "title": "AutoDetectProjection",
             "type": "object"
           },
+          "CriterionMatrixSummaryRecord": {
+            "additionalProperties": false,
+            "description": "The reducer's aggregate verdict for a run.\n\n``ready == (blocking_open == 0)`` is core's invariant, forwarded — not\nre-derived here. ``counts_by_state`` holds only present states with\npositive counts, keyed in ``sdk.CRITERION_STATE_ORDER``; it is a plain\nmapping precisely so its **insertion order survives** serialization.",
+            "properties": {
+              "blocking_open": {
+                "minimum": 0,
+                "title": "Blocking Open",
+                "type": "integer"
+              },
+              "counts_by_state": {
+                "additionalProperties": {
+                  "exclusiveMinimum": 0,
+                  "type": "integer"
+                },
+                "description": "Counts for the states PRESENT in the rows, keyed in core's canonical state order. Only present states appear, and only with a positive count — a zero entry and an unknown state name are both contract breaks, not merely unusual.",
+                "propertyNames": {
+                  "enum": [
+                    "proven",
+                    "failed",
+                    "stale",
+                    "missing",
+                    "not_selected",
+                    "advisory",
+                    "accepted",
+                    "rejected",
+                    "pending"
+                  ]
+                },
+                "title": "Counts By State",
+                "type": "object"
+              },
+              "pending_human_ids": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Pending Human Ids",
+                "type": "array"
+              },
+              "ready": {
+                "title": "Ready",
+                "type": "boolean"
+              },
+              "total": {
+                "minimum": 0,
+                "title": "Total",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "total",
+              "blocking_open",
+              "ready",
+              "counts_by_state",
+              "pending_human_ids"
+            ],
+            "title": "CriterionMatrixSummaryRecord",
+            "type": "object"
+          },
           "CrossExecutionGraphCompileIdentityRecord": {
             "description": "Immutable compilation identity for a persisted cross-run graph.",
             "properties": {
@@ -9310,6 +10551,10 @@
             ],
             "default": null,
             "description": "Typed projection of the persisted ``meta.auto_detect`` decision (requested selector + detector outcome + a deterministic next_action). ``None`` for a run that did not start through the ``auto-detect`` selector."
+          },
+          "criterion_readiness": {
+            "$ref": "#/$defs/CriterionMatrixSummaryRecord",
+            "description": "ADR 0188 criterion readiness, forwarded from core's reducer: ``total`` / ``blocking_open`` / ``ready`` / ``counts_by_state`` (canonical state order) / ``pending_human_ids``. Never recomputed on the MCP side. The full rows live on ``orcho_run_evidence`` slice ``criterion_matrix``. The key is omitted for a run with no criterion contract."
           },
           "cross_execution_graph": {
             "anyOf": [

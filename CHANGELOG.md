@@ -2,6 +2,71 @@
 
 ## Unreleased
 
+### Added
+
+- Criterion-to-evidence traceability is readable from a client (ADR 0188). A
+  captain no longer has to join plan JSON, subtask receipts, findings, and gate
+  receipts by hand to answer "what proves this, and is it releasable?":
+  - `orcho_run_evidence` gains a `criterion_matrix` slice — one row per plan
+    acceptance criterion with its verification class, the executors that own
+    it, a discriminated proof method (official gates / agent inspection /
+    operator instructions), its proof references, state, and whether it blocks;
+  - the `plan` slice now carries typed criteria (stable ids, verification
+    class, complete `(command, hook, phase)` gate identities) plus per-task
+    `acceptance_refs`, where it previously carried prose strings;
+  - a `criterion_decisions` slice returns the run's append-only human-decision
+    log, so a client that reconnects after a resume can resolve a
+    `human_decision` proof reference into the decision behind it — who decided,
+    when, with what note, and which earlier decision it superseded;
+  - `orcho_run_status`, `orcho_run_diagnose`, and `orcho_delivery_gate` carry
+    the same `criterion_readiness` summary, read through one projection path,
+    so they cannot disagree about blockers.
+- `orcho_criterion_decide` records an operator's `accept` / `reject` on a
+  `human` criterion. Called without a verdict it asks a capable client through
+  native MCP form elicitation, and otherwise returns
+  `operator_input_required` with the exact missing input and a ready-call —
+  writing nothing in either case. No verdict is ever inferred from
+  conversation, and every admission rule (unknown criterion, non-human
+  criterion, wrong run, conflicting decision) is enforced by the engine before
+  anything is written.
+
+### Changed
+
+- Requires an `orcho-core` that exposes the ADR 0188 criterion SDK. MCP is a
+  pure consumer here: it never recomputes a criterion state, readiness,
+  receipt freshness, gate selection, executors, or blocking consequences, and
+  an architecture guard now fails the build if a second SDK call site, a local
+  state table, string criteria, or a `null` for an absent criterion payload
+  appears.
+- **Wire change:** `PlanSliceRecord.acceptance_criteria` is a list of typed
+  criterion objects rather than a list of strings.
+- An open blocking criterion now shapes the suggested next action, not just
+  the readiness number. `orcho_run_status`, `orcho_run_diagnose`, and
+  `orcho_delivery_gate` lead their `next_actions` with the
+  `orcho_criterion_decide` call that can clear it, and a shipping
+  `orcho_delivery_decide` call is demoted from `ready_call` to
+  `operator_input_required` (naming the blocker count/state and any pending
+  human criteria in `context`)
+  instead of sitting beside a `ready: false` summary as if it were safe to
+  forward. This applies to every blocker, including failed/missing executable
+  proof and rejected human criteria; resume and read-only actions are untouched.
+- A recorded decision is never retracted by a failed readback. The response
+  carries the matrix as it stands after the write; if that read fails, the
+  outcome stays `decision_recorded` and `matrix_error` says why, so an
+  operator re-reads instead of retrying into "already decided".
+- A run with no criterion contract OMITS `criterion_matrix` /
+  `criterion_readiness` rather than sending `null`, keeping "this run predates
+  the contract" distinguishable from "this plan declares no criteria" (which
+  is an explicit empty matrix). A missing criterion SDK capability or malformed
+  current matrix fails closed instead of masquerading as that absent case.
+
+### Fixed
+
+- The plan slice's `allowed_modifications` read the durable plan artifact's
+  top level, but the artifact is an `{"artifact_version", "plan"}` envelope, so
+  the globs were always empty against a real run. It now reads the inner plan
+  body; per-task `acceptance_refs` come from the public core SDK plan summary.
+
 ## 0.8.2 - 2026-08-29
 
 Two defects that made a paused or abandoned run unreadable from the client

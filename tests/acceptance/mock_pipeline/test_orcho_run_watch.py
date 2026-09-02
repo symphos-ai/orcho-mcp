@@ -25,8 +25,6 @@ margin so future SDK default changes do not silently make the test flaky.
 """
 from __future__ import annotations
 
-import os
-import sys
 import time
 from datetime import timedelta
 
@@ -71,17 +69,17 @@ async def test_orcho_run_watch_progress_token_capture(mock_project):
       5. Assert progress was captured, values are monotonic, the result
          shape parses, and ``trigger.kind`` lands on handoff or terminal.
     """
-    from mcp import ClientSession, StdioServerParameters
+    from mcp import ClientSession
     from mcp.client.stdio import stdio_client
 
-    env = {**os.environ, "ORCHO_WORKSPACE": str(mock_project)}
+    from tests.fixtures.stdio import _build_server_params
+
     project_dir = str(mock_project / "demo_project")
 
-    params = StdioServerParameters(
-        command=sys.executable,
-        args=["-m", "orcho_mcp"],
-        env=env,
-    )
+    # Shared L3 plumbing: it pins the subprocess PYTHONPATH to THIS checkout
+    # (and the paired core), so the spawned server is the source under test
+    # rather than whatever ``orcho_mcp`` the bare interpreter can import.
+    params = _build_server_params(mock_project)
 
     progress_events: list[tuple[float, float | None, str | None]] = []
 
