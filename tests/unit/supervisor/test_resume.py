@@ -321,3 +321,65 @@ async def test_resume_missing_meta_task_raises_not_found(
     with pytest.raises(RunNotFoundError, match="missing 'task'"):
         await sup.resume("resume_no_task")
     assert called == []
+
+
+# ── budget inheritance through the real SDK seam ────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_resume_re_emits_operator_max_rounds_through_real_seam(
+    tmp_path, fake_workspace, monkeypatch,
+):
+    """An MCP resume preserves the per-run ``max_rounds`` the operator asked for.
+
+    Writer-to-reader contract, deliberately *not* faking ``resume_run``:
+    the value travels MCP supervisor → ``sdk.run_control.resume_run`` →
+    ``build_orch_argv``, and only the OS-level spawn is stubbed. Faking
+    the seam here would assert nothing, because the supervisor forwards
+    no budget at all — the value is recovered inside the seam from the
+    run's own ``checkpoints.db``.
+
+    The field defect: a run started through MCP with ``max_rounds=4``
+    resumed without ``--max-rounds``, so the orchestrator's argparse
+    default (1) applied and the repair loop silently shrank to one round.
+    """
+    from pipeline.checkpoint import CheckpointStore
+
+    project = tmp_path / "proj"
+    project.mkdir()
+    run_id = "resume_budget"
+    run_dir = _write_resumable_run(
+        fake_workspace, run_id, project, {"task": "continue", "profile": "feature"},
+    )
+    # Neutral launch state the SDK seam reads (the MCP delta above is a
+    # separate file and does not feed argv).
+    (run_dir / "run_supervisor.json").write_text(json.dumps({
+        "run_id": run_id, "pid": 99999999, "pgid": 99999999, "command": ["x"],
+        "project_dir": str(project), "started_at": "t", "status": "running",
+        "mock": True, "output_mode": "summary",
+    }))
+    store = CheckpointStore(run_dir / "checkpoints.db", run_id=run_id)
+    store.save_config({"task": "continue", "max_rounds": 4})
+    store.close()
+
+    real_popen = subprocess.Popen
+    spawned: dict[str, list[str]] = {}
+
+    def fake_spawn(cmd, **_kw):
+        spawned["cmd"] = list(cmd)
+        return real_popen([sys.executable, "-c", "import sys; sys.exit(0)"])
+
+    monkeypatch.setattr("sdk.run_control.launch._spawn_detached", fake_spawn)
+
+    sup = RunsSupervisor()
+    handle = await sup.resume(run_id)
+    try:
+        cmd = spawned["cmd"]
+        assert "--max-rounds" in cmd, (
+            "MCP resume dropped the operator's budget; orcho-core's argparse "
+            f"default of 1 would apply. argv={cmd}"
+        )
+        assert cmd[cmd.index("--max-rounds") + 1] == "4"
+        assert cmd[cmd.index("--resume") + 1] == run_id
+    finally:
+        _reap_cleanup(handle)

@@ -70,6 +70,15 @@
   `LoopStep.max_rounds` and is not settable per run, so `max_rounds=4` on a
   profile declaring 2 plan rounds still stops planning after round 2.
   Description-only change; the wire shape is unchanged.
+- An MCP resume preserves the run's `max_rounds` budget. `orcho_run_start`
+  with `max_rounds=4` reached the first subprocess correctly, but
+  `orcho_run_resume` re-spawned without `--max-rounds`, so the orchestrator's
+  argparse default of 1 applied and the repair loop silently shrank to a single
+  round. The fix is in orcho-core's `sdk.run_control.resume_run` — the seam that
+  owns resume argv and already inherited `mock` / `output_mode` / profile — so
+  `RunsSupervisor.resume` needs no new parameter and the value gains no second
+  source of truth. Covered here by a regression test that drives the real seam
+  and stubs only the OS-level spawn.
 
 - `orcho_run_diagnose` / `orcho_run_resume` no longer point a terminal recovery
   run at a source resume that core's launch preflight refuses. When the source
