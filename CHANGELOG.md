@@ -62,6 +62,15 @@
 
 ### Fixed
 
+- `orcho_run_start` documents `max_rounds`. The parameter was in the
+  signature but named nowhere in the tool description, so an MCP caller saw an
+  undocumented integer and could reasonably read it as the planning budget. It
+  caps only the implement -> review_changes -> repair_changes loop (omitted ->
+  engine default 1); the plan / validate_plan cap is the active profile's
+  `LoopStep.max_rounds` and is not settable per run, so `max_rounds=4` on a
+  profile declaring 2 plan rounds still stops planning after round 2.
+  Description-only change; the wire shape is unchanged.
+
 - `orcho_run_diagnose` / `orcho_run_resume` no longer point a terminal recovery
   run at a source resume that core's launch preflight refuses. When the source
   had a finalized `scheduled_gate_ledger.json` (closed at every runner-side

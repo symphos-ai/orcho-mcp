@@ -353,3 +353,24 @@ async def test_cancel_run_passes_through_run_not_found(
 
     with pytest.raises(RunNotFoundError, match="no state file"):
         await cancel_run("r1", mode="hard")
+
+
+def test_run_start_docstring_scopes_max_rounds_to_the_repair_loop() -> None:
+    """``max_rounds`` is an undocumented integer to an MCP caller unless
+    the tool description says which loop it caps.
+
+    It governs implement → review_changes → repair_changes only; the
+    plan / validate_plan budget is the active profile's
+    ``LoopStep.max_rounds`` and has no per-run override. A caller who
+    reads it as the planning budget passes ``max_rounds=4`` and is then
+    surprised when the run pauses at plan round 2 of 2.
+    """
+    from orcho_mcp.tools import orcho_run_start
+
+    doc = (orcho_run_start.__doc__ or "")
+    assert "``max_rounds``" in doc, "max_rounds is undocumented"
+    lowered = doc.lower()
+    assert "repair_changes" in lowered
+    assert "loopstep.max_rounds" in lowered
+    # The negative half of the contract is the load-bearing one.
+    assert "not settable per run" in lowered

@@ -923,6 +923,12 @@ async def orcho_run_start(
     ``session_mode`` controls implement → repair_changes provider-session
     continuation: ``"auto"`` (default), ``"stateless"``, ``"chain"``, or
     ``"hybrid"``.
+    ``max_rounds`` caps **only** the implement → review_changes →
+    repair_changes loop (omitted → engine default 1). It does not budget
+    planning: the plan / validate_plan loop's cap comes from the active
+    profile's ``LoopStep.max_rounds`` and is not settable per run, so a
+    run started with ``max_rounds=4`` on a profile declaring 2 plan
+    rounds still stops planning after round 2.
 
     Pause semantics are driven by each phase's declared ``handoff``
     policy in the active profile (e.g. ``feature`` declares
