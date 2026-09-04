@@ -453,7 +453,7 @@ never returns a `pid`.
 | `applied` | `RunResumeResult` | yes | The run is genuinely resumable (`running` restart, `failed`, `interrupted`, or a non-terminal `halted`). Carries the fresh spawn handle (`pid` / `run_dir` / `started_at` / `command`). |
 | `pending_decision` | `ResumePendingDecisionResult` | no | Paused on `awaiting_phase_handoff` with no recorded decision. Resolve with `orcho_phase_handoff_decide` first, then resume. |
 | `superseded_by_child` | `ResumeBlockedResult` | no | A newer unfinished follow-up child is continuing this run. `recommended_run_id` names the child to resume instead of this parent. |
-| `recover_via_source_run` | `ResumeBlockedResult` | no | This run is a terminal / rejected recovery run, but durable lineage points at a *resumable source* run that still owns the retained checkpoint / worktree. `recommended_run_id` names that source. **Not success-shaped — no `pid`.** Carries a `ready_call` `orcho_run_resume` on the source, not a `from_run_plan`. |
+| `recover_via_source_run` | `ResumeBlockedResult` | no | This run is a terminal / rejected recovery run whose durable lineage points at a *source* run; `recommended_run_id` names it. **Not success-shaped — no `pid`.** The single `ready_call` is the via-source operation core's launch preflight accepts: `orcho_run_resume` on the source when its checkpoint resume passes preflight, or `orcho_run_start(from_run_plan=<source>)` when preflight refuses a same-run resume of the source (e.g. its `scheduled_gate_ledger.json` was finalized at `run.end`) but accepts a fresh launch off its persisted plan artifact. |
 | `rejected_terminal` | `ResumeBlockedResult` | no | The run is terminal (terminal success or a terminal halt reason) with no resumable lineage subject; resuming is inert. **Not success-shaped — no `pid`.** Points at read-only inspection, never a resume. `recommended_run_id` stays `None`. |
 
 `ResumeBlockedResult` carries **no spawn fields** (no `pid` / `run_dir` /
@@ -462,7 +462,8 @@ never returns a `pid`.
 [Diagnosing a run](#diagnosing-a-run--orcho_run_diagnose)): the
 `superseded_by_child` outcome carries a `ready_call` `orcho_run_resume`
 on the child; `recover_via_source_run` carries a `ready_call`
-`orcho_run_resume` on the source; `rejected_terminal` carries only
+`orcho_run_resume` on the source, or `orcho_run_start(from_run_plan=<source>)`
+when preflight refuses the source resume; `rejected_terminal` carries only
 read-only inspection calls.
 
 The guard is defensive: a run that cannot be classified (unresolvable /
@@ -833,17 +834,18 @@ terminal parent.
 | `stalled` | Core observed that a running startup exceeded its durable progress budget. | Inspect `orcho_run_status` and `orcho_run_evidence(slice="errors")`; `orcho_run_cancel(run_id)` is ready only when `control="mcp_controllable"`. `available_actions=[]`; never resume or watch. |
 | `needs_decision` | Paused on `awaiting_phase_handoff`; an operator must record a decision first. | Typed decide calls (see below); `available_actions` carries the verbs. |
 | `needs_delivery_decision` | Parked at a post-release delivery / correction gate. | Inspect `orcho_delivery_gate`; choose one of its ready `orcho_delivery_decide` calls. |
-| `recover_via_source_run` | This run is a terminal / rejected recovery run, but durable lineage points at a *resumable source* run that still owns the retained checkpoint / worktree. | `ready_call` `orcho_run_resume(run_id=recommended_run_id)` — resume the source, **not** a `from_run_plan` against this inert run. |
+| `recover_via_source_run` | This run is a terminal / rejected recovery run whose durable lineage points at a *source* run (`recommended_run_id`); continue via the source, **not** via this inert run. `recommended_next_action` says which via-source operation core's launch preflight accepts. | `resume_source_run` → `ready_call` `orcho_run_resume(run_id=recommended_run_id)`. `plan_artifact_continuation` → `ready_call` `orcho_run_start(from_run_plan=recommended_run_id)`: preflight refuses a same-run resume of the source (e.g. a finalized scheduled-gate ledger) but accepts a fresh launch off its persisted plan. Never a resume the preflight would refuse. |
 | `resume_inert_terminal` | Terminal (terminal success or a terminal halt reason); resuming is inert. | `ready_call` `orcho_run_evidence(slice="errors")` + `orcho_run_status` — never a resume. The typed `recommended_next_action` distinguishes a `plan_artifact_continuation`, a clean `start_followup`, and a `stop_unknown` dead-end (see below). |
 | `superseded_by_child` | A newer unfinished follow-up child continues this run. | `ready_call` `orcho_run_resume(run_id=recommended_run_id)` — resume the child, not this parent. |
 | `blocked_worktree` | A follow-up blocked because the parent's undelivered diff is not replayable here. | See [blocked_worktree shape](#blocked_worktree-next-actions). |
 | `provider_pressure` | A residual `halted` / `failed` / `interrupted` stop that core typed as a provider runtime/access failure (rate-limit, transient runtime fault, access loss) — **not** a rejected review / failed acceptance / operator halt. The typed `provider_pressure` field carries the core facts and conservative resume-later/inspect actions. See [provider pressure](#provider-pressure). | `ready_call` `orcho_run_evidence(slice="errors")` + `orcho_run_resume(run_id)` (+ `orcho_run_status`) from the shared helper; never a feedback verb. |
 | `halted` / `failed` / `interrupted` | A resumable non-terminal stop. | `ready_call` `orcho_run_resume(run_id)` + `orcho_run_evidence(slice="errors")`. |
 
-`recommended_run_id` names the run to resume instead of this one (the
-active child for `superseded_by_child`; the resumable source for
-`recover_via_source_run`; the known parent for `blocked_worktree`); it is
-`None` otherwise.
+`recommended_run_id` names the run to continue through instead of this one
+(the active child for `superseded_by_child`; the source for
+`recover_via_source_run` — the resume target, or the `from_run_plan` parent
+when the source cannot be resumed in place; the known parent for
+`blocked_worktree`); it is `None` otherwise.
 
 ### Provider pressure
 
@@ -895,10 +897,10 @@ same `services.run_lineage` resolver that backs
 
 | `continuation_subject` | `recommended_next_action` | Meaning |
 |---|---|---|
-| `source_run_checkpoint` | `resume_source_run` | Resume the resumable source run's checkpoint (the inert recovery run is **not** the subject). |
+| `source_run_checkpoint` | `resume_source_run` | Resume the source run's checkpoint — core's launch preflight accepts it (the inert recovery run is **not** the subject). |
 | `active_child_run` | `resume_active_child` | Resume the live follow-up child. |
 | `delivery_gate` | `delivery_decision` | Resolve the pending delivery / correction gate. |
-| `plan_artifact` | `plan_artifact_continuation` | Implement the persisted plan artifact as a **new** run via `from_run_plan` (see warning below). |
+| `plan_artifact` | `plan_artifact_continuation` | Implement the persisted plan artifact as a **new** run via `from_run_plan` (see warning below). `recommended_run_id` is the plan-owning run: this run, or — under `recover_via_source_run` — the source, when preflight refuses to resume the source in place but accepts a launch off its plan. |
 | `none` | `start_followup` | Clean terminal-success; start a fresh follow-up. |
 | `unknown` | `stop_unknown` | Terminal dead-end with no durable continuation subject; `recovery_lineage.missing_facts` enumerates exactly which durable facts are absent. No `from_run_plan` is offered. |
 

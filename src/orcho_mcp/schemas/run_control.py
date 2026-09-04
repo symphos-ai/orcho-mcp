@@ -194,10 +194,14 @@ class ResumeBlockedResult(BaseModel):
       child and the single ``ready_call`` next action resumes the child
       instead of this parent.
     - ``recover_via_source_run`` — this run is a terminal / rejected recovery
-      run, but durable lineage points at a *resumable source* run that still
-      owns the retained checkpoint / worktree. ``recommended_run_id`` is that
-      source and the single ``ready_call`` next action resumes the source
-      instead of spawning a no-op resume against this inert run.
+      run whose durable lineage points at a *source* run. ``recommended_run_id``
+      is that source and the single ``ready_call`` next action is the
+      via-source operation core's launch preflight accepts: ``orcho_run_resume``
+      on the source when its checkpoint resume passes preflight, or
+      ``orcho_run_start(from_run_plan=<source>)`` when preflight refuses a
+      same-run resume of the source (e.g. a finalized scheduled-gate ledger)
+      but accepts a fresh launch off its persisted plan artifact. Never a
+      no-op resume against this inert run.
     """
 
     kind: Literal["resume_blocked"] = "resume_blocked"
@@ -226,7 +230,9 @@ class ResumeBlockedResult(BaseModel):
         default=None,
         description="The run to resume instead of this one: the active "
                     "follow-up child for ``superseded_by_child``, or the "
-                    "resumable source run for ``recover_via_source_run``. "
+                    "source run for ``recover_via_source_run`` (the resume "
+                    "target, or the ``from_run_plan`` parent when the source "
+                    "cannot be resumed in place). "
                     "``None`` for ``rejected_terminal`` (a terminal run with "
                     "no resumable lineage subject has no resume target).",
     )
@@ -237,7 +243,9 @@ class ResumeBlockedResult(BaseModel):
         default_factory=list,
         description="Typed follow-up calls — every record is a ``ready_call`` "
                     "carrying all required args: resume-the-child for "
-                    "``superseded_by_child``, read-only inspection "
+                    "``superseded_by_child``, resume-the-source or "
+                    "``orcho_run_start(from_run_plan=<source>)`` for "
+                    "``recover_via_source_run``, read-only inspection "
                     "(``orcho_run_status`` / ``orcho_run_evidence``) for "
                     "``rejected_terminal``. Never a resume of a terminal run.",
     )
@@ -712,9 +720,13 @@ class RunDiagnosis(BaseModel):
       release_blockers are NOT authoritative, resume is inert, and the
       superseding child rides in ``recommended_run_id``.
     - ``recover_via_source_run`` — this run is a terminal / rejected recovery
-      run, but durable lineage points at a *resumable source* run; resume the
-      source (``recommended_run_id``), NOT a fresh ``from_run_plan`` against
-      this inert run.
+      run whose durable lineage points at a *source* run
+      (``recommended_run_id``); continue via the source, NOT via this inert
+      run. ``recommended_next_action`` says which via-source operation core's
+      launch preflight accepts: ``resume_source_run`` (resume the source's
+      checkpoint) or ``plan_artifact_continuation`` (the source cannot be
+      resumed in place — e.g. a finalized scheduled-gate ledger — so start a
+      new run with ``from_run_plan=<source>``).
     - ``resume_inert_terminal`` — terminal (terminal success or a terminal
       halt reason); resuming is inert, so only inspection is offered. The
       typed ``continuation_subject`` / ``recommended_next_action`` still

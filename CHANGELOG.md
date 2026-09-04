@@ -62,6 +62,19 @@
 
 ### Fixed
 
+- `orcho_run_diagnose` / `orcho_run_resume` no longer point a terminal recovery
+  run at a source resume that core's launch preflight refuses. When the source
+  had a finalized `scheduled_gate_ledger.json` (closed at every runner-side
+  `run.end`), the `recover_via_source_run` response carried a `ready_call`
+  `orcho_run_resume(source)` that then failed with "same-run resume is
+  blocked: parent has a finalized scheduled-gate ledger". Core now derives
+  source resumability from that same preflight; when the source cannot be
+  resumed in place but preflight accepts a `from_run_plan` launch off its
+  persisted plan, the condition stays `recover_via_source_run` with
+  `recommended_next_action='plan_artifact_continuation'` and the `ready_call`
+  becomes `orcho_run_start(from_run_plan=<source>)` on both the diagnose and
+  resume surfaces. Requires the matching `orcho-core` change.
+
 - The plan slice's `allowed_modifications` read the durable plan artifact's
   top level, but the artifact is an `{"artifact_version", "plan"}` envelope, so
   the globs were always empty against a real run. It now reads the inner plan

@@ -441,24 +441,57 @@ def _preflight_blocked_response(
 def _recover_via_source_response(
     run_id: str, diagnosis: RunDiagnosisProjection,
 ) -> ResumeBlockedResult:
-    """Refuse resume of a terminal recovery run; point at the source run.
+    """Refuse resume of a terminal recovery run; route through its source run.
 
     This run is a terminal / rejected dead-end whose durable lineage resolved
-    a *resumable source* run that still owns the retained checkpoint /
-    worktree. Resuming this inert run would spawn a no-op against a terminal
-    run (the invariant 'terminal resume never spawns'), so the response carries
-    no spawn fields and the single ``ready_call`` ``orcho_run_resume`` is
-    pre-filled with the source's ``run_id``.
+    a *source* run. Resuming this inert run would spawn a no-op against a
+    terminal run (the invariant 'terminal resume never spawns'), so the
+    response carries no spawn fields. Core's diagnosis has already asked the
+    canonical launch preflight which via-source operation the source accepts,
+    and ``recommended_next_action`` says which — the single ``ready_call``
+    mirrors it exactly, so the operator is never sent into a preflight refusal:
+
+    - ``resume_source_run`` — the source's checkpoint resume passes preflight;
+      ``orcho_run_resume`` pre-filled with the source's ``run_id``.
+    - ``plan_artifact_continuation`` — preflight refuses a same-run resume of
+      the source (for example its scheduled-gate ledger was finalized at
+      ``run.end``) but accepts a fresh launch off its persisted plan
+      artifact; ``orcho_run_start`` pre-filled with ``from_run_plan=<source>``.
     """
     source = diagnosis.recommended_run_id
-    message = (
-        f"Run {run_id} is a terminal recovery run ({diagnosis.reason}); "
-        "resuming it is inert. Its retained checkpoint lives on the source "
-        f"run {source} — resume {source} instead of starting a new "
-        "from_run_plan run."
-    )
+    via_plan = diagnosis.recommended_next_action == "plan_artifact_continuation"
     next_actions: list[NextActionRecord] = []
-    if source:
+    if source and via_plan:
+        message = (
+            f"Run {run_id} is a terminal recovery run ({diagnosis.reason}); "
+            f"resuming it is inert. Its source run {source} cannot be resumed "
+            "in place either (core continuation preflight refuses a same-run "
+            f"resume of it), but {source} holds a launchable plan artifact — "
+            f"start a NEW run with from_run_plan={source} instead of resuming "
+            "either run."
+        )
+        suggested = f"call orcho_run_start with from_run_plan={source}"
+        next_actions.append(
+            NextActionRecord(
+                intent=(
+                    f"Start a NEW implementation run from source run {source}'s "
+                    "persisted plan artifact; neither the inspected terminal "
+                    f"run {run_id} nor {source} can be resumed in place."
+                ),
+                tool="orcho_run_start",
+                args={"from_run_plan": source, "profile": "feature"},
+                optional=False,
+                kind="ready_call",
+            ),
+        )
+    elif source:
+        message = (
+            f"Run {run_id} is a terminal recovery run ({diagnosis.reason}); "
+            "resuming it is inert. Its retained checkpoint lives on the source "
+            f"run {source}, whose resume passes core continuation preflight — "
+            f"resume {source} instead of starting a new from_run_plan run."
+        )
+        suggested = f"call orcho_run_resume with run_id={source}"
         next_actions.append(
             NextActionRecord(
                 intent=(
@@ -471,6 +504,12 @@ def _recover_via_source_response(
                 kind="ready_call",
             ),
         )
+    else:
+        message = (
+            f"Run {run_id} is a terminal recovery run ({diagnosis.reason}); "
+            "resuming it is inert and its source run is unknown."
+        )
+        suggested = "inspect the run lineage before resuming"
     return ResumeBlockedResult(
         run_id=run_id,
         resume_outcome="recover_via_source_run",
@@ -478,11 +517,7 @@ def _recover_via_source_response(
         reason=diagnosis.reason,
         message=message,
         recommended_run_id=source,
-        suggested_next_action=(
-            f"call orcho_run_resume with run_id={source}"
-            if source
-            else "inspect the run lineage before resuming"
-        ),
+        suggested_next_action=suggested,
         next_actions=next_actions,
     )
 
@@ -502,8 +537,10 @@ def _resume_block_or_none(
       falls through to the supervisor (unchanged pre-existing behaviour).
     - ``superseded_by_child`` → :func:`_superseded_response`.
     - ``recover_via_source_run`` → :func:`_recover_via_source_response`
-      (points at the resumable source; must intercept BEFORE the supervisor or
-      a terminal recovery run would spawn a no-op resume).
+      (routes through the source — resume it, or start a ``from_run_plan``
+      run off its plan when preflight refuses the resume; must intercept
+      BEFORE the supervisor or a terminal recovery run would spawn a no-op
+      resume).
     - ``resume_inert_terminal`` → :func:`_rejected_terminal_response`.
     """
     condition = diagnosis.condition
@@ -611,8 +648,10 @@ async def resume_run(
       (``resume_outcome='superseded_by_child'``) recommending the live
       child;
     - ``recover_via_source_run`` → :class:`ResumeBlockedResult`
-      (``resume_outcome='recover_via_source_run'``) recommending the
-      resumable source run instead of this terminal recovery run;
+      (``resume_outcome='recover_via_source_run'``) routing through the
+      source run instead of this terminal recovery run — a resume of the
+      source when core's launch preflight accepts it, else a ``from_run_plan``
+      launch off the source's plan artifact;
     - ``resume_inert_terminal`` → :class:`ResumeBlockedResult`
       (``resume_outcome='rejected_terminal'``) pointing at read-only
       inspection.

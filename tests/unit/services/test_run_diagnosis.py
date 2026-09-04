@@ -21,7 +21,13 @@ from orcho_mcp.services import run_projection
 from orcho_mcp.services.continuation import preflight_core_continuation
 from orcho_mcp.services.run_projection import project_run_diagnosis
 from orcho_mcp.tools import orcho_run_diagnose
-from tests.fixtures.mcp_workspace import event, meta, supervisor_state, write_run
+from tests.fixtures.mcp_workspace import (
+    event,
+    finalized_gate_ledger,
+    meta,
+    supervisor_state,
+    write_run,
+)
 
 _RETAINED_WORKTREE = {"isolation": "worktree", "path": "/tmp/wt/source"}
 _PARSED_PLAN = {"tasks": [{"id": "T1", "spec": "do the thing"}]}
@@ -805,6 +811,53 @@ def test_recover_via_source_run_tool_recommends_source_resume(fake_workspace):
     assert all(na.tool != "orcho_run_start" for na in diag.next_actions)
     for na in diag.next_actions:
         assert "from_run_plan" not in na.args
+    _assert_no_parent_run_id_arg(diag)
+
+
+def test_recover_via_finalized_source_ledger_recommends_from_run_plan(fake_workspace):
+    # Field shape: the source is a non-terminal stop with a retained worktree
+    # and a persisted plan, but its scheduled-gate ledger was finalized at
+    # run.end — core's launch preflight refuses a same-run resume of it. The
+    # condition stays recover_via_source_run (the recovery goes through the
+    # source), but the typed action is the operation preflight accepts: a NEW
+    # from_run_plan run off the source — never orcho_run_resume(source).
+    write_run(
+        fake_workspace, "20260101_000001",
+        meta=_source_failed_with_worktree(plan_source="local"),
+        parsed_plan={"tasks": [{"id": "T1", "spec": "do the thing"}]},
+        scheduled_gate_ledger=finalized_gate_ledger(),
+    )
+    write_run(
+        fake_workspace, "20260101_000002",
+        meta=meta(
+            status="halted", project="/p/x", task="recovery",
+            halt_reason="phase_handoff_halt",
+            resume_mode="followup", parent_run_id="20260101_000001",
+        ),
+    )
+
+    d = project_run_diagnosis("20260101_000002")
+
+    assert d.condition == "recover_via_source_run"
+    assert d.continuation_subject == "plan_artifact"
+    assert d.recommended_next_action == "plan_artifact_continuation"
+    assert d.recommended_run_id == "20260101_000001"
+    assert d.source_run_id == "20260101_000001"
+    assert "finalized scheduled-gate ledger" in d.reason
+    assert d.recovery_lineage is not None
+    assert d.recovery_lineage.source_resumable is False
+    assert d.recovery_lineage.recommended_run_id == "20260101_000001"
+
+    diag = orcho_run_diagnose("20260101_000002")
+
+    assert diag.condition == "recover_via_source_run"
+    assert diag.recommended_next_action == "plan_artifact_continuation"
+    starts = [na for na in diag.next_actions if na.tool == "orcho_run_start"]
+    assert len(starts) == 1
+    assert starts[0].kind == "ready_call"
+    assert starts[0].args == {"from_run_plan": "20260101_000001", "profile": "feature"}
+    # The refused resume is never offered — of the source or the inert run.
+    assert all(na.tool != "orcho_run_resume" for na in diag.next_actions)
     _assert_no_parent_run_id_arg(diag)
 
 

@@ -147,6 +147,7 @@ def write_run(
     diff_patch: str | None = None,
     parsed_plan: dict | None = None,
     parsed_plan_text: str | None = None,
+    scheduled_gate_ledger: dict | None = None,
 ) -> Path:
     """Create ``<workspace>/runspace/runs/<run_id>/`` with the supplied artefacts.
 
@@ -158,7 +159,10 @@ def write_run(
     ``commit_decision`` writes the durable
     ``commit_decisions/<safe_run_id>.json`` audit artifact; ``diff_patch``
     writes the run-level ``diff.patch`` (pass a corrupt body to exercise the
-    degraded path). ``parsed_plan`` writes the durable ``parsed_plan.json``
+    degraded path). ``scheduled_gate_ledger`` writes the durable
+    ``scheduled_gate_ledger.json`` verbatim (see :func:`finalized_gate_ledger`
+    for the closed shape finalization leaves at ``run.end``).
+    ``parsed_plan`` writes the durable ``parsed_plan.json``
     artifact, wrapping a bare plan body in the ``artifact_version`` envelope
     so it stays loadable by core (``parsed_plan_text`` writes a raw,
     possibly-corrupt body verbatim). All default to absent so a test can omit a secondary artifact
@@ -210,7 +214,22 @@ def write_run(
         (run_dir / "parsed_plan.json").write_text(
             parsed_plan_text, encoding="utf-8",
         )
+    if scheduled_gate_ledger is not None:
+        (run_dir / "scheduled_gate_ledger.json").write_text(
+            json.dumps(scheduled_gate_ledger), encoding="utf-8",
+        )
     return run_dir
+
+
+def finalized_gate_ledger() -> dict[str, Any]:
+    """The closed ``scheduled_gate_ledger.json`` finalization writes at ``run.end``.
+
+    An empty finalized ledger (schema 2, no rows, no trail) is exactly what
+    core's strict loader accepts and what makes its launch preflight refuse a
+    same-run resume of the run ("same-run resume is blocked: parent has a
+    finalized scheduled-gate ledger").
+    """
+    return {"schema_version": "2", "finalized": True, "rows": [], "trail": []}
 
 
 # ── Scenario builders ───────────────────────────────────────────────────────
