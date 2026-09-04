@@ -275,18 +275,44 @@ def _delivery_gate_actions(
 
 
 def _recover_via_source_actions(
-    run_id: str, source_run_id: str | None,
+    run_id: str,
+    source_run_id: str | None,
+    recommended_next_action: str | None,
 ) -> list[NextActionRecord]:
-    """Typed actions for a terminal recovery run with a resumable source.
+    """Typed actions for a terminal recovery run that continues via its source.
 
-    The single deterministic step is ``orcho_run_resume(run_id=<source>)`` —
-    the inspected terminal run is explicitly NOT the continuation subject, so
-    the resume target is the source checkpoint. Read-only inspection of the
-    inert run rides alongside. When the source is somehow unknown the response
-    degrades to inspection only (never a resume of the terminal run).
+    The inspected terminal run is explicitly NOT the continuation subject. Core
+    has already asked the canonical launch preflight which via-source operation
+    the source accepts, and the single deterministic step mirrors it:
+    ``orcho_run_resume(run_id=<source>)`` for ``resume_source_run``, or
+    ``orcho_run_start(from_run_plan=<source>)`` for
+    ``plan_artifact_continuation`` (preflight refuses a same-run resume of the
+    source — e.g. its scheduled-gate ledger was finalized — but accepts a
+    fresh launch off its persisted plan). Read-only inspection of the inert run
+    rides alongside. When the source is somehow unknown the response degrades
+    to inspection only (never a resume of the terminal run).
     """
     if not source_run_id:
         return [_status_action(run_id), _evidence_errors_action(run_id)]
+    if recommended_next_action == "plan_artifact_continuation":
+        return [
+            NextActionRecord(
+                intent=(
+                    f"Start a NEW implementation run from source run "
+                    f"{source_run_id}'s persisted plan artifact. The inspected "
+                    f"terminal run {run_id} is NOT the continuation subject, and "
+                    f"{source_run_id} cannot be resumed in place (core "
+                    "continuation preflight refuses a same-run resume of it). "
+                    "from_run_plan means 'implement this plan from scratch', "
+                    "NOT 'finish a retained diff or checkpoint'."
+                ),
+                tool="orcho_run_start",
+                args={"from_run_plan": source_run_id, "profile": "feature"},
+                optional=False,
+                kind="ready_call",
+            ),
+            _status_action(run_id),
+        ]
     return [
         _resume_action(
             source_run_id,
@@ -519,7 +545,9 @@ def _resolve_next_actions(
         return cond, [_status_action(run_id)]
 
     if cond == "recover_via_source_run":
-        return cond, _recover_via_source_actions(run_id, proj.recommended_run_id)
+        return cond, _recover_via_source_actions(
+            run_id, proj.recommended_run_id, proj.recommended_next_action,
+        )
 
     if cond == "resume_inert_terminal":
         # Terminal run — never a resume of THIS run. The lineage subject still
@@ -527,7 +555,9 @@ def _resolve_next_actions(
         # implementation) and a stop/unknown dead-end (read-only, no
         # from_run_plan) from a plain inspection-only terminal.
         if proj.recommended_next_action == "plan_artifact_continuation":
-            return cond, _plan_artifact_continuation_actions(run_id)
+            return cond, _plan_artifact_continuation_actions(
+                proj.recommended_run_id or run_id,
+            )
         if proj.recommended_next_action == "stop_unknown":
             return cond, _stop_unknown_actions(run_id, list(proj.missing_facts))
         # Clean terminal-success / no recovery subject — inspection only.

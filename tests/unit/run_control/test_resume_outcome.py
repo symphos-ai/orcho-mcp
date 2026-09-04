@@ -22,7 +22,12 @@ from orcho_mcp.schemas import (
     RunResumeResult,
 )
 from orcho_mcp.supervisor import RunHandle
-from tests.fixtures.mcp_workspace import meta, supervisor_state, write_run
+from tests.fixtures.mcp_workspace import (
+    finalized_gate_ledger,
+    meta,
+    supervisor_state,
+    write_run,
+)
 
 # Durable MCP-controllability marker: a readable ``mcp_supervisor.json`` with a
 # resolvable ``project_dir`` is what makes a run ``mcp_controllable`` (the
@@ -199,6 +204,56 @@ async def test_recover_via_source_run_points_to_source_without_spawn(
     assert na.tool == "orcho_run_resume"
     assert na.args == {"run_id": "20260101_000001"}
     # The terminal recovery run was never resumed.
+    assert fake.resume_calls == []
+
+
+@pytest.mark.asyncio
+async def test_recover_via_finalized_source_ledger_points_to_from_run_plan_without_spawn(
+    fake_workspace, tmp_path, monkeypatch,
+):
+    # Field shape: the source is a non-terminal stop with a retained worktree
+    # and a persisted plan, but its scheduled-gate ledger was finalized at
+    # run.end — core's launch preflight refuses a same-run resume of it. The
+    # terminal recovery child must still not spawn, and the ready_call must be
+    # the operation preflight accepts (a NEW from_run_plan run off the source),
+    # never the orcho_run_resume that preflight would refuse.
+    write_run(
+        fake_workspace, "20260101_000001",
+        meta=meta(
+            status="halted", project="/p/x", task="source",
+            halt_reason="plan rejected before implement", plan_source="local",
+            worktree=_RETAINED_WORKTREE,
+        ),
+        parsed_plan={"tasks": [{"id": "T1", "spec": "do the thing"}]},
+        scheduled_gate_ledger=finalized_gate_ledger(),
+    )
+    write_run(
+        fake_workspace, "20260101_000002",
+        meta=meta(
+            status="halted", project="/p/x", task="recovery",
+            halt_reason="phase_handoff_halt",
+            parent_run_id="20260101_000001", plan_source="run",
+            plan_source_run_id="20260101_000001",
+        ),
+        supervisor_state=_controllable("20260101_000002"),
+    )
+    fake = _SpySupervisor(tmp_path)
+    _patch_supervisor(monkeypatch, fake)
+
+    result = await resume_run("20260101_000002")
+
+    assert isinstance(result, ResumeBlockedResult)
+    assert result.resume_outcome == "recover_via_source_run"
+    assert result.recommended_run_id == "20260101_000001"
+    assert "from_run_plan=20260101_000001" in result.message
+    assert "finalized scheduled-gate ledger" in result.reason
+    assert not hasattr(result, "pid")
+    assert len(result.next_actions) == 1
+    na = result.next_actions[0]
+    assert na.kind == "ready_call"
+    assert na.tool == "orcho_run_start"
+    assert na.args == {"from_run_plan": "20260101_000001", "profile": "feature"}
+    # Neither the terminal recovery run nor the refused source was resumed.
     assert fake.resume_calls == []
 
 
