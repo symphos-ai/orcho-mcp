@@ -9,8 +9,11 @@ Handoff-specific watch behavior lives in ``test_handoff_hints.py``.
 """
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
+from orcho_mcp import observe
 from orcho_mcp.errors import InvalidPlanError
 from orcho_mcp.observe.watch import _WATCH_TIMEOUT_CEILING
 from orcho_mcp.tools import orcho_run_watch, orcho_workspace_state
@@ -64,6 +67,51 @@ async def test_watch_timeout_returns_bounded(fake_workspace):
     assert r.summary is not None
     # Reconnect cursor: trigger.seq must equal summary.next_seq.
     assert r.trigger.seq == r.summary.next_seq
+
+
+@pytest.mark.anyio
+async def test_watch_timeout_uses_sleep_aware_clock(fake_workspace, monkeypatch):
+    """Regression: the deadline is measured with ``_watch_now``, not the
+    event loop clock. ``loop.time()`` is ``time.monotonic()``, which on
+    macOS stops during system sleep, so a watch spanning a lid-close held
+    the request open past the MCP client's idle timeout.
+
+    Simulate a sleep: ``_watch_now`` returns the same instant for the
+    deadline computation and the first loop check, then jumps far past the
+    deadline while the real event loop clock barely moves. The loop must
+    poll exactly once and return ``trigger.kind == "timeout"`` long before
+    ``timeout_s`` of loop time could elapse."""
+    write_run(
+        fake_workspace, "20260101_000001",
+        meta={"project": "/p/x", "status": "running", "task": "t"},
+        events=[_ev(i) for i in range(1, 4)],
+    )
+    timeout_s = 600
+    calls: list[float] = []
+
+    def fake_now() -> float:
+        # Call 1: deadline. Call 2: first ``while`` check (still before
+        # deadline → one real poll). Call 3+: past the deadline.
+        now = 0.0 if len(calls) < 2 else float(timeout_s) + 3600.0
+        calls.append(now)
+        return now
+
+    monkeypatch.setattr(observe.watch, "_watch_now", fake_now)
+    loop_before = asyncio.get_running_loop().time()
+    r = await orcho_run_watch(
+        "20260101_000001", since_seq=10, until="next_event",
+        timeout_s=timeout_s,
+    )
+    loop_elapsed = asyncio.get_running_loop().time() - loop_before
+
+    assert r.triggered is False
+    assert r.trigger.kind == "timeout"
+    assert r.trigger.seq == r.summary.next_seq
+    # Deadline + first check + the post-poll check that observed expiry.
+    assert len(calls) == 3
+    # The event loop clock never came close to timeout_s: only the
+    # sleep-aware clock decided the deadline.
+    assert loop_elapsed < timeout_s / 10
 
 
 @pytest.mark.anyio
