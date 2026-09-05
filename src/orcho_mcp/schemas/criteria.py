@@ -206,6 +206,8 @@ class PlanCriterionRecord(BaseModel):
     def _class_invariants(self) -> PlanCriterionRecord:
         """Exactly one class, exactly the keys that class admits."""
         if self.verify == "executable":
+            if "gate_refs" in self.model_fields_set and self.gate_refs is None:
+                raise ValueError("gate_refs may be omitted or empty, never null")
             if self.human_instructions is not None:
                 raise ValueError(
                     f"criterion {self.id}: 'executable' criteria carry no "

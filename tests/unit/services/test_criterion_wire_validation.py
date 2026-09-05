@@ -73,6 +73,7 @@ def test_the_three_well_formed_classes_validate() -> None:
 @pytest.mark.parametrize(
     ("payload", "why"),
     [
+        ({**_EXECUTABLE, "gate_refs": None}, "explicit null is not omission"),
         (
             {**_EXECUTABLE, "human_instructions": "not for this class"},
             "executable carries no human_instructions",
