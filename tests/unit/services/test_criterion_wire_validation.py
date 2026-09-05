@@ -3,8 +3,7 @@
 Byte-equivalence proves MCP does not *change* a good payload. This file
 proves the other half: MCP does not *repair* a bad one. A permissive model
 would launder a truncated or malformed SDK payload into something that looks
-valid on the wire — an `executable` criterion naming no gate, a row with no
-owner, a summary claiming readiness while naming open blockers — and the
+valid on the wire — a row with no owner, a summary claiming readiness while naming open blockers — and the
 client has no way to tell. Every case below must fail loudly at the boundary.
 
 The base payloads are the installed core SDK's own conformance examples, so
@@ -74,14 +73,6 @@ def test_the_three_well_formed_classes_validate() -> None:
 @pytest.mark.parametrize(
     ("payload", "why"),
     [
-        (
-            {**_EXECUTABLE, "gate_refs": []},
-            "an executable criterion with no gate identity names no proof",
-        ),
-        (
-            {k: v for k, v in _EXECUTABLE.items() if k != "gate_refs"},
-            "executable requires gate_refs",
-        ),
         (
             {**_EXECUTABLE, "human_instructions": "not for this class"},
             "executable carries no human_instructions",
@@ -398,4 +389,29 @@ def test_a_gate_ref_refuses_an_unknown_key() -> None:
     with pytest.raises(ValidationError):
         PlanCriterionRecord.model_validate({
             **_EXECUTABLE, "gate_refs": [{**_GATE, "selected": True}],
+        })
+
+
+@pytest.mark.parametrize("empty", [False, True])
+def test_executable_plan_allows_engine_binding(empty):
+    payload = {k: v for k, v in _EXECUTABLE.items() if k != "gate_refs"}
+    if empty:
+        payload["gate_refs"] = []
+    assert PlanCriterionRecord.model_validate(payload).model_dump() == payload
+
+
+@pytest.mark.parametrize("refs", [[], [_GATE]])
+def test_implied_method_survives_wire_projection(refs):
+    from orcho_mcp.schemas.criteria import CriterionMethodGates
+
+    method = {"kind": "gates", "gate_refs": refs, "implied": True}
+    assert CriterionMethodGates.model_validate(method).model_dump() == method
+
+
+def test_implied_flag_cannot_be_false():
+    from orcho_mcp.schemas.criteria import CriterionMethodGates
+
+    with pytest.raises(ValidationError):
+        CriterionMethodGates.model_validate({
+            "kind": "gates", "gate_refs": [_GATE], "implied": False,
         })

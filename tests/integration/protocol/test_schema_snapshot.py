@@ -377,7 +377,7 @@ def test_criterion_contract_is_published_on_the_read_and_action_surface():
         },
     }
     # Each arm declares only its own keys — no null placeholders.
-    assert set(defs["CriterionMethodGates"]["properties"]) == {"kind", "gate_refs"}
+    assert set(defs["CriterionMethodGates"]["properties"]) == {"kind", "gate_refs", "implied"}
     assert set(defs["CriterionMethodInspection"]["properties"]) == {"kind"}
     assert set(defs["CriterionMethodManual"]["properties"]) == {
         "kind", "instructions",
@@ -438,8 +438,9 @@ def test_published_criterion_schema_is_as_strict_as_the_contract():
     assert defs["PlanCriterionRecord"]["properties"]["id"]["pattern"] == (
         "^C[1-9][0-9]*$"
     )
-    # A ``gates`` method names at least one gate; a ``manual`` one carries text.
-    assert defs["CriterionMethodGates"]["properties"]["gate_refs"]["minItems"] == 1
+    # Engine binding can be empty while pending; manual methods carry text.
+    assert "minItems" not in defs["CriterionMethodGates"]["properties"]["gate_refs"]
+    assert defs["CriterionMethodGates"]["properties"]["implied"]["const"] is True
     assert defs["CriterionMethodManual"]["properties"]["instructions"][
         "minLength"
     ] == 1

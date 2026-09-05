@@ -262,8 +262,9 @@ def _layer_three_class_contract(run_dir: Path, gate: dict[str, str]) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("implied", [False, True])
 async def test_three_class_journey_reads_proof_decides_and_moves_readiness(
-    mock_project: Path, monkeypatch: pytest.MonkeyPatch,
+    mock_project: Path, monkeypatch: pytest.MonkeyPatch, implied: bool,
 ) -> None:
     """M10 end to end on ONE real run: read → decide → readiness moves.
 
@@ -282,6 +283,11 @@ async def test_three_class_journey_reads_proof_decides_and_moves_readiness(
     run_dir = mock_project.parent / "runspace" / "runs" / run_id
     gate = _executed_gate_identity(run_dir)
     _layer_three_class_contract(run_dir, gate)
+    if implied:
+        artifact_path = run_dir / "parsed_plan.json"
+        artifact = json.loads(artifact_path.read_text())
+        artifact["plan"]["acceptance_criteria"][0].pop("gate_refs")
+        artifact_path.write_text(json.dumps(artifact))
 
     before = orcho_run_evidence(run_id, slice="criterion_matrix").criterion_matrix
     assert before is not None
@@ -295,6 +301,7 @@ async def test_three_class_journey_reads_proof_decides_and_moves_readiness(
     assert proved.state == "proven"
     assert proved.blocking is False
     assert proved.method.kind == "gates"
+    assert proved.method.implied is (True if implied else None)
     assert [r.model_dump() for r in proved.method.gate_refs] == [gate]
     assert [ref.kind for ref in proved.proof_refs] == ["receipt"]
     assert proved.proof_refs[0].id.startswith("verification_command_receipts/")
