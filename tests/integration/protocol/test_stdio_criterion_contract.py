@@ -254,3 +254,23 @@ async def test_stdio_decision_log_is_empty_for_an_undecided_run(
 
     assert result.isError is False
     assert result.structuredContent["criterion_decisions"] == []
+
+
+@pytest.mark.anyio
+async def test_stdio_preserves_an_unbound_engine_method(fake_workspace):
+    plan = criterion_plan()
+    plan["acceptance_criteria"][0].pop("gate_refs")
+    write_run(
+        fake_workspace, RUN,
+        meta=meta(status="done", project=str(fake_workspace), task="criterion"),
+        parsed_plan=plan,
+    )
+    async with initialized_stdio_session(fake_workspace) as (session, _):
+        result = await session.call_tool(
+            "orcho_run_evidence", {"run_id": RUN, "slice": "criterion_matrix"},
+        )
+    assert result.isError is False
+    row = result.structuredContent["criterion_matrix"]["rows"][0]
+    assert row["method"] == {"kind": "gates", "gate_refs": [], "implied": True}
+    assert row["state"] == "missing"
+    assert row["blocking"] is True

@@ -792,9 +792,13 @@
                 "items": {
                   "$ref": "#/$defs/CriterionGateRefRecord"
                 },
-                "minItems": 1,
                 "title": "Gate Refs",
                 "type": "array"
+              },
+              "implied": {
+                "const": true,
+                "title": "Implied",
+                "type": "boolean"
               },
               "kind": {
                 "const": "gates",
@@ -4809,9 +4813,13 @@
                 "items": {
                   "$ref": "#/$defs/CriterionGateRefRecord"
                 },
-                "minItems": 1,
                 "title": "Gate Refs",
                 "type": "array"
+              },
+              "implied": {
+                "const": true,
+                "title": "Implied",
+                "type": "boolean"
               },
               "kind": {
                 "const": "gates",
@@ -6031,7 +6039,7 @@
           },
           "PlanCriterionRecord": {
             "additionalProperties": false,
-            "description": "One typed plan acceptance criterion, in its durable key order.\n\nProjected verbatim from the core SDK plan summary — MCP never stringifies\na criterion, invents an ID, or reclassifies one. Legacy ``list[str]``\nplans are normalized by core's single ingress normalizer *before* they\nreach this model, so ``acceptance_criteria`` never carries bare strings.\n\nClass-irrelevant keys are absent: ``gate_refs`` only for ``executable``\n(non-empty), ``human_instructions`` only for ``human`` (non-empty),\nneither for ``agent_assertion``. Those are validated, not merely\ndocumented — an ``executable`` criterion with no gate identity names no\nproof at all, and admitting one would let the plan slice advertise\ntraceability the run cannot deliver.",
+            "description": "One typed plan acceptance criterion, in its durable key order.\n\nProjected verbatim from the core SDK plan summary — MCP never stringifies\na criterion, invents an ID, or reclassifies one. Legacy ``list[str]``\nplans are normalized by core's single ingress normalizer *before* they\nreach this model, so ``acceptance_criteria`` never carries bare strings.\n\nGate refs are optional for executable criteria: the engine supplies the\nbinding when omitted. Human criteria require instructions; other classes\ncarry neither gate refs nor human instructions.",
             "properties": {
               "gate_refs": {
                 "items": {

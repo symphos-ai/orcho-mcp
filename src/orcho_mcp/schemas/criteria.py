@@ -178,12 +178,9 @@ class PlanCriterionRecord(BaseModel):
     plans are normalized by core's single ingress normalizer *before* they
     reach this model, so ``acceptance_criteria`` never carries bare strings.
 
-    Class-irrelevant keys are absent: ``gate_refs`` only for ``executable``
-    (non-empty), ``human_instructions`` only for ``human`` (non-empty),
-    neither for ``agent_assertion``. Those are validated, not merely
-    documented — an ``executable`` criterion with no gate identity names no
-    proof at all, and admitting one would let the plan slice advertise
-    traceability the run cannot deliver.
+    Gate refs are optional for executable criteria: the engine supplies the
+    binding when omitted. Human criteria require instructions; other classes
+    carry neither gate refs nor human instructions.
     """
 
     model_config = STRICT
@@ -209,11 +206,8 @@ class PlanCriterionRecord(BaseModel):
     def _class_invariants(self) -> PlanCriterionRecord:
         """Exactly one class, exactly the keys that class admits."""
         if self.verify == "executable":
-            if not self.gate_refs:
-                raise ValueError(
-                    f"criterion {self.id}: an 'executable' criterion must name "
-                    "at least one gate identity in gate_refs",
-                )
+            if "gate_refs" in self.model_fields_set and self.gate_refs is None:
+                raise ValueError("gate_refs may be omitted or empty, never null")
             if self.human_instructions is not None:
                 raise ValueError(
                     f"criterion {self.id}: 'executable' criteria carry no "
@@ -264,7 +258,19 @@ class CriterionMethodGates(BaseModel):
     model_config = STRICT
 
     kind: Literal["gates"] = "gates"
-    gate_refs: list[CriterionGateRefRecord] = Field(min_length=1)
+    gate_refs: list[CriterionGateRefRecord]
+    implied: Annotated[
+        Literal[True] | None,
+        Field(default=None, json_schema_extra=non_nullable_optional),
+    ] = None
+
+    _omit = omit_absent_keys("implied")
+
+    @model_validator(mode="after")
+    def _binding_shape(self) -> CriterionMethodGates:
+        if not self.gate_refs and self.implied is not True:
+            raise ValueError("empty gate_refs require an implied engine binding")
+        return self
 
 
 class CriterionMethodInspection(BaseModel):
