@@ -626,6 +626,9 @@ def orcho_run_live_status(run_id: str) -> RunLiveStatusCard:
     - ``stalled`` — core detected an over-budget startup without durable
       progress; inspect / diagnose it and, only when MCP owns control, cancel
       it. Do not resume or watch it as an active run.
+    - ``running_gate`` — executing a verification command, including between
+      phases; ``active_gate`` carries identity, timestamps and bounded stdout/stderr.
+      Output appears when the child flushes; silence is not a health verdict.
     - ``running_phase`` — executing a phase, no subtask in flight
       (``current_phase`` set).
     - ``running_subtask`` — executing a ``subtask_dag`` subtask
@@ -678,6 +681,9 @@ async def orcho_run_watch(
     ctx: Context | None = None,
 ) -> RunWatchResult:
     """Long-poll a run until something meaningful happens.
+
+    ``until="next_event"`` also wakes on durable gate progress before command
+    completion. Reconnect with the returned sequence cursor.
 
     Holds the MCP request open until the chosen ``until`` condition fires
     or ``timeout_s`` expires. Designed to replace manual re-polling of

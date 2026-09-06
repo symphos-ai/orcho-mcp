@@ -45,12 +45,13 @@ from orcho_mcp.schemas import (
     RunLiveStatusCard,
     RunLiveTerminal,
 )
-from orcho_mcp.schemas.observe import HandoffDecisionHint
+from orcho_mcp.schemas.observe import HandoffDecisionHint, RunLiveGateProgress
 from orcho_mcp.schemas.shared import ProviderPressure
 from orcho_mcp.services.delivery_gate import (
     DeliveryDisposition,
     delivery_disposition,
 )
+from orcho_mcp.services.gate_progress import project_active_gate
 from orcho_mcp.services.run_projection import (
     RunDiagnosisProjection,
     TerminalConsistencyProjection,
@@ -73,6 +74,7 @@ _StateClass = Literal[
     "starting",
     "stalled",
     "running_phase",
+    "running_gate",
     "running_subtask",
     "awaiting_handoff",
     "terminal_success",
@@ -145,6 +147,7 @@ def _classify_state(
     tc: TerminalConsistencyProjection,
     pending: PendingHandoffSummary | None,
     diagnosis: RunDiagnosisProjection,
+    active_gate: RunLiveGateProgress | None = None,
 ) -> _StateClass:
     """Classify the run's live state into one closed ``state_class``.
 
@@ -164,6 +167,8 @@ def _classify_state(
         return "terminal_halted"
     if current_subtask is not None:
         return "running_subtask"
+    if active_gate is not None:
+        return "running_gate"
     if diagnosis.condition == "stalled":
         return "stalled"
     if current_phase is not None:
@@ -387,6 +392,10 @@ def build_run_live_status(run_id: str) -> RunLiveStatusCard:
     # state class and the action wording; this module never re-checks startup
     # liveness artifacts (timestamps, event sizes, output, or PID state).
     diagnosis = project_run_diagnosis(run_id)
+    active_gate = (
+        None if tc.is_terminal_success or tc.is_halted or status in _TERMINAL_FAILURE_STATUSES
+        else project_active_gate(run_id)
+    )
     state_class = _classify_state(
         status,
         snap.current_phase,
@@ -394,6 +403,7 @@ def build_run_live_status(run_id: str) -> RunLiveStatusCard:
         tc,
         pending,
         diagnosis,
+        active_gate,
     )
 
     # ``resume_meaningful`` (and the terminal next_action) come from the single
@@ -454,6 +464,7 @@ def build_run_live_status(run_id: str) -> RunLiveStatusCard:
         state_class=state_class,
         current_phase=snap.current_phase,
         current_subtask=snap.current_subtask,
+        active_gate=active_gate,
         last_activity=_build_last_activity(snap.last_n),
         pending_handoff=handoff_model,
         terminal=terminal_model,

@@ -7355,7 +7355,7 @@
       }
     },
     {
-      "description": "Where is this run right now, and what do I do next? (subtask progress index/total)\n\n    One typed snapshot that answers \"where is this run right now, and\n    what should I do?\" — including live subtask position (index/total) —\n    in a single bounded payload. This is the go-to view for live\n    progress and where-is-the-run. It is a bounded operator-safe live\n    status card for a mono run: built for high-frequency polling, with\n    every embedded preview truncated and no full phase bodies, critiques,\n    or raw logs ever riding along. It\n    unites the durable meta status (with supervisor terminal fallback),\n    the live phase/subtask position, the last significant activity, any\n    pending phase-handoff, and terminal consistency — without scraping\n    raw event logs.\n\n    Branch on ``state_class`` (a closed set):\n\n    - ``starting`` — non-terminal startup has no open phase or subtask yet;\n      polling is healthy while it progresses.\n    - ``stalled`` — core detected an over-budget startup without durable\n      progress; inspect / diagnose it and, only when MCP owns control, cancel\n      it. Do not resume or watch it as an active run.\n    - ``running_phase`` — executing a phase, no subtask in flight\n      (``current_phase`` set).\n    - ``running_subtask`` — executing a ``subtask_dag`` subtask\n      (``current_subtask`` carries index/total/goal/state).\n    - ``awaiting_handoff`` — paused on a phase-handoff decision\n      (``pending_handoff`` carries handoff id / phase / available actions\n      / default action / verdict / findings summary / recommended action).\n    - ``terminal_success`` — a clean terminal success\n      (``terminal.resume_meaningful`` is ``False`` — resume is inert).\n    - ``terminal_halted`` — a halted / failed / interrupted terminal\n      (``terminal.halt_reason`` set; ``resume_meaningful`` ``True``).\n    - ``terminal_inconsistent`` — a terminal success whose\n      ``final_acceptance`` contradicts it (e.g. ``done`` + ``REJECTED``);\n      the contradiction is surfaced in ``consistency_flags``, never hidden.\n\n    ``next_seq`` is the latest event seq — carry it into\n    ``orcho_run_watch`` / ``orcho_run_events_summary`` to resume\n    observation from here.\n\n    Args:\n        run_id: the run to inspect.\n\n    Errors:\n      - RunNotFoundError — unknown run_id.\n      - WorkspaceNotResolvedError — no $ORCHO_WORKSPACE / $ORCHO_WORKTREE.\n\n    For the windowed event aggregate use ``orcho_run_events_summary``;\n    for raw payload replay use ``orcho_run_events_tail``.\n    ",
+      "description": "Where is this run right now, and what do I do next? (subtask progress index/total)\n\n    One typed snapshot that answers \"where is this run right now, and\n    what should I do?\" — including live subtask position (index/total) —\n    in a single bounded payload. This is the go-to view for live\n    progress and where-is-the-run. It is a bounded operator-safe live\n    status card for a mono run: built for high-frequency polling, with\n    every embedded preview truncated and no full phase bodies, critiques,\n    or raw logs ever riding along. It\n    unites the durable meta status (with supervisor terminal fallback),\n    the live phase/subtask position, the last significant activity, any\n    pending phase-handoff, and terminal consistency — without scraping\n    raw event logs.\n\n    Branch on ``state_class`` (a closed set):\n\n    - ``starting`` — non-terminal startup has no open phase or subtask yet;\n      polling is healthy while it progresses.\n    - ``stalled`` — core detected an over-budget startup without durable\n      progress; inspect / diagnose it and, only when MCP owns control, cancel\n      it. Do not resume or watch it as an active run.\n    - ``running_gate`` — executing a verification command, including between\n      phases; ``active_gate`` carries identity, timestamps and bounded stdout/stderr.\n      Output appears when the child flushes; silence is not a health verdict.\n    - ``running_phase`` — executing a phase, no subtask in flight\n      (``current_phase`` set).\n    - ``running_subtask`` — executing a ``subtask_dag`` subtask\n      (``current_subtask`` carries index/total/goal/state).\n    - ``awaiting_handoff`` — paused on a phase-handoff decision\n      (``pending_handoff`` carries handoff id / phase / available actions\n      / default action / verdict / findings summary / recommended action).\n    - ``terminal_success`` — a clean terminal success\n      (``terminal.resume_meaningful`` is ``False`` — resume is inert).\n    - ``terminal_halted`` — a halted / failed / interrupted terminal\n      (``terminal.halt_reason`` set; ``resume_meaningful`` ``True``).\n    - ``terminal_inconsistent`` — a terminal success whose\n      ``final_acceptance`` contradicts it (e.g. ``done`` + ``REJECTED``);\n      the contradiction is surfaced in ``consistency_flags``, never hidden.\n\n    ``next_seq`` is the latest event seq — carry it into\n    ``orcho_run_watch`` / ``orcho_run_events_summary`` to resume\n    observation from here.\n\n    Args:\n        run_id: the run to inspect.\n\n    Errors:\n      - RunNotFoundError — unknown run_id.\n      - WorkspaceNotResolvedError — no $ORCHO_WORKSPACE / $ORCHO_WORKTREE.\n\n    For the windowed event aggregate use ``orcho_run_events_summary``;\n    for raw payload replay use ``orcho_run_events_tail``.\n    ",
       "inputSchema": {
         "properties": {
           "run_id": {
@@ -7695,6 +7695,112 @@
             "title": "RunLiveActivity",
             "type": "object"
           },
+          "RunLiveGateProgress": {
+            "description": "Observed output of one active gate invocation; no process-health verdict.",
+            "properties": {
+              "command": {
+                "title": "Command",
+                "type": "string"
+              },
+              "elapsed_s": {
+                "title": "Elapsed S",
+                "type": "number"
+              },
+              "execution_state": {
+                "enum": [
+                  "running",
+                  "settled"
+                ],
+                "title": "Execution State",
+                "type": "string"
+              },
+              "exit_code": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Exit Code"
+              },
+              "has_output": {
+                "title": "Has Output",
+                "type": "boolean"
+              },
+              "hook": {
+                "title": "Hook",
+                "type": "string"
+              },
+              "invocation_id": {
+                "title": "Invocation Id",
+                "type": "string"
+              },
+              "last_output_at": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Last Output At"
+              },
+              "observed_at": {
+                "title": "Observed At",
+                "type": "string"
+              },
+              "outcome": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Outcome"
+              },
+              "phase": {
+                "title": "Phase",
+                "type": "string"
+              },
+              "started_at": {
+                "title": "Started At",
+                "type": "string"
+              },
+              "stderr_tail": {
+                "maxLength": 2000,
+                "title": "Stderr Tail",
+                "type": "string"
+              },
+              "stdout_tail": {
+                "maxLength": 2000,
+                "title": "Stdout Tail",
+                "type": "string"
+              }
+            },
+            "required": [
+              "command",
+              "hook",
+              "phase",
+              "invocation_id",
+              "started_at",
+              "observed_at",
+              "elapsed_s",
+              "last_output_at",
+              "stdout_tail",
+              "stderr_tail",
+              "has_output",
+              "execution_state",
+              "exit_code",
+              "outcome"
+            ],
+            "title": "RunLiveGateProgress",
+            "type": "object"
+          },
           "RunLiveHandoff": {
             "description": "Compact pending-handoff slice for the live status card.\n\nReuses the existing handoff projections (``project_pending_handoff``\nfor the operator fields + ``build_handoff_hint`` for the\n``default_action`` heuristic and ``findings_summary``) — the\n``meta.phase_handoff`` payload is parsed only in the projection owner,\nnever here. Carries just enough to render the pause at a glance; the\nfull structured decision packet still rides in ``orcho_run_watch``'s\n``HandoffDecisionHint``.",
             "properties": {
@@ -7891,8 +7997,20 @@
             "type": "object"
           }
         },
-        "description": "Bounded operator-safe live status of a mono run.\n\nA single typed snapshot uniting the durable meta status (with\nsupervisor terminal fallback), the live phase/subtask position, the\nlast significant activity, any pending phase-handoff, and terminal\nconsistency — without raw log scraping. Designed for high-frequency\npolling: every embedded preview is truncated, and no full phase\nbodies / critiques / raw logs ride in the payload.\n\n``state_class`` is the single classification a caller branches on:\n\n- ``starting`` — a non-terminal run has no open phase or subtask yet;\n  polling is healthy while startup progresses;\n- ``stalled`` — core diagnosed an over-budget startup with no durable\n  progress; inspect it and, when MCP owns the run, cancel it rather than\n  resuming or watching it as active;\n- ``running_phase`` — executing a phase, no subtask in flight;\n- ``running_subtask`` — executing a ``subtask_dag`` subtask\n  (``current_subtask`` carries index/total/goal/state);\n- ``awaiting_handoff`` — paused on a phase-handoff decision\n  (``pending_handoff`` populated);\n- ``terminal_success`` — a clean terminal success;\n- ``terminal_halted`` — a halted / failed / interrupted terminal;\n- ``terminal_inconsistent`` — a terminal success whose\n  final_acceptance contradicts it (e.g. ``done`` + ``REJECTED``); the\n  contradiction is surfaced in ``consistency_flags``, never hidden.",
+        "description": "Bounded operator-safe live status of a mono run.\n\nA single typed snapshot uniting the durable meta status (with\nsupervisor terminal fallback), the live phase/subtask position, the\nlast significant activity, any pending phase-handoff, and terminal\nconsistency — without raw log scraping. Designed for high-frequency\npolling: every embedded preview is truncated, and no full phase\nbodies / critiques / raw logs ride in the payload.\n\n``state_class`` is the single classification a caller branches on:\n\n- ``starting`` — a non-terminal run has no open phase or subtask yet;\n  polling is healthy while startup progresses;\n- ``stalled`` — core diagnosed an over-budget startup with no durable\n  progress; inspect it and, when MCP owns the run, cancel it rather than\n  resuming or watching it as active;\n- ``running_gate`` — an active verification command, including between phases;\n- ``running_phase`` — executing a phase, no subtask in flight;\n- ``running_subtask`` — executing a ``subtask_dag`` subtask\n  (``current_subtask`` carries index/total/goal/state);\n- ``awaiting_handoff`` — paused on a phase-handoff decision\n  (``pending_handoff`` populated);\n- ``terminal_success`` — a clean terminal success;\n- ``terminal_halted`` — a halted / failed / interrupted terminal;\n- ``terminal_inconsistent`` — a terminal success whose\n  final_acceptance contradicts it (e.g. ``done`` + ``REJECTED``); the\n  contradiction is surfaced in ``consistency_flags``, never hidden.",
         "properties": {
+          "active_gate": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/RunLiveGateProgress"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Active verification command, including between phases. Bounded output is visible after the child flushes its pipes; absent after settlement. Timestamps do not assert health."
+          },
           "consistency_flags": {
             "description": "Detected status/verdict contradictions surfaced explicitly (e.g. terminal success while final_acceptance is REJECTED). Empty when coherent.",
             "items": {
@@ -7998,6 +8116,7 @@
               "starting",
               "stalled",
               "running_phase",
+              "running_gate",
               "running_subtask",
               "awaiting_handoff",
               "terminal_success",
@@ -10720,7 +10839,7 @@
       }
     },
     {
-      "description": "Long-poll a run until something meaningful happens.\n\n    Holds the MCP request open until the chosen ``until`` condition fires\n    or ``timeout_s`` expires. Designed to replace manual re-polling of\n    ``orcho_run_status`` / ``orcho_run_events_summary`` during long\n    phases (implement, repair) where minutes can pass between\n    user-relevant events. When the MCP request carries a\n    ``progressToken``, ordered ``notifications/progress`` are emitted as\n    the event sequence advances (one notification per observed seq\n    advance, not per individual event) so clients can show live status\n    without the operator-side LLM having to round-trip.\n\n    Reconnect rule: pass ``result.summary.next_seq`` (or\n    ``result.trigger.seq`` when ``summary=False``) as the next\n    ``since_seq``. Both fields carry the same value at return time.\n\n    Resilient observation: clients whose transport caps a single\n    tool-call's duration should pass a short bounded ``timeout_s``\n    (120–240s is a convenient window) rather than the 3600s default, so\n    each watch returns promptly with a fresh reconnect cursor. On a\n    ``timeout`` trigger — or if the transport drops the long-poll\n    mid-call — fall back to\n    ``orcho_run_events_summary(since_seq=trigger.seq)`` to catch up, then\n    resume ``orcho_run_watch`` from that summary's ``next_seq``. The loop\n    is ``orcho_run_watch`` → ``orcho_run_events_summary`` →\n    ``orcho_run_watch``. A disconnected watch is not a failed run: the run\n    keeps executing in its worktree, and lifecycle decisions are read only\n    from the typed ``status`` / ``handoff`` / terminal / evidence signals,\n    never from a watch call ending early.\n\n    Args:\n        run_id: the run to watch.\n        since_seq: reconnect cursor. Defaults to ``0`` (watch from the\n            start of the event stream). Must be ≥ 0.\n        until: trigger condition.\n            ``\"next_event\"`` — any event with seq > since_seq.\n            ``\"phase_change\"`` — phase transitions (including end-to-None),\n            or handoff/terminal.\n            ``\"subtask\"`` — each subtask_dag boundary (a subtask starts or\n            ends) during a long implement phase, or handoff/terminal. The\n            result's ``summary.current_subtask`` carries the live\n            index/total/goal/state, and progressToken notifications read\n            \"implement: subtask 3/12 done (<goal>)\".\n            ``\"handoff_or_terminal\"`` — run pauses\n            (``awaiting_phase_handoff`` / ``awaiting_gate_decision``) or\n            ends.\n            ``\"terminal\"`` — run reaches a terminal status.\n        timeout_s: max seconds to hold the request open. Default 3600 (1h);\n            hard ceiling 7200 (2h). Must be in (0, 7200].\n        summary: when True, include a bounded ``RunEventsSummary`` in the\n            result. When False, ``result.summary`` is ``None`` and the\n            reconnect cursor lives on ``result.trigger.seq``.\n        interaction_client: **presentation hint only** for the\n            ``handoff.client_hints`` payload when the run pauses.\n            First-class values: ``generic``, ``claude-code``, ``codex``.\n            Unknown values normalise to ``generic`` so future clients\n            stay forward-compatible. Does **not** affect decision\n            correctness, ``available_actions``, ``default_action``,\n            trigger kind, summary, or progress — the agent reads this to\n            decide *how* to render the prompt, not *what* to do.\n\n    Errors:\n        - RunNotFoundError — unknown run_id.\n        - WorkspaceNotResolvedError — no $ORCHO_WORKSPACE.\n        - InvalidPlanError — input out of range, or unknown ``until``.\n\n    Returns ``RunWatchResult``. On timeout, ``triggered=False`` and\n    ``trigger.kind==\"timeout\"``; on any other path ``triggered=True``.\n    Raw event payloads are never returned — use ``orcho_run_events_tail``\n    for forensic replay.\n    ",
+      "description": "Long-poll a run until something meaningful happens.\n\n    ``until=\"next_event\"`` also wakes on durable gate progress before command\n    completion. Reconnect with the returned sequence cursor.\n\n    Holds the MCP request open until the chosen ``until`` condition fires\n    or ``timeout_s`` expires. Designed to replace manual re-polling of\n    ``orcho_run_status`` / ``orcho_run_events_summary`` during long\n    phases (implement, repair) where minutes can pass between\n    user-relevant events. When the MCP request carries a\n    ``progressToken``, ordered ``notifications/progress`` are emitted as\n    the event sequence advances (one notification per observed seq\n    advance, not per individual event) so clients can show live status\n    without the operator-side LLM having to round-trip.\n\n    Reconnect rule: pass ``result.summary.next_seq`` (or\n    ``result.trigger.seq`` when ``summary=False``) as the next\n    ``since_seq``. Both fields carry the same value at return time.\n\n    Resilient observation: clients whose transport caps a single\n    tool-call's duration should pass a short bounded ``timeout_s``\n    (120–240s is a convenient window) rather than the 3600s default, so\n    each watch returns promptly with a fresh reconnect cursor. On a\n    ``timeout`` trigger — or if the transport drops the long-poll\n    mid-call — fall back to\n    ``orcho_run_events_summary(since_seq=trigger.seq)`` to catch up, then\n    resume ``orcho_run_watch`` from that summary's ``next_seq``. The loop\n    is ``orcho_run_watch`` → ``orcho_run_events_summary`` →\n    ``orcho_run_watch``. A disconnected watch is not a failed run: the run\n    keeps executing in its worktree, and lifecycle decisions are read only\n    from the typed ``status`` / ``handoff`` / terminal / evidence signals,\n    never from a watch call ending early.\n\n    Args:\n        run_id: the run to watch.\n        since_seq: reconnect cursor. Defaults to ``0`` (watch from the\n            start of the event stream). Must be ≥ 0.\n        until: trigger condition.\n            ``\"next_event\"`` — any event with seq > since_seq.\n            ``\"phase_change\"`` — phase transitions (including end-to-None),\n            or handoff/terminal.\n            ``\"subtask\"`` — each subtask_dag boundary (a subtask starts or\n            ends) during a long implement phase, or handoff/terminal. The\n            result's ``summary.current_subtask`` carries the live\n            index/total/goal/state, and progressToken notifications read\n            \"implement: subtask 3/12 done (<goal>)\".\n            ``\"handoff_or_terminal\"`` — run pauses\n            (``awaiting_phase_handoff`` / ``awaiting_gate_decision``) or\n            ends.\n            ``\"terminal\"`` — run reaches a terminal status.\n        timeout_s: max seconds to hold the request open. Default 3600 (1h);\n            hard ceiling 7200 (2h). Must be in (0, 7200].\n        summary: when True, include a bounded ``RunEventsSummary`` in the\n            result. When False, ``result.summary`` is ``None`` and the\n            reconnect cursor lives on ``result.trigger.seq``.\n        interaction_client: **presentation hint only** for the\n            ``handoff.client_hints`` payload when the run pauses.\n            First-class values: ``generic``, ``claude-code``, ``codex``.\n            Unknown values normalise to ``generic`` so future clients\n            stay forward-compatible. Does **not** affect decision\n            correctness, ``available_actions``, ``default_action``,\n            trigger kind, summary, or progress — the agent reads this to\n            decide *how* to render the prompt, not *what* to do.\n\n    Errors:\n        - RunNotFoundError — unknown run_id.\n        - WorkspaceNotResolvedError — no $ORCHO_WORKSPACE.\n        - InvalidPlanError — input out of range, or unknown ``until``.\n\n    Returns ``RunWatchResult``. On timeout, ``triggered=False`` and\n    ``trigger.kind==\"timeout\"``; on any other path ``triggered=True``.\n    Raw event payloads are never returned — use ``orcho_run_events_tail``\n    for forensic replay.\n    ",
       "inputSchema": {
         "properties": {
           "interaction_client": {

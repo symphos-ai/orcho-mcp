@@ -727,3 +727,21 @@ def test_running_path_does_not_read_delivery_disposition(
     assert card.state_class in ("running_phase", "running_subtask")
     assert card.terminal is None
     assert calls == []
+
+
+def test_active_gate_between_phases_and_settlement(fake_workspace):
+    rows = [event(1, "run.start"),
+            event(2, "gate.progress", phase="implement", payload={
+                "name": "unit", "invocation_id": "i", "elapsed_s": 1,
+                "stdout_tail": "live", "has_output": True,
+            })]
+    write_run(fake_workspace, "gate", meta=meta(status="running"), events=rows)
+    card = orcho_run_live_status("gate")
+    assert card.state_class == "running_gate"
+    assert card.current_phase is None
+    assert card.active_gate.stdout_tail == "live"
+    rows.append(event(3, "gate.end", payload={"invocation_id": "i"}))
+    write_run(fake_workspace, "settled_gate", meta=meta(status="running"), events=rows)
+    assert orcho_run_live_status("settled_gate").active_gate is None
+    write_run(fake_workspace, "halted_gate", meta=meta(status="halted"), events=rows[:2])
+    assert orcho_run_live_status("halted_gate").active_gate is None

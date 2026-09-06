@@ -937,6 +937,25 @@ class RunLiveTerminal(BaseModel):
     )
 
 
+class RunLiveGateProgress(BaseModel):
+    """Observed output of one active gate invocation; no process-health verdict."""
+
+    command: str
+    hook: str
+    phase: str
+    invocation_id: str
+    started_at: str
+    observed_at: str
+    elapsed_s: float
+    last_output_at: str | None
+    stdout_tail: str = Field(max_length=2000)
+    stderr_tail: str = Field(max_length=2000)
+    has_output: bool
+    execution_state: Literal["running", "settled"]
+    exit_code: int | None
+    outcome: str | None
+
+
 class RunLiveStatusCard(BaseModel):
     """Bounded operator-safe live status of a mono run.
 
@@ -954,6 +973,7 @@ class RunLiveStatusCard(BaseModel):
     - ``stalled`` — core diagnosed an over-budget startup with no durable
       progress; inspect it and, when MCP owns the run, cancel it rather than
       resuming or watching it as active;
+    - ``running_gate`` — an active verification command, including between phases;
     - ``running_phase`` — executing a phase, no subtask in flight;
     - ``running_subtask`` — executing a ``subtask_dag`` subtask
       (``current_subtask`` carries index/total/goal/state);
@@ -976,6 +996,7 @@ class RunLiveStatusCard(BaseModel):
         "starting",
         "stalled",
         "running_phase",
+        "running_gate",
         "running_subtask",
         "awaiting_handoff",
         "terminal_success",
@@ -995,6 +1016,12 @@ class RunLiveStatusCard(BaseModel):
         description="Live progress coordinate for the in-flight "
                     "subtask_dag subtask (index/total/goal/state), or "
                     "``None`` when no subtask is currently running.",
+    )
+    active_gate: RunLiveGateProgress | None = Field(
+        default=None,
+        description="Active verification command, including between phases. "
+                    "Bounded output is visible after the child flushes its pipes; "
+                    "absent after settlement. Timestamps do not assert health.",
     )
     last_activity: RunLiveActivity | None = Field(
         default=None,
@@ -1059,6 +1086,7 @@ __all__ = [
     "RunLiveActivity",
     "RunLiveHandoff",
     "RunLiveStatusCard",
+    "RunLiveGateProgress",
     "RunLiveTerminal",
     "RunWatchResult",
     "WatchTrigger",
