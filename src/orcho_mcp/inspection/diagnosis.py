@@ -457,9 +457,16 @@ def _resolve_next_actions(
         # This precedes every legacy continuation special case.
         return cond, _stalled_actions(proj)
 
+    # A halted delivery gate core classified as decidable NOW (the producer's
+    # own ``commit_delivery_pending`` park: ``action=none`` / ``pending``, ADR
+    # 0175 addendum) is a delivery decision, not a resume — fall through to the
+    # ``needs_delivery_decision`` branch. Only a gate core did not resolve as
+    # decidable (an in-flight resolved-but-unapplied record, a scope block)
+    # keeps the resume-first route.
     if (
         proj.status == "halted"
         and proj.halt_reason in _DELIVERY_GATE_RESUME_REASONS
+        and cond != "needs_delivery_decision"
     ):
         return cond, [
             _resume_action(
