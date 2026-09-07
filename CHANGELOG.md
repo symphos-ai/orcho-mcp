@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Fixed
+
+- A producer-parked delivery gate (`halted` / `commit_delivery_pending` with
+  `action=none`) is offered its `orcho_delivery_decide` calls instead of a
+  checkpoint resume that would only re-park it (orcho-core ADR 0175
+  addendum). `orcho_run_diagnose` follows core's `needs_delivery_decision`
+  verdict and the live terminal card points at `orcho_delivery_gate`. Gates
+  core does not resolve as decidable keep the resume-first route.
+
 ### Added
 
 - `delivery_inconsistent` on every run-control surface (orcho-core ADR 0191).

@@ -343,6 +343,14 @@ def _live_next_action(
             "inspect orcho_run_evidence and do not treat the run as shipped"
         )
     if state_class == "terminal_halted":
+        if diagnosis.condition == "needs_delivery_decision":
+            # The producer's own delivery park is decidable in place (ADR 0175
+            # addendum): point at the gate, never at a resume that would only
+            # re-park it.
+            return (
+                "parked at a delivery gate — inspect orcho_delivery_gate and "
+                "choose one of its ready orcho_delivery_decide calls"
+            )
         if diagnosis.condition == "delivery_inconsistent":
             return (
                 "the target checkout carries a delivery commit this run does "
