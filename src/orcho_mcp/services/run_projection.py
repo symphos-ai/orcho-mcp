@@ -1268,6 +1268,9 @@ _CONDITION_RECOVER_VIA_SOURCE_RUN = "recover_via_source_run"
 _CONDITION_RESUME_INERT_TERMINAL = "resume_inert_terminal"
 _CONDITION_STALLED = "stalled"
 _CONDITION_ACTIVE = "active"
+# ADR 0191 — Git carries a delivery commit for the run that its durable record
+# does not; core resolves it (never a resume target).
+_CONDITION_DELIVERY_INCONSISTENT = "delivery_inconsistent"
 
 # Conditions where core's ``run_diagnosis`` already encodes the correct
 # terminal / decision / recover answer. The post-core rejected-dead-end
@@ -1282,6 +1285,7 @@ _CORE_RESOLVED_CONDITIONS = frozenset({
     _CONDITION_SUPERSEDED_BY_CHILD,
     _CONDITION_BLOCKED_WORKTREE,
     _CONDITION_NEEDS_DELIVERY_DECISION,
+    _CONDITION_DELIVERY_INCONSISTENT,
     _CONDITION_CORRECTION_FOLLOWUP_REQUIRED,
     _CONDITION_RECOVER_VIA_SOURCE_RUN,
     _CONDITION_RESUME_INERT_TERMINAL,
@@ -1753,6 +1757,24 @@ def _project_run_diagnosis(
             available_actions=list(diagnosis.available_actions),
             parent_run_id=parent_run_id,
             delivery_gate_kind=delivery_gate_kind,
+            continuation_subject=diagnosis.continuation_subject,
+            recommended_next_action=diagnosis.recommended_next_action,
+            recovery_lineage=recovery_lineage,
+        )
+
+    # (4b) delivery_inconsistent — Git carries a delivery commit the run does
+    # not record (ADR 0191). Core owns the probe (ledger + read-only git); MCP
+    # preserves the verdict, the reason (which names the sha and the CLI
+    # command) and the ``reconcile_delivery`` recommendation verbatim.
+    if cond == _CONDITION_DELIVERY_INCONSISTENT:
+        return RunDiagnosisProjection(
+            condition=cond,
+            reason=diagnosis.reason,
+            run_id=run_id,
+            status=status,
+            halt_reason=halt_reason,
+            recommended_run_id=diagnosis.recommended_run_id,
+            parent_run_id=parent_run_id,
             continuation_subject=diagnosis.continuation_subject,
             recommended_next_action=diagnosis.recommended_next_action,
             recovery_lineage=recovery_lineage,

@@ -917,12 +917,19 @@ class RunLiveTerminal(BaseModel):
                     "success status while final_acceptance is REJECTED). "
                     "Empty for a coherent terminal card.",
     )
-    delivery_committed: bool = Field(
-        default=False,
+    delivery_committed: bool | None = Field(
+        default=None,
         description="True when the run's Orcho-managed delivery already landed "
                     "in the target checkout (a ``committed`` / "
-                    "``applied_uncommitted`` delivery). ``False`` when no "
-                    "delivery landed or the run carries no delivery block.",
+                    "``applied_uncommitted`` delivery). ``False`` when the run "
+                    "records that no delivery landed (a non-delivered block, "
+                    "or a clean terminal with no delivery). ``None`` when the "
+                    "answer is unknown: the run stopped on a failure terminal "
+                    "before recording a delivery block, or the target checkout "
+                    "carries a delivery commit the run does not record "
+                    "(``inconsistencies`` then lists "
+                    "``delivery_commit_unrecorded``; ``orcho_run_diagnose`` "
+                    "names the commit).",
     )
     delivery_published: bool = Field(
         default=False,

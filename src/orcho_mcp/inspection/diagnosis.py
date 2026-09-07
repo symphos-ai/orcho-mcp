@@ -549,6 +549,25 @@ def _resolve_next_actions(
             run_id, proj.recommended_run_id, proj.recommended_next_action,
         )
 
+    if cond == "delivery_inconsistent":
+        # ADR 0191 — Git carries a delivery commit the run does not record.
+        # Read-only follow-ups only: the recording step is an operator CLI
+        # action (``orcho reconcile-delivery``) that needs a verified sha, and
+        # a resume would reason about a delivery that already happened.
+        return cond, [
+            NextActionRecord(
+                intent=(
+                    "Inspect the run's delivery evidence before recording the "
+                    "commit named in `reason` with `orcho reconcile-delivery`."
+                ),
+                tool="orcho_run_evidence",
+                args={"run_id": run_id, "slice": "delivery"},
+                optional=True,
+                kind="ready_call",
+            ),
+            _status_action(run_id),
+        ]
+
     if cond == "resume_inert_terminal":
         # Terminal run — never a resume of THIS run. The lineage subject still
         # distinguishes a plan-artifact continuation (from_run_plan as a fresh

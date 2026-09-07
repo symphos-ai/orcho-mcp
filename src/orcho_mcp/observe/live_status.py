@@ -109,6 +109,7 @@ _EMPTY_DISPOSITION = DeliveryDisposition()
 _NON_RESUMABLE_CONDITIONS = frozenset({
     "needs_decision",            # resolved via decision_artifact_exists below
     "needs_delivery_decision",
+    "delivery_inconsistent",         # ADR 0191: record the commit first
     "correction_followup_required",  # correction is handled by core continuation
     "closed_by_followup",            # parent closed by a successful follow-up
     "superseded_by_child",
@@ -223,10 +224,17 @@ def _build_live_handoff(
     )
 
 
+#: Terminal inconsistency (ADR 0191): the target checkout carries a delivery
+#: commit the run does not record. Mirrors core's ``delivery_inconsistent``
+#: diagnosis; the sha and the recording command are in the diagnosis reason.
+_INCONSISTENCY_DELIVERY_UNRECORDED = "delivery_commit_unrecorded"
+
+
 def _build_live_terminal(
     tc: TerminalConsistencyProjection,
     resume_meaningful: bool,
     disposition: DeliveryDisposition,
+    diagnosis: RunDiagnosisProjection | None = None,
 ) -> RunLiveTerminal:
     """Compose the terminal slice from the terminal-consistency projection.
 
@@ -237,14 +245,31 @@ def _build_live_terminal(
     read (``services.delivery_gate.delivery_disposition``), computed by the
     caller only on the terminal branch. Every other terminal field is the narrow
     coherence read the consistency projection owns.
+
+    ``delivery_committed`` (ADR 0191) is tri-state: ``True`` / ``False`` when a
+    ``commit_delivery`` record exists or the run finished cleanly without
+    one, ``None`` when the run stopped on a failure terminal before recording
+    anything — an unknown, not a recorded absence. When the diagnosis found a
+    delivery commit the run does not record, the card also lists the
+    ``delivery_commit_unrecorded`` inconsistency.
     """
+    if disposition.has_record or tc.is_terminal_success:
+        delivery_committed: bool | None = disposition.committed
+    elif tc.status in _TERMINAL_FAILURE_STATUSES:
+        delivery_committed = None
+    else:
+        delivery_committed = disposition.committed
+    inconsistencies = list(tc.inconsistencies)
+    if diagnosis is not None and diagnosis.condition == "delivery_inconsistent":
+        inconsistencies.append(_INCONSISTENCY_DELIVERY_UNRECORDED)
+        delivery_committed = None
     return RunLiveTerminal(
         halt_reason=tc.halt_reason,
         final_acceptance=tc.final_acceptance_verdict,
         final_acceptance_rejected=tc.final_acceptance_rejected,
         resume_meaningful=resume_meaningful,
-        inconsistencies=list(tc.inconsistencies),
-        delivery_committed=disposition.committed,
+        inconsistencies=inconsistencies,
+        delivery_committed=delivery_committed,
         delivery_published=disposition.published,
         delivery_pr_url=disposition.pr_url,
     )
@@ -318,6 +343,12 @@ def _live_next_action(
             "inspect orcho_run_evidence and do not treat the run as shipped"
         )
     if state_class == "terminal_halted":
+        if diagnosis.condition == "delivery_inconsistent":
+            return (
+                "the target checkout carries a delivery commit this run does "
+                "not record — read orcho_run_diagnose for the sha, verify it, "
+                "record it with `orcho reconcile-delivery`; do not resume"
+            )
         if resume_meaningful:
             return (
                 "inspect orcho_run_evidence for the halt cause, then "
@@ -438,7 +469,7 @@ def build_run_live_status(run_id: str) -> RunLiveStatusCard:
         else None
     )
     terminal_model = (
-        _build_live_terminal(tc, resume_meaningful, disposition)
+        _build_live_terminal(tc, resume_meaningful, disposition, diagnosis)
         if state_class in _TERMINAL_CLASSES else None
     )
 

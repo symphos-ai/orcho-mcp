@@ -4,6 +4,18 @@
 
 ### Added
 
+- `delivery_inconsistent` on every run-control surface (orcho-core ADR 0191).
+  When the target checkout carries a delivery commit the run does not record
+  — the engine stopped between `git commit` and its audit, or the run
+  predates the delivery ledger — `orcho_run_diagnose` reports
+  `condition='delivery_inconsistent'` with the sha in `reason` and
+  `recommended_next_action='reconcile_delivery'`; `orcho_run_resume` refuses
+  before spawning (`resume_outcome='delivery_inconsistent'`); the live
+  terminal card lists `delivery_commit_unrecorded` under `inconsistencies`.
+  `RunLiveTerminal.delivery_committed` is now tri-state: `None` means the
+  answer is unknown (a failure terminal with no delivery block, or an
+  unrecorded commit), no longer conflated with a recorded `False`.
+
 - Criterion-to-evidence traceability is readable from a client (ADR 0188). A
   captain no longer has to join plan JSON, subtask receipts, findings, and gate
   receipts by hand to answer "what proves this, and is it releasable?":

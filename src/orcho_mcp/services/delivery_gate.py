@@ -736,11 +736,14 @@ class DeliveryDisposition(NamedTuple):
     status, the SAME set that classifies a ``delivery_completed`` gate),
     whether it opened a pull request (``published``), and that PR's live
     ``pr_url``. All defaults are the empty disposition so a run with no
-    delivery reads ``(False, False, None)``.
+    delivery reads ``(False, False, None)``. ``has_record`` (ADR 0191) says
+    whether a ``commit_delivery`` block exists at all, so a terminal card can
+    tell a recorded absence from an unknown (a run that died before recording).
     """
     committed: bool = False
     published: bool = False
     pr_url: str | None = None
+    has_record: bool = False
 
 
 def delivery_disposition(run_id: str) -> DeliveryDisposition:
@@ -767,6 +770,7 @@ def delivery_disposition(run_id: str) -> DeliveryDisposition:
     pr_url = _extract_pr_url(cd)
     return DeliveryDisposition(
         committed=committed, published=bool(pr_url), pr_url=pr_url,
+        has_record=cd is not None,
     )
 
 
