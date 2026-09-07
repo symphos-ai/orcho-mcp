@@ -1674,6 +1674,11 @@ def orcho_run_diagnose(run_id: str) -> RunDiagnosis:
         must record a phase-handoff decision before it can resume.
       - ``resume_inert_terminal`` — terminal (terminal success or a terminal
         halt reason); resuming is inert, so only inspection is suggested.
+      - ``delivery_inconsistent`` — the target checkout carries a delivery
+        commit the run does not record (it stopped between the commit and
+        its audit, or predates the delivery ledger). Never resume: ``reason``
+        names the sha and the ``orcho reconcile-delivery`` command that
+        records it (``recommended_next_action='reconcile_delivery'``).
       - ``superseded_by_child`` — a newer unfinished follow-up child is
         continuing this run; resume the child (``recommended_run_id``), not
         this parent.

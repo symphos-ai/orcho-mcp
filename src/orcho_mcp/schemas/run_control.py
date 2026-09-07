@@ -35,6 +35,9 @@ DiagnosisRecommendedNextActionLiteral = Literal[
     "plan_artifact_continuation",
     "stop_unknown",
     "inspect_or_cancel",
+    # ADR 0191: record an unrecorded delivery commit (CLI ``orcho
+    # reconcile-delivery``) before anything resumes.
+    "reconcile_delivery",
 ]
 
 
@@ -211,6 +214,7 @@ class ResumeBlockedResult(BaseModel):
         "superseded_by_child",
         "recover_via_source_run",
         "preflight_blocked",
+        "delivery_inconsistent",
     ] = Field(
         description="Typed reason the resume was refused before spawning.",
     )
@@ -779,6 +783,7 @@ class RunDiagnosis(BaseModel):
         "superseded_by_child",
         "blocked_worktree",
         "provider_pressure",
+        "delivery_inconsistent",
         "halted",
         "failed",
         "interrupted",

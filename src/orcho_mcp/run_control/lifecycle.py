@@ -560,7 +560,57 @@ def _resume_block_or_none(
         return _recover_via_source_response(run_id, diagnosis)
     if condition == "resume_inert_terminal":
         return _rejected_terminal_response(run_id, diagnosis)
+    if condition == "delivery_inconsistent":
+        return _delivery_inconsistent_response(run_id, diagnosis)
     return None
+
+
+def _delivery_inconsistent_response(
+    run_id: str, diagnosis: RunDiagnosisProjection,
+) -> ResumeBlockedResult:
+    """Refuse resume while Git holds a delivery the run does not record (ADR 0191).
+
+    A resume would re-enter delivery for a diff that already landed. The
+    follow-ups are read-only: inspect the diagnosis, then record the commit
+    with ``orcho reconcile-delivery`` (a CLI step — it needs an operator who
+    verified the commit) before any resume.
+    """
+    message = (
+        f"Run {run_id} has a delivery commit in its target checkout that the "
+        f"run does not record ({diagnosis.reason}). Resuming would reason "
+        "about a delivery that already happened. Verify the commit, record it "
+        f"with `orcho reconcile-delivery {run_id} --apply --commit <sha>`, "
+        "then diagnose again."
+    )
+    next_actions = [
+        NextActionRecord(
+            intent="Re-read the diagnosis (it names the commit sha).",
+            tool="orcho_run_diagnose",
+            args={"run_id": run_id},
+            optional=True,
+            kind="ready_call",
+        ),
+        NextActionRecord(
+            intent="Inspect the run's delivery evidence before recording it.",
+            tool="orcho_run_evidence",
+            args={"run_id": run_id, "slice": "delivery"},
+            optional=True,
+            kind="ready_call",
+        ),
+    ]
+    return ResumeBlockedResult(
+        run_id=run_id,
+        resume_outcome="delivery_inconsistent",
+        status=diagnosis.status or "terminal",
+        reason=diagnosis.reason,
+        message=message,
+        recommended_run_id=None,
+        suggested_next_action=(
+            f"run `orcho reconcile-delivery {run_id} --apply --commit <sha>` "
+            "after verifying the commit; do not resume"
+        ),
+        next_actions=next_actions,
+    )
 
 
 def _persist_runtime_override(

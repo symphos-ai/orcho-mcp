@@ -2916,7 +2916,7 @@
       }
     },
     {
-      "description": "Diagnose a run's resume situation before acting on it — read-only.\n\n    Returns a typed verdict so a control-loop client never has to guess\n    whether resuming is safe, wasted, or wrong. Call this BEFORE any risky\n    ``orcho_run_resume``: it classifies the run deterministically and hands\n    back unambiguously typed next steps.\n\n    ``condition`` (first-match priority):\n      - ``active`` — running; watch / poll it (no resume needed).\n      - ``stalled`` — core detected an over-budget startup without durable\n        progress; inspect it and, when ``control='mcp_controllable'``, cancel\n        it. ``recommended_next_action='inspect_or_cancel'`` is diagnosis-only:\n        it never offers resume or a watch loop.\n      - ``needs_decision`` — paused on ``awaiting_phase_handoff``; an operator\n        must record a phase-handoff decision before it can resume.\n      - ``resume_inert_terminal`` — terminal (terminal success or a terminal\n        halt reason); resuming is inert, so only inspection is suggested.\n      - ``superseded_by_child`` — a newer unfinished follow-up child is\n        continuing this run; resume the child (``recommended_run_id``), not\n        this parent.\n      - ``blocked_worktree`` — a follow-up blocked because the parent's\n        undelivered diff is not replayable here; resume the parent when known,\n        otherwise inspect (never a blind resume).\n      - ``halted`` / ``failed`` / ``interrupted`` — a resumable non-terminal\n        stop; resume this run or inspect its errors.\n\n    ``control`` is a SEPARATE, orthogonal axis from ``condition``: whether this\n    MCP server can actually mutate the run. ``mcp_controllable`` means the run\n    carries durable ``mcp_supervisor.json`` state with a resolvable project_dir\n    (it was started by this server, so resume / decide can act on it);\n    ``inspect_only`` means the run was NOT started by this MCP server and has no\n    durable supervisor metadata (a foreign / CLI-started run dir), so MCP can\n    only inspect it — a suggested ``orcho_run_resume`` cannot be applied even\n    when the ``condition`` is resumable. ``control_reason`` is the one-line fact\n    behind the verdict. ``control`` is ``None`` only when the classification\n    could not be read (never defaulted to controllable).\n\n    ``next_actions`` are typed by call-readiness via the ``kind`` field, which\n    clients MUST branch on instead of reading ``intent`` prose:\n      - ``kind=\"ready_call\"`` — ``args`` already carry every required\n        parameter of the target tool, so the call is safe to forward verbatim\n        (e.g. ``orcho_run_resume`` with ``run_id``).\n      - ``kind=\"operator_input_required\"`` — a final decision argument is\n        intentionally omitted; ``choices`` and/or ``input_schema`` describe the\n        operator input still needed (e.g. the required ``feedback`` for a\n        ``retry_feedback`` decision). Such records are never ``ready_call``.\n\n    Read-only: this tool spawns no process and mutates no state.\n\n    Raises RunNotFoundError if ``run_id`` doesn't exist on disk.\n    ",
+      "description": "Diagnose a run's resume situation before acting on it — read-only.\n\n    Returns a typed verdict so a control-loop client never has to guess\n    whether resuming is safe, wasted, or wrong. Call this BEFORE any risky\n    ``orcho_run_resume``: it classifies the run deterministically and hands\n    back unambiguously typed next steps.\n\n    ``condition`` (first-match priority):\n      - ``active`` — running; watch / poll it (no resume needed).\n      - ``stalled`` — core detected an over-budget startup without durable\n        progress; inspect it and, when ``control='mcp_controllable'``, cancel\n        it. ``recommended_next_action='inspect_or_cancel'`` is diagnosis-only:\n        it never offers resume or a watch loop.\n      - ``needs_decision`` — paused on ``awaiting_phase_handoff``; an operator\n        must record a phase-handoff decision before it can resume.\n      - ``resume_inert_terminal`` — terminal (terminal success or a terminal\n        halt reason); resuming is inert, so only inspection is suggested.\n      - ``delivery_inconsistent`` — the target checkout carries a delivery\n        commit the run does not record (it stopped between the commit and\n        its audit, or predates the delivery ledger). Never resume: ``reason``\n        names the sha and the ``orcho reconcile-delivery`` command that\n        records it (``recommended_next_action='reconcile_delivery'``).\n      - ``superseded_by_child`` — a newer unfinished follow-up child is\n        continuing this run; resume the child (``recommended_run_id``), not\n        this parent.\n      - ``blocked_worktree`` — a follow-up blocked because the parent's\n        undelivered diff is not replayable here; resume the parent when known,\n        otherwise inspect (never a blind resume).\n      - ``halted`` / ``failed`` / ``interrupted`` — a resumable non-terminal\n        stop; resume this run or inspect its errors.\n\n    ``control`` is a SEPARATE, orthogonal axis from ``condition``: whether this\n    MCP server can actually mutate the run. ``mcp_controllable`` means the run\n    carries durable ``mcp_supervisor.json`` state with a resolvable project_dir\n    (it was started by this server, so resume / decide can act on it);\n    ``inspect_only`` means the run was NOT started by this MCP server and has no\n    durable supervisor metadata (a foreign / CLI-started run dir), so MCP can\n    only inspect it — a suggested ``orcho_run_resume`` cannot be applied even\n    when the ``condition`` is resumable. ``control_reason`` is the one-line fact\n    behind the verdict. ``control`` is ``None`` only when the classification\n    could not be read (never defaulted to controllable).\n\n    ``next_actions`` are typed by call-readiness via the ``kind`` field, which\n    clients MUST branch on instead of reading ``intent`` prose:\n      - ``kind=\"ready_call\"`` — ``args`` already carry every required\n        parameter of the target tool, so the call is safe to forward verbatim\n        (e.g. ``orcho_run_resume`` with ``run_id``).\n      - ``kind=\"operator_input_required\"`` — a final decision argument is\n        intentionally omitted; ``choices`` and/or ``input_schema`` describe the\n        operator input still needed (e.g. the required ``feedback`` for a\n        ``retry_feedback`` decision). Such records are never ``ready_call``.\n\n    Read-only: this tool spawns no process and mutates no state.\n\n    Raises RunNotFoundError if ``run_id`` doesn't exist on disk.\n    ",
       "inputSchema": {
         "properties": {
           "run_id": {
@@ -3307,6 +3307,7 @@
               "superseded_by_child",
               "blocked_worktree",
               "provider_pressure",
+              "delivery_inconsistent",
               "halted",
               "failed",
               "interrupted"
@@ -3436,7 +3437,8 @@
                   "start_followup",
                   "plan_artifact_continuation",
                   "stop_unknown",
-                  "inspect_or_cancel"
+                  "inspect_or_cancel",
+                  "reconcile_delivery"
                 ],
                 "type": "string"
               },
@@ -7920,10 +7922,17 @@
             "description": "Terminal-state slice for the live status card.\n\nPresent only for a terminal ``state_class`` (``terminal_success`` /\n``terminal_halted`` / ``terminal_inconsistent``). Carries the resolved\n``halt_reason``, the ``final_acceptance`` verdict, whether a resume is\nmeaningful, any detected consistency violations, and — for a run whose\nOrcho-managed delivery already landed — the delivery disposition\n(``delivery_committed`` / ``delivery_published`` / ``delivery_pr_url``), so\na caller can render a coherent terminal card without scraping logs.",
             "properties": {
               "delivery_committed": {
-                "default": false,
-                "description": "True when the run's Orcho-managed delivery already landed in the target checkout (a ``committed`` / ``applied_uncommitted`` delivery). ``False`` when no delivery landed or the run carries no delivery block.",
-                "title": "Delivery Committed",
-                "type": "boolean"
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "True when the run's Orcho-managed delivery already landed in the target checkout (a ``committed`` / ``applied_uncommitted`` delivery). ``False`` when the run records that no delivery landed (a non-delivered block, or a clean terminal with no delivery). ``None`` when the answer is unknown: the run stopped on a failure terminal before recording a delivery block, or the target checkout carries a delivery commit the run does not record (``inconsistencies`` then lists ``delivery_commit_unrecorded``; ``orcho_run_diagnose`` names the commit).",
+                "title": "Delivery Committed"
               },
               "delivery_pr_url": {
                 "anyOf": [
@@ -8777,7 +8786,8 @@
                   "rejected_terminal",
                   "superseded_by_child",
                   "recover_via_source_run",
-                  "preflight_blocked"
+                  "preflight_blocked",
+                  "delivery_inconsistent"
                 ],
                 "title": "Resume Outcome",
                 "type": "string"
