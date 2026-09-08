@@ -272,5 +272,8 @@ async def test_stdio_preserves_an_unbound_engine_method(fake_workspace):
     assert result.isError is False
     row = result.structuredContent["criterion_matrix"]["rows"][0]
     assert row["method"] == {"kind": "gates", "gate_refs": [], "implied": True}
-    assert row["state"] == "missing"
-    assert row["blocking"] is True
+    # The run declares no scheduled gate at all (no ledger): core reports the
+    # unbound engine method as advisory, not as a blocking gap (orcho-core ADR
+    # 0191 addendum), and the wire preserves it verbatim.
+    assert row["state"] == "advisory"
+    assert row["blocking"] is False
