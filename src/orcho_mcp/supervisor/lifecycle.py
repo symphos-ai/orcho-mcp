@@ -38,6 +38,9 @@ async def reap(sup: RunsSupervisor, handle: RunHandle) -> None:
       - rc=4 → awaiting_phase_handoff (pipeline paused on a
         phase's declared handoff policy; resolve via
         ``orcho_phase_handoff_decide`` + ``orcho_run_resume``)
+      - rc=3 → halted (a deliberate pipeline halt: parked delivery
+        gate, operator halt, rejected release; ``meta.halt_reason``
+        carries the cause)
       - other → failed
 
     Also stamps ``halt_reason`` on abnormal exits so the wire
@@ -46,9 +49,9 @@ async def reap(sup: RunsSupervisor, handle: RunHandle) -> None:
       - rc<0 (signal-killed) → ``signal:<NAME>`` (e.g.
         ``signal:SIGKILL``). Falls back to ``signal:<-rc>`` when
         the signal number doesn't map to a known name.
-      - rc>0 and rc!=4 → ``abnormal_exit:<rc>`` — the pipeline
-        crashed without writing ``meta.halt_reason`` itself.
-      - rc=0 or rc=4 → no ``halt_reason`` (success / pause).
+      - rc>0 and rc not in {3, 4} → ``abnormal_exit:<rc>`` — the
+        pipeline crashed without writing ``meta.halt_reason`` itself.
+      - rc=0, rc=3 or rc=4 → no ``halt_reason`` (success / halt / pause).
 
     ``meta.json`` stays pipeline-owned. The wire adapter
     (``orcho_run_status``) is responsible for merging supervisor
@@ -73,6 +76,11 @@ async def reap(sup: RunsSupervisor, handle: RunHandle) -> None:
         handle.status = "halted" if read_meta_status(handle.run_dir) == "halted" else "done"
     elif rc == 4:
         handle.status = "awaiting_phase_handoff"
+    elif rc == 3:
+        # Deliberate halt written by the pipeline before exiting (a parked
+        # delivery gate, an operator halt, a rejected release). The cause is
+        # ``meta.halt_reason``, pipeline-owned; never synthesize one here.
+        handle.status = "halted"
     elif rc < 0:
         handle.status = "interrupted"
     else:
@@ -84,7 +92,7 @@ async def reap(sup: RunsSupervisor, handle: RunHandle) -> None:
         except (ValueError, AttributeError):
             signame = str(-rc)
         handle.halt_reason = f"signal:{signame}"
-    elif rc != 0 and rc != 4:
+    elif rc not in (0, 3, 4):
         handle.halt_reason = f"abnormal_exit:{rc}"
 
     settle_launch(handle)
