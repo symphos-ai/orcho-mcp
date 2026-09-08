@@ -4,6 +4,12 @@
 
 ### Fixed
 
+- The supervisor reads orcho-core's new exit code `3` as a deliberate halt
+  (parked delivery gate, operator halt, rejected release): the run is
+  recorded `halted` with no synthetic `abnormal_exit` reason — the cause is
+  `meta.halt_reason`, pipeline-owned. Other non-zero codes still read as
+  `failed`; `4` stays the phase-handoff pause.
+
 - A producer-parked delivery gate (`halted` / `commit_delivery_pending` with
   `action=none`) is offered its `orcho_delivery_decide` calls instead of a
   checkpoint resume that would only re-park it (orcho-core ADR 0175
