@@ -3410,6 +3410,14 @@
             "title": "Next Actions",
             "type": "array"
           },
+          "pending_human_criteria": {
+            "description": "``human`` acceptance criteria still awaiting an operator verdict on a paused run (``needs_decision``). Record each with orcho_criterion_decide before orcho_run_resume, so final acceptance sees them. Mirrors core ``RunDiagnosis.pending_human_criteria``.",
+            "items": {
+              "type": "string"
+            },
+            "title": "Pending Human Criteria",
+            "type": "array"
+          },
           "provider_pressure": {
             "anyOf": [
               {
@@ -7874,6 +7882,14 @@
                 "default": null,
                 "description": "Handoff identifier from the pending-handoff projection.",
                 "title": "Handoff Id"
+              },
+              "pending_human_criteria": {
+                "description": "``human`` acceptance criteria still awaiting an operator verdict. Record each with orcho_criterion_decide BEFORE orcho_run_resume so final acceptance reads a ready matrix instead of rejecting into a correction follow-up. Empty when the run has no accepted plan or no open human criteria.",
+                "items": {
+                  "type": "string"
+                },
+                "title": "Pending Human Criteria",
+                "type": "array"
               },
               "phase": {
                 "anyOf": [

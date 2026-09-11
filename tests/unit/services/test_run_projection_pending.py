@@ -146,3 +146,45 @@ def test_decision_read_failure_is_degraded_not_missing(fake_workspace, monkeypat
     assert pending.decision_degraded_reason == "decision_artifact_read_failed"
     assert pending.decision_artifact_exists is False
     assert "orcho_phase_handoff_decide" not in pending.suggested_next_action
+
+
+# ── open human criteria ride on the pending handoff ──────────────────────────
+#
+# Deciding them BEFORE orcho_run_resume is what keeps final acceptance from
+# rejecting into a correction follow-up; the projection names them and the
+# suggested next action says so.
+
+_HUMAN_PLAN = {
+    "short_summary": "s",
+    "planning_context": "p",
+    "acceptance_criteria": [
+        {"id": "C1", "intent": "docs read coherently", "verify": "agent_assertion"},
+        {"id": "C2", "intent": "operator accepts the journey", "verify": "human",
+         "human_instructions": "Exercise the journey and record the outcome."},
+    ],
+    "tasks": [{"id": "t1", "goal": "g"}],
+}
+
+
+def test_project_pending_handoff_names_open_human_criteria(fake_workspace):
+    write_run(fake_workspace, "r-human", meta=_paused_meta(), parsed_plan=_HUMAN_PLAN)
+
+    proj = project_pending_handoff("r-human")
+
+    assert proj.is_pending_handoff is True
+    assert proj.pending_human_criteria == ["C2"]
+    assert proj.suggested_next_action == (
+        "call orcho_phase_handoff_decide to resolve the pause, then "
+        "orcho_run_resume to continue; open human criteria C2: record each with "
+        "orcho_criterion_decide before orcho_run_resume, so final acceptance "
+        "sees them"
+    )
+
+
+def test_project_pending_handoff_without_plan_has_no_human_criteria(fake_workspace):
+    write_run(fake_workspace, "r-plain", meta=_paused_meta())
+
+    proj = project_pending_handoff("r-plain")
+
+    assert proj.pending_human_criteria == []
+    assert "human criteria" not in (proj.suggested_next_action or "")

@@ -839,6 +839,14 @@ class RunDiagnosis(BaseModel):
                     "the runtime published (``continue`` / ``retry_feedback`` "
                     "/ ``halt`` / ``continue_with_waiver``). Empty otherwise.",
     )
+    pending_human_criteria: list[str] = Field(
+        default_factory=list,
+        description="``human`` acceptance criteria still awaiting an operator "
+                    "verdict on a paused run (``needs_decision``). Record each "
+                    "with orcho_criterion_decide before orcho_run_resume, so "
+                    "final acceptance sees them. Mirrors core "
+                    "``RunDiagnosis.pending_human_criteria``.",
+    )
     decision_recorded: bool = Field(
         default=False,
         description="For ``needs_decision`` only: ``True`` when a phase-handoff "
