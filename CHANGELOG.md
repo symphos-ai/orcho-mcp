@@ -4,6 +4,14 @@
 
 ### Fixed
 
+- A run paused on a phase handoff now names its open `human` criteria:
+  `orcho_run_live_status.pending_handoff.pending_human_criteria`,
+  `orcho_run_diagnose.pending_human_criteria`, and the suggested next action
+  tell the operator to record each with `orcho_criterion_decide` before
+  `orcho_run_resume`, so final acceptance reads a ready matrix instead of
+  rejecting into a correction follow-up (mirrors orcho-core
+  `RunDiagnosis.pending_human_criteria`).
+
 - The supervisor reads orcho-core's new exit code `3` as a deliberate halt
   (parked delivery gate, operator halt, rejected release): the run is
   recorded `halted` with no synthetic `abnormal_exit` reason — the cause is

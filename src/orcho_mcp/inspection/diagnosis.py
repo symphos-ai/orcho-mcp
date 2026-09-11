@@ -692,6 +692,9 @@ def inspect_run_diagnosis(run_id: str) -> RunDiagnosis:
         status=proj.status,
         recommended_run_id=proj.recommended_run_id,
         available_actions=list(proj.available_actions),
+        pending_human_criteria=list(
+            getattr(proj, "pending_human_criteria", []) or []
+        ),
         decision_recorded=proj.decision_artifact_exists,
         decision_state=proj.decision_state,
         decision_degraded_reason=proj.decision_degraded_reason,

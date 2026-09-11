@@ -874,6 +874,15 @@ class RunLiveHandoff(BaseModel):
     )
     decision_state: Literal["recorded", "missing", "degraded"] = "missing"
     decision_degraded_reason: str | None = None
+    pending_human_criteria: list[str] = Field(
+        default_factory=list,
+        description="``human`` acceptance criteria still awaiting an operator "
+                    "verdict. Record each with orcho_criterion_decide BEFORE "
+                    "orcho_run_resume so final acceptance reads a ready matrix "
+                    "instead of rejecting into a correction follow-up. Empty "
+                    "when the run has no accepted plan or no open human "
+                    "criteria.",
+    )
 
 
 class RunLiveTerminal(BaseModel):
