@@ -148,6 +148,7 @@ from orcho_mcp.schemas.run_control import (
     RuntimeOverrideArg,
     TypedRunResult,
     TypedRunStartedResult,
+    UnknownArgumentsResult,
 )
 from orcho_mcp.schemas.shared import (
     ContinuationSubjectLiteral,
@@ -258,6 +259,7 @@ __all__ = [
     "RuntimeOverrideArg",
     "TypedRunResult",
     "TypedRunStartedResult",
+    "UnknownArgumentsResult",
     # criteria (ADR 0188)
     "CriterionDecisionInputRequiredResult",
     "CriterionDecisionRecordedResult",
