@@ -4,6 +4,14 @@
 
 ### Fixed
 
+- Every `orcho_*` tool now refuses a call carrying an argument name it does
+  not declare, before any side effect. The client receives a structured
+  `isError` result naming the unknown key(s) and the tool's full list of
+  accepted parameter names, so the call can be corrected without a second
+  `tools/list` round-trip. An undeclared key was previously dropped silently:
+  `orcho_run_start(project=...)` fell back to `project_dir="."` and started a
+  run against the server's own working directory. Tool schemas are unchanged.
+
 - A run paused on a phase handoff now names its open `human` criteria:
   `orcho_run_live_status.pending_handoff.pending_human_criteria`,
   `orcho_run_diagnose.pending_human_criteria`, and the suggested next action

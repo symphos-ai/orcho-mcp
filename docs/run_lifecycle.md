@@ -527,6 +527,17 @@ against or widens the success `outputSchema`. The wire contract is pinned by
 `tests/integration/protocol/test_stdio_inspect_only_refusal.py` and the L4
 `tests/acceptance/mock_pipeline/test_foreign_run_control_boundary.py`.
 
+That same wrapper is also the server's argument-name check, and it runs
+*first*: before dispatch it compares the incoming argument keys against the
+tool's published `inputSchema.properties` and, for any key the tool does not
+declare, returns a `CallToolResult` with `isError=true` and
+`structuredContent.kind='unknown_arguments'` naming the unknown key(s) and
+every accepted name. A call such as `orcho_run_start(project=...)` therefore
+never reaches a tool body and starts nothing. Pinned by
+`tests/unit/tool_arguments/test_unknown_arguments_rejected.py` (the registered
+handler, swept across every tool in the catalog) and
+`tests/integration/protocol/test_stdio_unknown_arguments.py` (the stdio wire).
+
 Deferred / out of scope:
 
 - Reconstructing supervisor state from `meta.json` so MCP can fully control a

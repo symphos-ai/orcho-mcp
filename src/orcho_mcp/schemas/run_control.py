@@ -386,6 +386,48 @@ class InspectOnlyControlResult(BaseModel):
     )
 
 
+class UnknownArgumentsResult(BaseModel):
+    """Typed refusal payload for a tool call carrying argument names the tool
+    does not declare.
+
+    An MCP client that invents or misspells an argument (``project`` for
+    ``project_dir``, ``run_ib`` for ``run_id``) otherwise gets silent coercion:
+    the SDK's generated argument model ignores extra keys, so the call runs with
+    the *misspelled* value dropped and every declared default in force —
+    ``orcho_run_start`` would start a run against the server's own working
+    directory. The refusal lands BEFORE dispatch, so nothing is started, spawned,
+    or written.
+
+    ``accepted_arguments`` is taken from the tool's published
+    ``inputSchema.properties``, in schema order — exactly the list the caller can
+    already see in ``tools/list``, so the correction needs no second round-trip.
+    ``unknown_arguments`` is sorted for a stable message.
+
+    Like :class:`InspectOnlyControlResult` this model is *delivered* as an
+    ``isError`` result rather than returned from a tool body, so it is not part
+    of any tool's success union and never appears in the published schema
+    catalog.
+    """
+
+    kind: Literal["unknown_arguments"] = "unknown_arguments"
+    tool: str = Field(
+        description="Name of the tool that was called, as sent by the client.",
+    )
+    unknown_arguments: list[str] = Field(
+        description="Argument names the client sent that the tool does not "
+                    "declare, sorted alphabetically.",
+    )
+    accepted_arguments: list[str] = Field(
+        description="Every argument name the tool declares, in the order they "
+                    "appear in its published ``inputSchema.properties``. Empty "
+                    "when the tool takes no arguments.",
+    )
+    message: str = Field(
+        description="One-line operator-facing explanation: the tool, the "
+                    "unknown names, the accepted names, and that nothing ran.",
+    )
+
+
 class CancelResult(BaseModel):
     """Outcome of ``orcho_run_cancel``.
 
@@ -926,4 +968,5 @@ __all__ = [
     "RunStartedResult",
     "TypedRunResult",
     "TypedRunStartedResult",
+    "UnknownArgumentsResult",
 ]
