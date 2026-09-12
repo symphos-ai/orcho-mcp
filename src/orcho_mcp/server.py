@@ -55,12 +55,14 @@ def _register_handlers() -> None:
     )
     register_resource_subscription_handlers(mcp)
 
-    # Ship the typed inspect_only control refusal as structured error data on
-    # the wire. Without this wrapper FastMCP collapses the raised
-    # ``InspectOnlyControlError`` to ``str(exc)`` and the client loses the
-    # typed classification + read-only next_actions. Must run after the tool
-    # decorators are imported above so it wraps the live CallToolRequest
-    # handler. Success results are unaffected.
+    # The server's single CallToolRequest wrapper. It refuses a call carrying
+    # argument names the tool does not declare (the SDK would otherwise drop
+    # them silently and run the tool on its defaults), and ships the typed
+    # inspect_only control refusal as structured error data instead of letting
+    # FastMCP collapse the raised ``InspectOnlyControlError`` to ``str(exc)``.
+    # Must run after the tool decorators are imported above so it wraps the
+    # live handler and sees the full tool catalog. Success results are
+    # unaffected. Registered exactly once per process.
     from orcho_mcp.tool_error_delivery import (
         register_inspect_only_error_delivery,
     )
