@@ -58,6 +58,7 @@ from orcho_mcp.run_control.criterion_decision import (
     decide_criterion_with_elicitation,
 )
 from orcho_mcp.run_control.delivery import decide_delivery
+from orcho_mcp.run_control.delivery_reconcile import reconcile_delivery_record
 from orcho_mcp.run_control.handoff import decide_phase_handoff_with_elicitation
 from orcho_mcp.run_control.lifecycle import (
     cancel_run,
@@ -78,6 +79,7 @@ from orcho_mcp.schemas import (
     CriterionDecisionRecordedResult,
     DeliveryDecideResult,
     DeliveryGateProjection,
+    DeliveryReconcileResult,
     EventsTailResult,
     EvidenceResult,
     HandoffAdviceResult,
@@ -1362,6 +1364,43 @@ async def orcho_criterion_decide(
 
 
 @mcp.tool()
+def orcho_reconcile_delivery(
+    run_id: str,
+    operator: str,
+    commit: str | None = None,
+    note: str | None = None,
+    workspace: str | None = None,
+    runs_dir: str | None = None,
+) -> DeliveryReconcileResult:
+    """Record an existing commit as this run's delivery through the core SDK.
+
+    Use when ``orcho_run_diagnose`` recommends ``reconcile_delivery`` or an
+    operator has delivered the run manually. The operator must have verified
+    that the existing commit belongs to this run. Core discovers the commit
+    and records its delivery with operator attribution and reconciled
+    provenance. A rejected release retains its verdict and delivery override;
+    this records delivery without approving that release.
+
+    Args:
+        run_id: run whose delivery needs recording.
+        operator: identity of the operator recording the delivery.
+        commit: optional SHA or unique prefix of the commit verified by the
+            operator; must match the commit discovered by core.
+        note: optional operator rationale, recorded by core.
+        workspace: optional workspace path for SDK run lookup.
+        runs_dir: optional runs directory for SDK run lookup.
+
+    Refusals return ``accepted=False`` with ``blocker`` equal to
+    ``no_delivery_commit_found``, ``already_recorded``, ``commit_mismatch``,
+    or ``commit_unreadable``. No git mutation is performed.
+    """
+    return reconcile_delivery_record(
+        run_id, operator=operator, commit=commit, note=note,
+        workspace=workspace, runs_dir=runs_dir,
+    )
+
+
+@mcp.tool()
 def orcho_handoff_advice(
     run_id: str,
     handoff_id: str | None = None,
@@ -1805,6 +1844,7 @@ __all__ = [
     "orcho_run_cancel",
     "orcho_phase_handoff_decide",
     "orcho_criterion_decide",
+    "orcho_reconcile_delivery",
     "orcho_handoff_advice",
     "orcho_delivery_decide",
     "orcho_run_evidence",
