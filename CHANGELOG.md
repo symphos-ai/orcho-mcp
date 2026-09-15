@@ -2,10 +2,10 @@
 
 ## Unreleased
 
-## 1.0.0 - 2026-09-15
+## 0.10.0 - 2026-09-15
 
 The MCP server exposes criterion evidence and recoverable delivery from
-`orcho-core` 1.0.0 through a consistent operator surface.
+`orcho-core` 0.10.0 through a consistent operator surface.
 
 ### Added
 
@@ -21,7 +21,7 @@ The MCP server exposes criterion evidence and recoverable delivery from
 
 ### Changed
 
-- Requires `orcho-core>=1.0.0,<2.0`. Upgrade both packages together and restart
+- Requires `orcho-core>=0.10.0,<0.11`. Upgrade both packages together and restart
   the server before using the new contract.
 - Plan acceptance criteria are typed objects rather than strings.
 - `delivery_committed` distinguishes `null` (unknown) from `false` (recorded
