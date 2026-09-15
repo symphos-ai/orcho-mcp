@@ -2875,6 +2875,172 @@
       }
     },
     {
+      "description": "Record an existing commit as this run's delivery through the core SDK.\n\n    Use when ``orcho_run_diagnose`` recommends ``reconcile_delivery`` or an\n    operator has delivered the run manually. The operator must have verified\n    that the existing commit belongs to this run. Core discovers the commit\n    and records its delivery with operator attribution and reconciled\n    provenance. A rejected release retains its verdict and delivery override;\n    this records delivery without approving that release.\n\n    Args:\n        run_id: run whose delivery needs recording.\n        operator: identity of the operator recording the delivery.\n        commit: optional SHA or unique prefix of the commit verified by the\n            operator; must match the commit discovered by core.\n        note: optional operator rationale, recorded by core.\n        workspace: optional workspace path for SDK run lookup.\n        runs_dir: optional runs directory for SDK run lookup.\n\n    Refusals return ``accepted=False`` with ``blocker`` equal to\n    ``no_delivery_commit_found``, ``already_recorded``, ``commit_mismatch``,\n    or ``commit_unreadable``. No git mutation is performed.\n    ",
+      "inputSchema": {
+        "properties": {
+          "commit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Commit"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Note"
+          },
+          "operator": {
+            "title": "Operator",
+            "type": "string"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "runs_dir": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Runs Dir"
+          },
+          "workspace": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Workspace"
+          }
+        },
+        "required": [
+          "run_id",
+          "operator"
+        ],
+        "title": "orcho_reconcile_deliveryArguments",
+        "type": "object"
+      },
+      "name": "orcho_reconcile_delivery",
+      "outputSchema": {
+        "description": "SDK reconciliation outcome, including typed refusals in ``blocker``.",
+        "properties": {
+          "accepted": {
+            "title": "Accepted",
+            "type": "boolean"
+          },
+          "artifact_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Artifact Path"
+          },
+          "blocker": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Blocker"
+          },
+          "commit_sha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Commit Sha"
+          },
+          "notes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Notes",
+            "type": "array"
+          },
+          "reason": {
+            "default": "",
+            "title": "Reason",
+            "type": "string"
+          },
+          "release_verdict": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Release Verdict"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          },
+          "terminal_outcome": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Terminal Outcome"
+          }
+        },
+        "required": [
+          "run_id",
+          "accepted",
+          "state"
+        ],
+        "title": "DeliveryReconcileResult",
+        "type": "object"
+      }
+    },
+    {
       "description": "Stop a running pipeline.\n\n    ``mode=\"graceful\"`` sends SIGTERM to the run's process group; pipeline\n    catches it, flushes the checkpoint, and emits a ``run.interrupted``\n    event. ``mode=\"hard\"`` sends SIGKILL; in-flight LLM HTTP requests drop\n    immediately and the checkpoint reflects only fully-completed phases.\n\n    Works for runs spawned this server lifetime as well as orphans picked\n    up by restart-recovery (cancel via raw ``os.kill`` on the persisted pid).\n    ",
       "inputSchema": {
         "properties": {

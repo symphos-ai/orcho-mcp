@@ -52,6 +52,7 @@ from orcho_mcp.schemas.criteria import (
     PlanCriterionRecord,
     TaskAcceptanceRefsRecord,
 )
+from orcho_mcp.schemas.delivery_reconcile import DeliveryReconcileResult
 from orcho_mcp.schemas.inspection import (
     CorrectionSliceRecord,
     CriterionReportRecord,
@@ -177,6 +178,7 @@ from orcho_mcp.schemas.workspace import (
 )
 
 __all__ = [
+    "DeliveryReconcileResult",
     # shared
     "ContinuationSubjectLiteral",
     "CorrectionExitResult",

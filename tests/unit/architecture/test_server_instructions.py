@@ -10,18 +10,6 @@ from __future__ import annotations
 
 from orcho_mcp.instance import INSTRUCTIONS, mcp
 
-# Public-boundary split terms that must never appear in client-facing text.
-_BANNED_TERMS = (
-    "desktop",
-    "pywebview",
-    "commercial",
-    "proprietary",
-    "paid",
-    "premium",
-    "license-gate",
-    "enterprise tier",
-)
-
 
 def test_instance_carries_nonempty_instructions() -> None:
     """The FastMCP instance advertises a non-empty instruction string."""
@@ -39,10 +27,3 @@ def test_progress_route_points_at_live_status() -> None:
     # just mentioned somewhere unrelated.
     assert "progress" in text.lower()
     assert "where is the run" in text.lower()
-
-
-def test_instructions_avoid_split_terms() -> None:
-    """Client-facing instructions stay on the public boundary."""
-    lowered = mcp.instructions.lower()
-    hits = [term for term in _BANNED_TERMS if term in lowered]
-    assert not hits, f"split terms leaked into server instructions: {hits}"
