@@ -2,144 +2,52 @@
 
 ## Unreleased
 
-### Fixed
+## 1.0.0 - 2026-09-15
 
-- Every `orcho_*` tool now refuses a call carrying an argument name it does
-  not declare, before any side effect. The client receives a structured
-  `isError` result naming the unknown key(s) and the tool's full list of
-  accepted parameter names, so the call can be corrected without a second
-  `tools/list` round-trip. An undeclared key was previously dropped silently:
-  `orcho_run_start(project=...)` fell back to `project_dir="."` and started a
-  run against the server's own working directory. Tool schemas are unchanged.
-
-- A run paused on a phase handoff now names its open `human` criteria:
-  `orcho_run_live_status.pending_handoff.pending_human_criteria`,
-  `orcho_run_diagnose.pending_human_criteria`, and the suggested next action
-  tell the operator to record each with `orcho_criterion_decide` before
-  `orcho_run_resume`, so final acceptance reads a ready matrix instead of
-  rejecting into a correction follow-up (mirrors orcho-core
-  `RunDiagnosis.pending_human_criteria`).
-
-- The supervisor reads orcho-core's new exit code `3` as a deliberate halt
-  (parked delivery gate, operator halt, rejected release): the run is
-  recorded `halted` with no synthetic `abnormal_exit` reason — the cause is
-  `meta.halt_reason`, pipeline-owned. Other non-zero codes still read as
-  `failed`; `4` stays the phase-handoff pause.
-
-- A producer-parked delivery gate (`halted` / `commit_delivery_pending` with
-  `action=none`) is offered its `orcho_delivery_decide` calls instead of a
-  checkpoint resume that would only re-park it (orcho-core ADR 0175
-  addendum). `orcho_run_diagnose` follows core's `needs_delivery_decision`
-  verdict and the live terminal card points at `orcho_delivery_gate`. Gates
-  core does not resolve as decidable keep the resume-first route.
+The MCP server exposes criterion evidence and recoverable delivery from
+`orcho-core` 1.0.0 through a consistent operator surface.
 
 ### Added
 
-- `delivery_inconsistent` on every run-control surface (orcho-core ADR 0191).
-  When the target checkout carries a delivery commit the run does not record
-  — the engine stopped between `git commit` and its audit, or the run
-  predates the delivery ledger — `orcho_run_diagnose` reports
-  `condition='delivery_inconsistent'` with the sha in `reason` and
-  `recommended_next_action='reconcile_delivery'`; `orcho_run_resume` refuses
-  before spawning (`resume_outcome='delivery_inconsistent'`); the live
-  terminal card lists `delivery_commit_unrecorded` under `inconsistencies`.
-  `RunLiveTerminal.delivery_committed` is now tri-state: `None` means the
-  answer is unknown (a failure terminal with no delivery block, or an
-  unrecorded commit), no longer conflated with a recorded `False`.
-
-- Criterion-to-evidence traceability is readable from a client (ADR 0188). A
-  captain no longer has to join plan JSON, subtask receipts, findings, and gate
-  receipts by hand to answer "what proves this, and is it releasable?":
-  - `orcho_run_evidence` gains a `criterion_matrix` slice — one row per plan
-    acceptance criterion with its verification class, the executors that own
-    it, a discriminated proof method (official gates / agent inspection /
-    operator instructions), its proof references, state, and whether it blocks;
-  - the `plan` slice now carries typed criteria (stable ids, verification
-    class, complete `(command, hook, phase)` gate identities) plus per-task
-    `acceptance_refs`, where it previously carried prose strings;
-  - a `criterion_decisions` slice returns the run's append-only human-decision
-    log, so a client that reconnects after a resume can resolve a
-    `human_decision` proof reference into the decision behind it — who decided,
-    when, with what note, and which earlier decision it superseded;
-  - `orcho_run_status`, `orcho_run_diagnose`, and `orcho_delivery_gate` carry
-    the same `criterion_readiness` summary, read through one projection path,
-    so they cannot disagree about blockers.
-- `orcho_criterion_decide` records an operator's `accept` / `reject` on a
-  `human` criterion. Called without a verdict it asks a capable client through
-  native MCP form elicitation, and otherwise returns
-  `operator_input_required` with the exact missing input and a ready-call —
-  writing nothing in either case. No verdict is ever inferred from
-  conversation, and every admission rule (unknown criterion, non-human
-  criterion, wrong run, conflicting decision) is enforced by the engine before
-  anything is written.
+- Criterion evidence matrices, human-decision history, and shared readiness
+  summaries in evidence, status, diagnosis, and delivery inspection.
+- `orcho_criterion_decide` records explicit acceptance or rejection of a human
+  criterion; missing decisions are requested through supported elicitation or
+  returned as required operator input without writing a decision.
+- Live verification progress and diagnosis of unrecorded delivery commits.
+- `orcho_reconcile_delivery` records an existing delivery through the core SDK.
+  SDK refusals remain structured results, and duplicate recording is handled
+  by the engine's existing contract.
 
 ### Changed
 
-- Requires an `orcho-core` that exposes the ADR 0188 criterion SDK. MCP is a
-  pure consumer here: it never recomputes a criterion state, readiness,
-  receipt freshness, gate selection, executors, or blocking consequences, and
-  an architecture guard now fails the build if a second SDK call site, a local
-  state table, string criteria, or a `null` for an absent criterion payload
-  appears.
-- **Wire change:** `PlanSliceRecord.acceptance_criteria` is a list of typed
-  criterion objects rather than a list of strings.
-- An open blocking criterion now shapes the suggested next action, not just
-  the readiness number. `orcho_run_status`, `orcho_run_diagnose`, and
-  `orcho_delivery_gate` lead their `next_actions` with the
-  `orcho_criterion_decide` call that can clear it, and a shipping
-  `orcho_delivery_decide` call is demoted from `ready_call` to
-  `operator_input_required` (naming the blocker count/state and any pending
-  human criteria in `context`)
-  instead of sitting beside a `ready: false` summary as if it were safe to
-  forward. This applies to every blocker, including failed/missing executable
-  proof and rejected human criteria; resume and read-only actions are untouched.
-- A recorded decision is never retracted by a failed readback. The response
-  carries the matrix as it stands after the write; if that read fails, the
-  outcome stays `decision_recorded` and `matrix_error` says why, so an
-  operator re-reads instead of retrying into "already decided".
-- A run with no criterion contract OMITS `criterion_matrix` /
-  `criterion_readiness` rather than sending `null`, keeping "this run predates
-  the contract" distinguishable from "this plan declares no criteria" (which
-  is an explicit empty matrix). A missing criterion SDK capability or malformed
-  current matrix fails closed instead of masquerading as that absent case.
+- Requires `orcho-core>=1.0.0,<2.0`. Upgrade both packages together and restart
+  the server before using the new contract.
+- Plan acceptance criteria are typed objects rather than strings.
+- `delivery_committed` distinguishes `null` (unknown) from `false` (recorded
+  as not committed). Clients must preserve this distinction.
+- Blocking criteria shape the suggested next action. Pending human criteria
+  are named before resume, and a blocked delivery is not offered as a ready call.
 
 ### Fixed
 
-- `orcho_run_start` documents `max_rounds`. The parameter was in the
-  signature but named nowhere in the tool description, so an MCP caller saw an
-  undocumented integer and could reasonably read it as the planning budget. It
-  caps only the implement -> review_changes -> repair_changes loop (omitted ->
-  engine default 1); the plan / validate_plan cap is the active profile's
-  `LoopStep.max_rounds` and is not settable per run, so `max_rounds=4` on a
-  profile declaring 2 plan rounds still stops planning after round 2.
-  Description-only change; the wire shape is unchanged.
-- An MCP resume preserves the run's `max_rounds` budget. `orcho_run_start`
-  with `max_rounds=4` reached the first subprocess correctly, but
-  `orcho_run_resume` re-spawned without `--max-rounds`, so the orchestrator's
-  argparse default of 1 applied and the repair loop silently shrank to a single
-  round. The fix is in orcho-core's `sdk.run_control.resume_run` — the seam that
-  owns resume argv and already inherited `mock` / `output_mode` / profile — so
-  `RunsSupervisor.resume` needs no new parameter and the value gains no second
-  source of truth. Covered here by a regression test that drives the real seam
-  and stubs only the OS-level spawn.
+- Unknown tool argument names are rejected before dispatch rather than silently
+  ignored; the error names accepted parameters so callers can correct the call.
+- Core exit code `3` is recorded as an intentional halt with its original cause.
+- Producer-parked delivery gates expose their available decisions instead of
+  suggesting a resume that would only park the run again.
+- Evidence preserves engine-bound criteria. A failed decision readback does
+  not retract a decision that was already durably recorded.
+- Resume guidance follows the accepted source-run recovery operation; watch
+  deadlines use a sleep-aware clock.
 
-- `orcho_run_diagnose` / `orcho_run_resume` no longer point a terminal recovery
-  run at a source resume that core's launch preflight refuses. When the source
-  had a finalized `scheduled_gate_ledger.json` (closed at every runner-side
-  `run.end`), the `recover_via_source_run` response carried a `ready_call`
-  `orcho_run_resume(source)` that then failed with "same-run resume is
-  blocked: parent has a finalized scheduled-gate ledger". Core now derives
-  source resumability from that same preflight; when the source cannot be
-  resumed in place but preflight accepts a `from_run_plan` launch off its
-  persisted plan, the condition stays `recover_via_source_run` with
-  `recommended_next_action='plan_artifact_continuation'` and the `ready_call`
-  becomes `orcho_run_start(from_run_plan=<source>)` on both the diagnose and
-  resume surfaces. Requires the matching `orcho-core` change.
+### Known Notes
 
-- The plan slice's `allowed_modifications` read the durable plan artifact's
-  top level, but the artifact is an `{"artifact_version", "plan"}` envelope, so
-  the globs were always empty against a real run. It now reads the inner plan
-  body; per-task `acceptance_refs` come from the public core SDK plan summary.
+- Reconciliation has the same legacy-discovery limitations as the core SDK:
+  without a delivery ledger, a commit found only on a retained worktree branch
+  may be undiscoverable. Passing a commit does not bypass discovery.
+- General handoff waivers and review-context limitations in core final
+  acceptance also apply to runs controlled through MCP.
 
 ## 0.8.2 - 2026-08-29
 

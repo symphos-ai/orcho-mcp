@@ -109,10 +109,17 @@ async def test_retry_replay_resume_and_settlement_readback(
     # original durable decision artifact untouched before the fresh run.
     assert decision_paths[0].read_bytes() == persisted_decision
 
-    # No transport/watch is retained here; durable readback must still settle.
+    # Pipeline completion precedes process reaping. Allow the supervisor to
+    # finish without retaining a transport/watch or triggering another read API.
     run_dir = Path(started.run_dir)
-    mcp = json.loads((run_dir / "mcp_supervisor.json").read_text(encoding="utf-8"))
-    core = json.loads((run_dir / "run_supervisor.json").read_text(encoding="utf-8"))
+    deadline = time.monotonic() + 15
+    while True:
+        mcp = json.loads((run_dir / "mcp_supervisor.json").read_text(encoding="utf-8"))
+        core = json.loads((run_dir / "run_supervisor.json").read_text(encoding="utf-8"))
+        if mcp["status"] == core["status"] == "done":
+            break
+        assert time.monotonic() < deadline, (mcp, core)
+        await asyncio.sleep(0.1)
     assert (mcp["run_id"], mcp["pid"], mcp["status"]) == (
         core["run_id"], core["pid"], core["status"],
     )
