@@ -134,6 +134,29 @@ def test_recover_skips_runs_in_terminal_state(fake_workspace):
     assert orphaned == []
 
 
+@pytest.mark.parametrize("pipeline_status", [
+    "awaiting_phase_handoff", "done", "failed", "halted", "interrupted",
+])
+def test_recover_preserves_settled_pipeline_with_stale_running_launch(
+    fake_workspace, pipeline_status,
+):
+    run_dir = fake_workspace / "runspace/runs/20260916_settled"
+    run_dir.mkdir()
+    supervisor = run_dir / "mcp_supervisor.json"
+    supervisor.write_text(json.dumps({
+        "run_id": run_dir.name, "pid": 99999999, "status": "running",
+    }))
+    meta = run_dir / "meta.json"
+    meta.write_text(json.dumps({"run_id": run_dir.name, "status": pipeline_status}))
+    before = (supervisor.read_bytes(), meta.read_bytes())
+
+    assert RunsSupervisor().recover() == []
+    assert RunsSupervisor().recover() == []
+    assert (supervisor.read_bytes(), meta.read_bytes()) == before
+    assert not (run_dir / "events.jsonl").exists()
+    assert not (run_dir / "run_supervisor.json").exists()
+
+
 @pytest.fixture
 def anyio_backend():
     return "asyncio"

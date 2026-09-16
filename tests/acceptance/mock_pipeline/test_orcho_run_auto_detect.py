@@ -19,6 +19,7 @@ Mock mode is fully hermetic — no real provider CLI calls fire. Marked
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 
 import pytest
@@ -153,6 +154,14 @@ async def test_orcho_run_auto_detect_surfaces_topology_for_wire_signal(mock_proj
     from orcho_mcp.supervisor import RunsSupervisor
     from orcho_mcp.tools import orcho_run_status
 
+    # Topology phrases belong to workspace configuration, not package defaults.
+    config = mock_project.parent / ".orcho/config.json"
+    config.parent.mkdir(parents=True, exist_ok=True)
+    config.write_text(json.dumps({
+        "pipeline": {"auto_detect": {"topology_signals": {
+            "wire format": ["orcho-core", "orcho-mcp"],
+        }}},
+    }), encoding="utf-8")
     sup = RunsSupervisor()
     handle = await sup.spawn(
         task=(
