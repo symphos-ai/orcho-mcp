@@ -75,6 +75,7 @@ DOMAIN_TEST_EXEMPTIONS: dict[str, str] = {
 FLAT_MODULE_TEST_MAP: dict[str, str] = {
     "client_interactions.py": "client",
     "prompts.py": "prompts",
+    "tool_argument_guard.py": "tool_arguments",
     "onboarding.py": "prompts",
     "workflows.py": "workflows",
     "workspace_state.py": "workspace_state",

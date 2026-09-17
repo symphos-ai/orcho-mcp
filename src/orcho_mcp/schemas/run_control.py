@@ -16,6 +16,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from orcho_mcp.schemas.criteria import CriterionReadinessField, omit_absent_keys
 from orcho_mcp.schemas.shared import (
     ContinuationSubjectLiteral,
     NextActionRecord,
@@ -34,6 +35,9 @@ DiagnosisRecommendedNextActionLiteral = Literal[
     "plan_artifact_continuation",
     "stop_unknown",
     "inspect_or_cancel",
+    # ADR 0191: record an unrecorded delivery commit (CLI ``orcho
+    # reconcile-delivery``) before anything resumes.
+    "reconcile_delivery",
 ]
 
 
@@ -193,10 +197,14 @@ class ResumeBlockedResult(BaseModel):
       child and the single ``ready_call`` next action resumes the child
       instead of this parent.
     - ``recover_via_source_run`` — this run is a terminal / rejected recovery
-      run, but durable lineage points at a *resumable source* run that still
-      owns the retained checkpoint / worktree. ``recommended_run_id`` is that
-      source and the single ``ready_call`` next action resumes the source
-      instead of spawning a no-op resume against this inert run.
+      run whose durable lineage points at a *source* run. ``recommended_run_id``
+      is that source and the single ``ready_call`` next action is the
+      via-source operation core's launch preflight accepts: ``orcho_run_resume``
+      on the source when its checkpoint resume passes preflight, or
+      ``orcho_run_start(from_run_plan=<source>)`` when preflight refuses a
+      same-run resume of the source (e.g. a finalized scheduled-gate ledger)
+      but accepts a fresh launch off its persisted plan artifact. Never a
+      no-op resume against this inert run.
     """
 
     kind: Literal["resume_blocked"] = "resume_blocked"
@@ -206,6 +214,7 @@ class ResumeBlockedResult(BaseModel):
         "superseded_by_child",
         "recover_via_source_run",
         "preflight_blocked",
+        "delivery_inconsistent",
     ] = Field(
         description="Typed reason the resume was refused before spawning.",
     )
@@ -225,7 +234,9 @@ class ResumeBlockedResult(BaseModel):
         default=None,
         description="The run to resume instead of this one: the active "
                     "follow-up child for ``superseded_by_child``, or the "
-                    "resumable source run for ``recover_via_source_run``. "
+                    "source run for ``recover_via_source_run`` (the resume "
+                    "target, or the ``from_run_plan`` parent when the source "
+                    "cannot be resumed in place). "
                     "``None`` for ``rejected_terminal`` (a terminal run with "
                     "no resumable lineage subject has no resume target).",
     )
@@ -236,7 +247,9 @@ class ResumeBlockedResult(BaseModel):
         default_factory=list,
         description="Typed follow-up calls — every record is a ``ready_call`` "
                     "carrying all required args: resume-the-child for "
-                    "``superseded_by_child``, read-only inspection "
+                    "``superseded_by_child``, resume-the-source or "
+                    "``orcho_run_start(from_run_plan=<source>)`` for "
+                    "``recover_via_source_run``, read-only inspection "
                     "(``orcho_run_status`` / ``orcho_run_evidence``) for "
                     "``rejected_terminal``. Never a resume of a terminal run.",
     )
@@ -370,6 +383,48 @@ class InspectOnlyControlResult(BaseModel):
                     "``orcho_run_status`` and a ``ready_call`` to "
                     "``orcho_run_evidence`` (``slice='errors'``). Never an "
                     "external/CLI tool and never a resume of this run.",
+    )
+
+
+class UnknownArgumentsResult(BaseModel):
+    """Typed refusal payload for a tool call carrying argument names the tool
+    does not declare.
+
+    An MCP client that invents or misspells an argument (``project`` for
+    ``project_dir``, ``run_ib`` for ``run_id``) otherwise gets silent coercion:
+    the SDK's generated argument model ignores extra keys, so the call runs with
+    the *misspelled* value dropped and every declared default in force —
+    ``orcho_run_start`` would start a run against the server's own working
+    directory. The refusal lands BEFORE dispatch, so nothing is started, spawned,
+    or written.
+
+    ``accepted_arguments`` is taken from the tool's published
+    ``inputSchema.properties``, in schema order — exactly the list the caller can
+    already see in ``tools/list``, so the correction needs no second round-trip.
+    ``unknown_arguments`` is sorted for a stable message.
+
+    Like :class:`InspectOnlyControlResult` this model is *delivered* as an
+    ``isError`` result rather than returned from a tool body, so it is not part
+    of any tool's success union and never appears in the published schema
+    catalog.
+    """
+
+    kind: Literal["unknown_arguments"] = "unknown_arguments"
+    tool: str = Field(
+        description="Name of the tool that was called, as sent by the client.",
+    )
+    unknown_arguments: list[str] = Field(
+        description="Argument names the client sent that the tool does not "
+                    "declare, sorted alphabetically.",
+    )
+    accepted_arguments: list[str] = Field(
+        description="Every argument name the tool declares, in the order they "
+                    "appear in its published ``inputSchema.properties``. Empty "
+                    "when the tool takes no arguments.",
+    )
+    message: str = Field(
+        description="One-line operator-facing explanation: the tool, the "
+                    "unknown names, the accepted names, and that nothing ran.",
     )
 
 
@@ -711,9 +766,13 @@ class RunDiagnosis(BaseModel):
       release_blockers are NOT authoritative, resume is inert, and the
       superseding child rides in ``recommended_run_id``.
     - ``recover_via_source_run`` — this run is a terminal / rejected recovery
-      run, but durable lineage points at a *resumable source* run; resume the
-      source (``recommended_run_id``), NOT a fresh ``from_run_plan`` against
-      this inert run.
+      run whose durable lineage points at a *source* run
+      (``recommended_run_id``); continue via the source, NOT via this inert
+      run. ``recommended_next_action`` says which via-source operation core's
+      launch preflight accepts: ``resume_source_run`` (resume the source's
+      checkpoint) or ``plan_artifact_continuation`` (the source cannot be
+      resumed in place — e.g. a finalized scheduled-gate ledger — so start a
+      new run with ``from_run_plan=<source>``).
     - ``resume_inert_terminal`` — terminal (terminal success or a terminal
       halt reason); resuming is inert, so only inspection is offered. The
       typed ``continuation_subject`` / ``recommended_next_action`` still
@@ -766,6 +825,7 @@ class RunDiagnosis(BaseModel):
         "superseded_by_child",
         "blocked_worktree",
         "provider_pressure",
+        "delivery_inconsistent",
         "halted",
         "failed",
         "interrupted",
@@ -820,6 +880,14 @@ class RunDiagnosis(BaseModel):
         description="For ``needs_decision``, the phase-handoff decision verbs "
                     "the runtime published (``continue`` / ``retry_feedback`` "
                     "/ ``halt`` / ``continue_with_waiver``). Empty otherwise.",
+    )
+    pending_human_criteria: list[str] = Field(
+        default_factory=list,
+        description="``human`` acceptance criteria still awaiting an operator "
+                    "verdict on a paused run (``needs_decision``). Record each "
+                    "with orcho_criterion_decide before orcho_run_resume, so "
+                    "final acceptance sees them. Mirrors core "
+                    "``RunDiagnosis.pending_human_criteria``.",
     )
     decision_recorded: bool = Field(
         default=False,
@@ -880,6 +948,10 @@ class RunDiagnosis(BaseModel):
                     "``mcp_supervisor.json`` exists). ``None`` when ``control`` "
                     "is ``None``.",
     )
+    criterion_readiness: CriterionReadinessField = None
+
+    # Absent key, not a null field — see ``RunStatus.criterion_readiness``.
+    _omit = omit_absent_keys("criterion_readiness")
 
 
 __all__ = [
@@ -896,4 +968,5 @@ __all__ = [
     "RunStartedResult",
     "TypedRunResult",
     "TypedRunStartedResult",
+    "UnknownArgumentsResult",
 ]

@@ -54,7 +54,11 @@ from orcho_mcp.observe.live_status import build_run_live_status
 from orcho_mcp.observe.summary import build_run_events_summary
 from orcho_mcp.observe.watch import watch_run
 from orcho_mcp.run_control.advice import request_advice
+from orcho_mcp.run_control.criterion_decision import (
+    decide_criterion_with_elicitation,
+)
 from orcho_mcp.run_control.delivery import decide_delivery
+from orcho_mcp.run_control.delivery_reconcile import reconcile_delivery_record
 from orcho_mcp.run_control.handoff import decide_phase_handoff_with_elicitation
 from orcho_mcp.run_control.lifecycle import (
     cancel_run,
@@ -71,8 +75,11 @@ from orcho_mcp.schemas import (
     CorrectionExitResult,
     CorrectionFollowupStartedResult,
     CorrectionOperatorInputRequiredResult,
+    CriterionDecisionInputRequiredResult,
+    CriterionDecisionRecordedResult,
     DeliveryDecideResult,
     DeliveryGateProjection,
+    DeliveryReconcileResult,
     EventsTailResult,
     EvidenceResult,
     HandoffAdviceResult,
@@ -621,6 +628,9 @@ def orcho_run_live_status(run_id: str) -> RunLiveStatusCard:
     - ``stalled`` — core detected an over-budget startup without durable
       progress; inspect / diagnose it and, only when MCP owns control, cancel
       it. Do not resume or watch it as an active run.
+    - ``running_gate`` — executing a verification command, including between
+      phases; ``active_gate`` carries identity, timestamps and bounded stdout/stderr.
+      Output appears when the child flushes; silence is not a health verdict.
     - ``running_phase`` — executing a phase, no subtask in flight
       (``current_phase`` set).
     - ``running_subtask`` — executing a ``subtask_dag`` subtask
@@ -673,6 +683,9 @@ async def orcho_run_watch(
     ctx: Context | None = None,
 ) -> RunWatchResult:
     """Long-poll a run until something meaningful happens.
+
+    ``until="next_event"`` also wakes on durable gate progress before command
+    completion. Reconnect with the returned sequence cursor.
 
     Holds the MCP request open until the chosen ``until`` condition fires
     or ``timeout_s`` expires. Designed to replace manual re-polling of
@@ -918,6 +931,12 @@ async def orcho_run_start(
     ``session_mode`` controls implement → repair_changes provider-session
     continuation: ``"auto"`` (default), ``"stateless"``, ``"chain"``, or
     ``"hybrid"``.
+    ``max_rounds`` caps **only** the implement → review_changes →
+    repair_changes loop (omitted → engine default 1). It does not budget
+    planning: the plan / validate_plan loop's cap comes from the active
+    profile's ``LoopStep.max_rounds`` and is not settable per run, so a
+    run started with ``max_rounds=4`` on a profile declaring 2 plan
+    rounds still stops planning after round 2.
 
     Pause semantics are driven by each phase's declared ``handoff``
     policy in the active profile (e.g. ``feature`` declares
@@ -1283,6 +1302,105 @@ async def orcho_phase_handoff_decide(
 
 
 @mcp.tool()
+async def orcho_criterion_decide(
+    run_id: str,
+    criterion_id: str,
+    decision: Literal["accept", "reject"] | None = None,
+    note: str | None = None,
+    actor: str | None = None,
+    ctx: Context | None = None,
+) -> CriterionDecisionRecordedResult | CriterionDecisionInputRequiredResult:
+    """Record an operator's verdict on one ``human`` acceptance criterion.
+
+    A ``human`` criterion (ADR 0188) is satisfied by exactly one thing: a
+    person exercised it and said so. This tool is how that verdict becomes
+    durable proof. Read the criterion first with ``orcho_run_evidence``
+    ``slice="criterion_matrix"`` — its ``method.instructions`` say what the
+    operator must actually do, and the row's ``state`` says whether it is
+    still ``pending``.
+
+    **Never decide on the operator's behalf.** Do not infer ``accept`` from a
+    passing test, a reviewer finding, a transcript line, a phase-handoff
+    decision, or an approving remark in chat. If you do not hold an explicit
+    human verdict, call this tool WITHOUT ``decision``:
+
+      - a client that supports MCP form elicitation is asked natively for
+        ``decision`` (required, ``accept`` | ``reject``) and an optional
+        ``note``; a cancelled form records nothing;
+      - a client without that capability gets
+        ``outcome="operator_input_required"`` carrying the exact missing-input
+        schema and a ready-call to replay. Nothing is written. Ask the human,
+        then call again with ``decision``.
+
+    Everything else belongs to orcho-core and is validated BEFORE any write:
+    the criterion must exist in this run's accepted plan, its class must be
+    ``human``, the run must be the one named, and the append-only decision log
+    must accept the record. An unknown criterion, a non-human criterion, a
+    wrong-run decision, and a conflicting/duplicate decision all fail with
+    ``InvalidPlanError`` and leave the durable artifact byte-identical.
+
+    On success the response carries the durable decision record (including the
+    ``decision_id`` a matrix ``proof_ref`` cites) and the criterion matrix as
+    it stands AFTER the write, so the readiness transition is visible without
+    a second call.
+
+    Args:
+        run_id: the run whose plan declares the criterion.
+        criterion_id: the plan criterion ID (e.g. ``"C3"``).
+        decision: the operator's verdict. Omit ONLY to reach the
+            elicitation / operator-input path described above.
+        note: optional operator rationale, recorded verbatim.
+        actor: optional operator identity, recorded verbatim.
+
+    Errors:
+      - RunNotFoundError — unknown run_id.
+      - InvalidPlanError — unknown / non-human criterion, wrong run, invalid
+        payload, conflicting decision, or a core build without the criterion
+        SDK. Nothing is written in any of these cases.
+    """
+    return await decide_criterion_with_elicitation(
+        run_id, criterion_id, decision=decision, note=note, actor=actor, ctx=ctx,
+    )
+
+
+@mcp.tool()
+def orcho_reconcile_delivery(
+    run_id: str,
+    operator: str,
+    commit: str | None = None,
+    note: str | None = None,
+    workspace: str | None = None,
+    runs_dir: str | None = None,
+) -> DeliveryReconcileResult:
+    """Record an existing commit as this run's delivery through the core SDK.
+
+    Use when ``orcho_run_diagnose`` recommends ``reconcile_delivery`` or an
+    operator has delivered the run manually. The operator must have verified
+    that the existing commit belongs to this run. Core discovers the commit
+    and records its delivery with operator attribution and reconciled
+    provenance. A rejected release retains its verdict and delivery override;
+    this records delivery without approving that release.
+
+    Args:
+        run_id: run whose delivery needs recording.
+        operator: identity of the operator recording the delivery.
+        commit: optional SHA or unique prefix of the commit verified by the
+            operator; must match the commit discovered by core.
+        note: optional operator rationale, recorded by core.
+        workspace: optional workspace path for SDK run lookup.
+        runs_dir: optional runs directory for SDK run lookup.
+
+    Refusals return ``accepted=False`` with ``blocker`` equal to
+    ``no_delivery_commit_found``, ``already_recorded``, ``commit_mismatch``,
+    or ``commit_unreadable``. No git mutation is performed.
+    """
+    return reconcile_delivery_record(
+        run_id, operator=operator, commit=commit, note=note,
+        workspace=workspace, runs_dir=runs_dir,
+    )
+
+
+@mcp.tool()
 def orcho_handoff_advice(
     run_id: str,
     handoff_id: str | None = None,
@@ -1381,7 +1499,10 @@ def orcho_run_evidence(
     ``slice``:
       - ``"all"`` (default) — every slice populated in one response.
       - ``"plan"`` — plan summary only, including the plan's declared
-        ``allowed_modifications`` globs (from the durable plan artifact).
+        ``allowed_modifications`` globs (from the durable plan artifact) and
+        the ADR 0188 typed ``acceptance_criteria`` (stable ``id``, ``verify``
+        class, and complete ``gate_refs`` / ``human_instructions``) plus the
+        per-task ``task_acceptance_refs`` that point at them by ID.
       - ``"findings"`` — flattened findings list (filterable). Each finding
         carries an ``advisory`` flag: the latest non-approved ``validate_plan``
         attempt's findings, forwarded into a successful whole-plan implement,
@@ -1455,6 +1576,37 @@ def orcho_run_evidence(
         verification receipts behind an approved gate-rerun child live in the
         ``verification_timeline`` (``inherited`` + per-gate ``source_run_id``)
         and ``receipts`` slices, not here.
+      - ``"criterion_decisions"`` — the run's append-only human-criterion
+        decision log (ADR 0188) in durable write order. Each record carries
+        the ``decision_id`` a matrix ``human_decision`` proof ref cites, the
+        ``criterion_id``, the operator's ``accept`` / ``reject``, core's
+        canonical ``recorded_at`` timestamp (opaque — do not reparse it), and
+        the optional ``note`` / ``actor`` / ``supersedes`` when they were
+        used (the key is absent, never ``null``, when they were not). Read
+        this to answer "who accepted this, when, and on what grounds?"
+        without re-deciding; ``[]`` for a run with no recorded decisions.
+      - ``"criterion_matrix"`` — the ADR 0188 criterion matrix: one row per
+        plan acceptance criterion, in plan order, with the criterion's
+        ``intent`` / ``verify`` class, the ``executors`` that own it, a
+        discriminated ``method`` (``gates`` with full ``(command, hook,
+        phase)`` gate identities / ``inspection`` / ``manual`` with the
+        operator instructions), the ``proof_refs`` that support it
+        (``receipt`` / ``finding`` / ``claim`` / ``human_decision``), its
+        ``state``, ``reason``, and whether it is ``blocking``; plus the
+        ``summary`` (``total`` / ``blocking_open`` / ``ready`` /
+        ``counts_by_state`` / ``pending_human_ids``).
+
+        Trust discipline: only a fresh official gate receipt makes an
+        ``executable`` row ``proven``, and only a typed human decision
+        (``orcho_criterion_decide``) makes a ``human`` row ``accepted``. An
+        ``agent_assertion`` row is at most ``advisory`` — a developer claim, a
+        reviewer finding, a transcript command, or a command-name-only match
+        is NEVER proof. These states come from orcho-core; nothing here is
+        recomputed by the MCP server, so do not second-guess or re-derive them.
+
+        The key is OMITTED (never ``null``) for a run with no criterion
+        contract; a new-format plan that declares no criteria is present with
+        ``rows: []`` and the zeroed summary.
       - ``"correction"`` — the ADR 0098 correction fixed-point outcome:
         ``non_converging`` (an operator-decision condition — the captain may
         stop), the ``repeated`` blockers, ``parent_run_id`` / ``child_run_id``,
@@ -1561,6 +1713,11 @@ def orcho_run_diagnose(run_id: str) -> RunDiagnosis:
         must record a phase-handoff decision before it can resume.
       - ``resume_inert_terminal`` — terminal (terminal success or a terminal
         halt reason); resuming is inert, so only inspection is suggested.
+      - ``delivery_inconsistent`` — the target checkout carries a delivery
+        commit the run does not record (it stopped between the commit and
+        its audit, or predates the delivery ledger). Never resume: ``reason``
+        names the sha and the ``orcho reconcile-delivery`` command that
+        records it (``recommended_next_action='reconcile_delivery'``).
       - ``superseded_by_child`` — a newer unfinished follow-up child is
         continuing this run; resume the child (``recommended_run_id``), not
         this parent.
@@ -1686,6 +1843,8 @@ __all__ = [
     "orcho_run_resume",
     "orcho_run_cancel",
     "orcho_phase_handoff_decide",
+    "orcho_criterion_decide",
+    "orcho_reconcile_delivery",
     "orcho_handoff_advice",
     "orcho_delivery_decide",
     "orcho_run_evidence",

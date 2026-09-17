@@ -12,10 +12,21 @@ When the MCP request carries a ``progressToken``, ordered
 FastMCP no-ops ``ctx.report_progress`` when no progressToken is set —
 this module just passes ``ctx`` through, never reaches into
 ``ctx.request_context.meta``.
+
+Deadline clock: the timeout is measured with ``_watch_now``, not the
+event loop's ``loop.time()``. ``loop.time()`` is ``time.monotonic()``,
+which on macOS is ``mach_absolute_time()`` and does not advance while
+the machine sleeps, so a watch spanning a lid-close would hold the
+request open for the whole sleep and outlive the client's idle timeout.
+``_watch_now`` picks a clock that keeps counting through system sleep
+(see its docstring); ``asyncio.sleep`` remains the poll cadence, so the
+first iteration after wake observes the expired deadline and returns.
 """
 from __future__ import annotations
 
 import asyncio
+import sys
+import time
 from pathlib import Path
 from typing import Literal
 
@@ -48,6 +59,25 @@ _WATCH_UNTIL_CHOICES = {
     "next_event", "phase_change", "subtask", "handoff_or_terminal", "terminal",
 }
 _WATCH_PROGRESS_MESSAGE_MAX = 200
+
+
+def _watch_now() -> float:
+    """Seconds on a clock that keeps advancing while the system sleeps.
+
+    Used only for the ``watch_run`` deadline. ``time.monotonic()`` (and
+    therefore ``loop.time()``) is ``mach_absolute_time()`` on macOS, which
+    pauses during sleep; Apple's ``CLOCK_MONOTONIC`` is the one that counts
+    through sleep there. On Linux ``CLOCK_MONOTONIC`` pauses instead and
+    ``CLOCK_BOOTTIME`` is the sleep-inclusive clock. Elsewhere fall back to
+    wall-clock ``time.time()``: a rare NTP step is a smaller failure than a
+    deadline that never arrives.
+    """
+    if sys.platform == "darwin":
+        return time.clock_gettime(time.CLOCK_MONOTONIC)
+    boottime = getattr(time, "CLOCK_BOOTTIME", None)
+    if boottime is not None:
+        return time.clock_gettime(boottime)
+    return time.time()
 
 
 def _current_phase_at_seq(run_dir: Path, seq: int) -> str | None:
@@ -340,8 +370,8 @@ async def watch_run(
     # Resolve once up front so RunNotFoundError surfaces immediately.
     run_dir = find_run_dir(run_id)
 
-    loop = asyncio.get_running_loop()
-    deadline = loop.time() + timeout_s
+    # Sleep-aware clock, not ``loop.time()`` — see module docstring.
+    deadline = _watch_now() + timeout_s
 
     # Baseline phase must come from the event stream *up to since_seq*,
     # not from the initial summary's ``current_phase`` (which is computed
@@ -371,7 +401,7 @@ async def watch_run(
             want_summary=summary, interaction_client=interaction_client,
         )
 
-    while loop.time() < deadline:
+    while _watch_now() < deadline:
         await asyncio.sleep(_WATCH_POLL_INTERVAL_S)
         snap = _watch_take_snapshot(run_id, run_dir, since_seq)
 

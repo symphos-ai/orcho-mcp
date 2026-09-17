@@ -188,7 +188,7 @@ The closed MCP diagnosis conditions are:
 | `needs_delivery_decision` | Inspect and resolve the delivery gate. |
 | `correction_followup_required` | Collect explicit correction follow-up input; a repeated in-gate `fix` is inert. |
 | `closed_by_followup` | The parent is settled; inspect the successful child. |
-| `recover_via_source_run` | Resume the source run named by `recommended_run_id`. |
+| `recover_via_source_run` | Continue via the source run named by `recommended_run_id`: resume it (`resume_source_run`), or start a new `from_run_plan` run off its plan (`plan_artifact_continuation`) when core's launch preflight refuses the source resume. |
 | `resume_inert_terminal` | Do not resume this run; inspect or follow its typed continuation subject. |
 | `superseded_by_child` | Resume the active child instead of the parent. |
 | `blocked_worktree` | Recover the known parent subject or stop for read-only diagnosis. |

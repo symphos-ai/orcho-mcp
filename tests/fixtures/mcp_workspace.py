@@ -147,6 +147,7 @@ def write_run(
     diff_patch: str | None = None,
     parsed_plan: dict | None = None,
     parsed_plan_text: str | None = None,
+    scheduled_gate_ledger: dict | None = None,
 ) -> Path:
     """Create ``<workspace>/runspace/runs/<run_id>/`` with the supplied artefacts.
 
@@ -158,9 +159,13 @@ def write_run(
     ``commit_decision`` writes the durable
     ``commit_decisions/<safe_run_id>.json`` audit artifact; ``diff_patch``
     writes the run-level ``diff.patch`` (pass a corrupt body to exercise the
-    degraded path). ``parsed_plan`` writes the durable ``parsed_plan.json``
-    artifact (and ``parsed_plan_text`` writes a raw, possibly-corrupt body
-    verbatim). All default to absent so a test can omit a secondary artifact
+    degraded path). ``scheduled_gate_ledger`` writes the durable
+    ``scheduled_gate_ledger.json`` verbatim (see :func:`finalized_gate_ledger`
+    for the closed shape finalization leaves at ``run.end``).
+    ``parsed_plan`` writes the durable ``parsed_plan.json``
+    artifact, wrapping a bare plan body in the ``artifact_version`` envelope
+    so it stays loadable by core (``parsed_plan_text`` writes a raw,
+    possibly-corrupt body verbatim). All default to absent so a test can omit a secondary artifact
     to exercise the missing-artifact diagnostics.
     """
     run_dir = workspace / "runspace" / "runs" / run_id
@@ -190,14 +195,41 @@ def write_run(
     if diff_patch is not None:
         (run_dir / "diff.patch").write_text(diff_patch, encoding="utf-8")
     if parsed_plan is not None:
+        # The durable artifact is the ``{"artifact_version": 1, "plan": {...}}``
+        # envelope, and core's reader is strict about it (ADR 0188 treats an
+        # unreadable plan as a blocking integrity gap, not as "no plan"). A
+        # test that passes a bare plan body gets it wrapped here, so a fixture
+        # written for one field is still a *loadable* artifact; a test
+        # exercising a corrupt envelope passes the envelope explicitly or uses
+        # ``parsed_plan_text``.
+        body = (
+            parsed_plan
+            if "artifact_version" in parsed_plan
+            else {"artifact_version": 1, "plan": parsed_plan}
+        )
         (run_dir / "parsed_plan.json").write_text(
-            json.dumps(parsed_plan), encoding="utf-8",
+            json.dumps(body), encoding="utf-8",
         )
     if parsed_plan_text is not None:
         (run_dir / "parsed_plan.json").write_text(
             parsed_plan_text, encoding="utf-8",
         )
+    if scheduled_gate_ledger is not None:
+        (run_dir / "scheduled_gate_ledger.json").write_text(
+            json.dumps(scheduled_gate_ledger), encoding="utf-8",
+        )
     return run_dir
+
+
+def finalized_gate_ledger() -> dict[str, Any]:
+    """The closed ``scheduled_gate_ledger.json`` finalization writes at ``run.end``.
+
+    An empty finalized ledger (schema 2, no rows, no trail) is exactly what
+    core's strict loader accepts and what makes its launch preflight refuse a
+    same-run resume of the run ("same-run resume is blocked: parent has a
+    finalized scheduled-gate ledger").
+    """
+    return {"schema_version": "2", "finalized": True, "rows": [], "trail": []}
 
 
 # ── Scenario builders ───────────────────────────────────────────────────────
@@ -235,6 +267,73 @@ def meta(
         "task": task,
         "project": project,
         "profile": profile,
+    }
+    out.update(extra)
+    return out
+
+
+def criterion_plan(
+    *,
+    short_summary: str = "s",
+    planning_context: str = "pc",
+    goal: str = "Ship the change",
+    criteria: list[dict[str, Any]] | None = None,
+    tasks: list[dict[str, Any]] | None = None,
+    **extra: Any,
+) -> dict[str, Any]:
+    """Build an ADR 0188 plan body carrying all three verification classes.
+
+    The default plan declares one criterion per class — ``C1`` executable
+    (with a complete ``(command, hook, phase)`` gate identity), ``C2``
+    agent_assertion, ``C3`` human — and one task that owns the two
+    machine-checkable ones. That is the smallest plan a criterion-matrix read
+    can be interesting on, and it validates against core's plan schema.
+
+    Pass ``criteria`` / ``tasks`` to shape a different contract; ``criteria=[]``
+    with a task that declares no refs gives the explicit-empty-matrix case.
+    Feed the result to ``write_run(parsed_plan=...)``, which adds the durable
+    artifact envelope.
+    """
+    if criteria is None:
+        criteria = [
+            {
+                "id": "C1",
+                "intent": "The regression suite proves the change",
+                "verify": "executable",
+                "gate_refs": [
+                    {"command": "unit", "hook": "after_phase", "phase": "implement"},
+                ],
+            },
+            {
+                "id": "C2",
+                "intent": "The public explanation reads without internal context",
+                "verify": "agent_assertion",
+            },
+            {
+                "id": "C3",
+                "intent": "The operator accepts the end-to-end journey",
+                "verify": "human",
+                "human_instructions": (
+                    "Exercise the journey once and record accept or reject."
+                ),
+            },
+        ]
+    if tasks is None:
+        tasks = [{
+            "id": "T1",
+            "goal": "Implement and cover the change",
+            "acceptance_refs": [
+                c["id"] for c in criteria if c["verify"] != "human"
+            ],
+        }]
+    out: dict[str, Any] = {
+        "short_summary": short_summary,
+        "planning_context": planning_context,
+        "goal": goal,
+        # ADR 0188 presence marker: an explicit empty list is a new-format
+        # criterion contract whose matrix has zero rows, not a legacy plan.
+        "acceptance_criteria": criteria,
+        "tasks": tasks,
     }
     out.update(extra)
     return out
@@ -437,6 +536,7 @@ def diff_patch_text(*paths: str) -> str:
 
 __all__ = [
     "commit_decision",
+    "criterion_plan",
     "commit_delivery",
     "diff_patch_text",
     "event",

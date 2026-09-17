@@ -2,6 +2,56 @@
 
 ## Unreleased
 
+## 0.10.0 - 2026-09-17
+
+The MCP server exposes criterion evidence and recoverable delivery from
+`orcho-core` 0.10.0 through a consistent operator surface.
+
+### Added
+
+- Criterion evidence matrices, human-decision history, and shared readiness
+  summaries in evidence, status, diagnosis, and delivery inspection.
+- `orcho_criterion_decide` records explicit acceptance or rejection of a human
+  criterion; missing decisions are requested through supported elicitation or
+  returned as required operator input without writing a decision.
+- Live verification progress and diagnosis of unrecorded delivery commits.
+- `orcho_reconcile_delivery` records an existing delivery through the core SDK.
+  SDK refusals remain structured results, and duplicate recording is handled
+  by the engine's existing contract.
+
+### Changed
+
+- Requires `orcho-core>=0.10.0,<0.11`. Upgrade both packages together and restart
+  the server before using the new contract.
+- Plan acceptance criteria are typed objects rather than strings.
+- `delivery_committed` distinguishes `null` (unknown) from `false` (recorded
+  as not committed). Clients must preserve this distinction.
+- Blocking criteria shape the suggested next action. Pending human criteria
+  are named before resume, and a blocked delivery is not offered as a ready call.
+
+### Fixed
+
+- Unknown tool argument names are rejected before dispatch rather than silently
+  ignored; the error names accepted parameters so callers can correct the call.
+- Core exit code `3` is recorded as an intentional halt with its original cause.
+- Producer-parked delivery gates expose their available decisions instead of
+  suggesting a resume that would only park the run again.
+- Evidence preserves engine-bound criteria. A failed decision readback does
+  not retract a decision that was already durably recorded.
+- Resume guidance follows the accepted source-run recovery operation; watch
+  deadlines use a sleep-aware clock.
+- Fresh stdio clients preserve the engine's waiver, review, repair, and
+  operator-decision context without synthesizing missing evidence.
+- Startup recovery treats settled pipeline metadata as authoritative when an
+  earlier server exited before mirroring its subprocess state. Completed and
+  paused runs are no longer falsely marked orphaned.
+
+### Known Notes
+
+- Reconciliation has the same legacy-discovery limitations as the core SDK:
+  without a delivery ledger, a commit found only on a retained worktree branch
+  may be undiscoverable. Passing a commit does not bypass discovery.
+
 ## 0.8.2 - 2026-08-29
 
 Two defects that made a paused or abandoned run unreadable from the client

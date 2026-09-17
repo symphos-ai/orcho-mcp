@@ -503,11 +503,15 @@ def test_tool_handler_delegates_to_adapter(
 def test_pilot_drives_real_mock_pipeline_end_to_end(
     tmp_path: Path,
     capsys: pytest.CaptureFixture,
+    fake_workspace: Path,
 ) -> None:
-    """End-to-end: no monkeypatch, ``MockAgentProvider`` drives the
+    """End-to-end: no seam is patched, ``MockAgentProvider`` drives the
     real ``run_project_pipeline`` through the pilot adapter. Proves
     the whole boundary works in a real call, not just at the unit
-    seam.
+    seam. ``fake_workspace`` pins ``ORCHO_WORKSPACE`` to an empty tree:
+    the real pipeline reads the workspace config, and an ambient
+    workspace whose ``commit.decision_mode`` is ``defer`` parks the run
+    (``halted``) instead of finishing ``done``.
 
     Pinned contract:
       * ``capsys.out == "" and capsys.err == ""`` — SILENT in

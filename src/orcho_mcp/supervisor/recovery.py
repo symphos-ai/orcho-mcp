@@ -26,7 +26,12 @@ from orcho_mcp.errors import WorkspaceNotResolvedError
 from orcho_mcp.supervisor.handle import RunHandle
 from orcho_mcp.supervisor.paths import resolve_runs_dir
 from orcho_mcp.supervisor.process import is_pid_alive
-from orcho_mcp.supervisor.state import read_state, settle_launch
+from orcho_mcp.supervisor.state import (
+    meta_status_is_terminal,
+    read_meta_status,
+    read_state,
+    settle_launch,
+)
 
 if TYPE_CHECKING:
     from orcho_mcp.supervisor.manager import RunsSupervisor
@@ -75,6 +80,10 @@ def recover(sup: RunsSupervisor) -> list[str]:
         pid = int(state.get("pid", 0))
         if is_pid_alive(pid):
             # Still running under some other supervisor instance — leave alone.
+            continue
+        # The server may exit before its reaper mirrors a settled pipeline.
+        # Pipeline metadata remains authoritative over stale launch state.
+        if meta_status_is_terminal(entry) or read_meta_status(entry) == "awaiting_phase_handoff":
             continue
 
         handle = RunHandle(

@@ -31,7 +31,7 @@ version: [docs.orcho.dev](https://docs.orcho.dev/start/let-your-agent-drive/).</
 > - **Observe**: ``orcho_run_status`` answers "What is happening / what should I do next?"; ``orcho_run_history`` and ``orcho_run_events_tail`` are read-only, polling-friendly context.
 > - **Route**: ``orcho_run_diagnose`` and ``orcho_workspace_pending_decisions`` classify the continuation subject and visible decision work.
 > - **Decision support**: ``orcho_handoff_advice`` / ``orcho_delivery_gate`` explain sanctioned choices without applying them.
-> - **Decide**: ``orcho_phase_handoff_decide`` resolves runtime-published phase-handoff actions; ``orcho_delivery_gate`` / ``orcho_delivery_decide`` expose and resolve post-release delivery or correction. Decision tools never invent actions and never spawn a pipeline process.
+> - **Decide**: ``orcho_phase_handoff_decide`` resolves runtime-published phase-handoff actions; ``orcho_delivery_gate`` / ``orcho_delivery_decide`` expose and resolve post-release delivery or correction; ``orcho_criterion_decide`` records an operator's accept/reject on a human acceptance criterion. Decision tools never invent actions, never infer a verdict from conversation, and never spawn a pipeline process.
 > - **Inspect**: ``orcho_run_evidence`` answers "What happened / what proves it?"; ``orcho_run_diff`` answers "What changed?"
 > - **Measure**: ``orcho_run_metrics`` answers "How much did it consume?" with tokens, duration, phase breakdown, and cost-reference fields when available.
 > - **Reclaim**: ``orcho_workspace_cleanup_report`` previews what retained checkouts could be freed and what is protected; ``orcho_workspace_cleanup_reclaim`` acts only on a selection the operator confirmed.
@@ -162,7 +162,7 @@ Tool naming is consistent: every run-lifecycle tool is `orcho_run_<verb>`. State
 | **Observe** | `orcho_run_status`, `orcho_run_live_status`, `orcho_run_watch`, `orcho_run_events_summary`, `orcho_run_events_tail`, `orcho_run_history` |
 | **Route** | `orcho_run_diagnose`, `orcho_workspace_pending_decisions` |
 | **Decision support** | `orcho_handoff_advice`, `orcho_delivery_gate` |
-| **Decide** | `orcho_phase_handoff_decide`, `orcho_delivery_decide` |
+| **Decide** | `orcho_phase_handoff_decide`, `orcho_delivery_decide`, `orcho_criterion_decide` |
 | **Inspect** | `orcho_run_evidence`, `orcho_run_diff` |
 | **Measure** | `orcho_run_metrics` |
 | **Reclaim** | `orcho_workspace_cleanup_report`, `orcho_workspace_cleanup_reclaim` |

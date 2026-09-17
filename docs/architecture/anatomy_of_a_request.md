@@ -94,7 +94,11 @@ client/stdin →  │ FastMCP stdio loop              │
 Step by step:
 
 1. **Frame arrives.** FastMCP unpacks the JSON-RPC `tools/call`
-   request and looks up the registered handler.
+   request and looks up the registered handler. Before anything is
+   dispatched into `tools.py`, the `CallToolRequest` wrapper in
+   `tool_error_delivery.py` matches the incoming argument keys against
+   the tool's published `inputSchema.properties` and returns a
+   structured `isError` result for any key the tool does not declare.
 2. **Adapter dispatch.** The `@mcp.tool` handler in
    `src/orcho_mcp/tools.py` is a one-line shim that imports and
    delegates to `services/run_reads.py`. The thin-body contract is

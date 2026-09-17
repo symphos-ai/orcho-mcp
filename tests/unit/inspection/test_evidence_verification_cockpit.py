@@ -58,7 +58,14 @@ def test_cockpit_and_timeline_share_one_sdk_read_and_wire_record(monkeypatch) ->
     from sdk import ErrorsAndHalt, PlanSummary
 
     import orcho_mcp.inspection.evidence as evidence
+    import orcho_mcp.services.criterion_projection as criterion_projection
 
+    monkeypatch.setattr(
+        criterion_projection, "_sdk_get_criterion_matrix", lambda *a, **k: None,
+    )
+    monkeypatch.setattr(
+        criterion_projection, "_sdk_list_criterion_decisions", lambda *a, **k: [],
+    )
     monkeypatch.setattr(
         evidence,
         "_sdk_get_plan_summary",
@@ -70,6 +77,7 @@ def test_cockpit_and_timeline_share_one_sdk_read_and_wire_record(monkeypatch) ->
             has_contract=False,
             goal="",
             acceptance_criteria=(),
+            task_acceptance_refs=(),
             owned_files=(),
             commands_to_run=(),
             risks=(),

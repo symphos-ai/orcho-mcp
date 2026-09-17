@@ -95,6 +95,35 @@ async def test_reap_awaiting_plan_for_rc_4(fake_workspace):
 
 
 @pytest.mark.asyncio
+async def test_reap_halted_for_rc_3(fake_workspace):
+    # orcho-core exits 3 for a deliberate halt (parked delivery gate, operator
+    # halt, rejected release). It is not a crash: no abnormal_exit reason —
+    # meta.halt_reason, written by the pipeline, carries the cause.
+    run_dir = fake_workspace / "runspace" / "runs" / "reap_halted"
+    run_dir.mkdir()
+
+    proc = _spawn_fake_child([sys.executable, "-c", "import sys; sys.exit(3)"], run_dir)
+    sup = RunsSupervisor()
+    handle = RunHandle(
+        run_id="reap_halted",
+        pid=proc.pid,
+        pgid=proc.pid,
+        run_dir=run_dir,
+        project_dir=str(run_dir),
+        command=["fake"],
+        started_at="t",
+        popen=proc,
+    )
+    write_state(handle)
+    await sup._reap(handle)
+
+    assert handle.exit_code == 3
+    assert handle.status == "halted"
+    assert handle.halt_reason is None
+    assert read_launch_state(run_dir)["status"] == "halted"
+
+
+@pytest.mark.asyncio
 async def test_reap_failed_for_other_rc(fake_workspace):
     run_dir = fake_workspace / "runspace" / "runs" / "reap_fail"
     run_dir.mkdir()

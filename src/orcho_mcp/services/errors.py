@@ -16,6 +16,8 @@ Two surfaces:
   * ``NoWorkspace``            → ``WorkspaceNotResolvedError(str(e))``
   * ``InvalidPhaseHandoffState`` → ``InvalidPlanError(str(e))``
   * ``CrossExecutionGraphInvalid`` → ``InvalidPlanError(str(e))``
+  * ``CriterionDecisionRejected`` → ``InvalidPlanError(str(e))``
+  * ``EvidenceInvalid``          → ``InvalidPlanError(str(e))``
   * ``ValueError``             → ``InvalidPlanError(str(e))``
 
   Wrap only the SDK call itself, never the post-success domain checks
@@ -44,6 +46,17 @@ from sdk import (
     NoWorkspace as _SDKNoWorkspace,
     RunNotFound as _SDKRunNotFound,
 )
+
+# ADR 0188 is newer than the rest of the SDK error surface, so the criterion
+# rejection type is imported defensively: a version-skewed core that predates
+# it must not break this module (which every tool imports). The sentinel is a
+# private local class that nothing raises, so the ``except`` arm stays valid
+# and simply never fires against an older core.
+try:
+    from sdk import CriterionDecisionRejected as _SDKCriterionDecisionRejected
+except ImportError:  # pragma: no cover - exercised by the stale-core unit test
+    class _SDKCriterionDecisionRejected(Exception):
+        """Never raised; placeholder for a core predating ADR 0188."""
 
 from orcho_mcp.errors import (
     InvalidPlanError,
@@ -78,6 +91,17 @@ def map_sdk_errors(run_id: str | None = None) -> Iterator[None]:
     except _SDKCrossExecutionGraphInvalid as e:
         # A graph artifact that exists but cannot be decoded/validated is a
         # bad durable plan contract, never optional status enrichment.
+        raise InvalidPlanError(str(e)) from e
+    except _SDKCriterionDecisionRejected as e:
+        # ADR 0188 admission failure raised by the durable decision writer
+        # BEFORE any write: unknown / non-human criterion, wrong run, invalid
+        # payload, or a stale / branched supersession. The artifact is
+        # unchanged, so this is a bad request, not a missing run.
+        raise InvalidPlanError(str(e)) from e
+    except _SDKEvidenceInvalid as e:
+        # A criterion authority that exists but cannot be decoded is a bad
+        # durable plan/evidence contract. It must not degrade to an absent
+        # matrix, which would let readiness-dependent actions fail open.
         raise InvalidPlanError(str(e)) from e
     except ValueError as e:
         # SDK-side input validation (bad action / severity / phase,
