@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-## 0.10.0 - 2026-09-15
+## 0.10.0 - 2026-09-17
 
 The MCP server exposes criterion evidence and recoverable delivery from
 `orcho-core` 0.10.0 through a consistent operator surface.
@@ -40,14 +40,17 @@ The MCP server exposes criterion evidence and recoverable delivery from
   not retract a decision that was already durably recorded.
 - Resume guidance follows the accepted source-run recovery operation; watch
   deadlines use a sleep-aware clock.
+- Fresh stdio clients preserve the engine's waiver, review, repair, and
+  operator-decision context without synthesizing missing evidence.
+- Startup recovery treats settled pipeline metadata as authoritative when an
+  earlier server exited before mirroring its subprocess state. Completed and
+  paused runs are no longer falsely marked orphaned.
 
 ### Known Notes
 
 - Reconciliation has the same legacy-discovery limitations as the core SDK:
   without a delivery ledger, a commit found only on a retained worktree branch
   may be undiscoverable. Passing a commit does not bypass discovery.
-- General handoff waivers and review-context limitations in core final
-  acceptance also apply to runs controlled through MCP.
 
 ## 0.8.2 - 2026-08-29
 
