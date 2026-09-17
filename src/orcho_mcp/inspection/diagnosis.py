@@ -23,6 +23,10 @@ when a parent is the resume target it rides as the ``run_id`` arg of
 from __future__ import annotations
 
 from orcho_mcp.schemas import NextActionRecord, RecoveryLineage, RunDiagnosis
+from orcho_mcp.services.criterion_projection import (
+    gate_actions_on_criteria,
+    read_criterion_readiness,
+)
 from orcho_mcp.services.run_projection import (
     ProviderPressureProjection,
     RunDiagnosisProjection,
@@ -271,18 +275,44 @@ def _delivery_gate_actions(
 
 
 def _recover_via_source_actions(
-    run_id: str, source_run_id: str | None,
+    run_id: str,
+    source_run_id: str | None,
+    recommended_next_action: str | None,
 ) -> list[NextActionRecord]:
-    """Typed actions for a terminal recovery run with a resumable source.
+    """Typed actions for a terminal recovery run that continues via its source.
 
-    The single deterministic step is ``orcho_run_resume(run_id=<source>)`` —
-    the inspected terminal run is explicitly NOT the continuation subject, so
-    the resume target is the source checkpoint. Read-only inspection of the
-    inert run rides alongside. When the source is somehow unknown the response
-    degrades to inspection only (never a resume of the terminal run).
+    The inspected terminal run is explicitly NOT the continuation subject. Core
+    has already asked the canonical launch preflight which via-source operation
+    the source accepts, and the single deterministic step mirrors it:
+    ``orcho_run_resume(run_id=<source>)`` for ``resume_source_run``, or
+    ``orcho_run_start(from_run_plan=<source>)`` for
+    ``plan_artifact_continuation`` (preflight refuses a same-run resume of the
+    source — e.g. its scheduled-gate ledger was finalized — but accepts a
+    fresh launch off its persisted plan). Read-only inspection of the inert run
+    rides alongside. When the source is somehow unknown the response degrades
+    to inspection only (never a resume of the terminal run).
     """
     if not source_run_id:
         return [_status_action(run_id), _evidence_errors_action(run_id)]
+    if recommended_next_action == "plan_artifact_continuation":
+        return [
+            NextActionRecord(
+                intent=(
+                    f"Start a NEW implementation run from source run "
+                    f"{source_run_id}'s persisted plan artifact. The inspected "
+                    f"terminal run {run_id} is NOT the continuation subject, and "
+                    f"{source_run_id} cannot be resumed in place (core "
+                    "continuation preflight refuses a same-run resume of it). "
+                    "from_run_plan means 'implement this plan from scratch', "
+                    "NOT 'finish a retained diff or checkpoint'."
+                ),
+                tool="orcho_run_start",
+                args={"from_run_plan": source_run_id, "profile": "feature"},
+                optional=False,
+                kind="ready_call",
+            ),
+            _status_action(run_id),
+        ]
     return [
         _resume_action(
             source_run_id,
@@ -427,9 +457,16 @@ def _resolve_next_actions(
         # This precedes every legacy continuation special case.
         return cond, _stalled_actions(proj)
 
+    # A halted delivery gate core classified as decidable NOW (the producer's
+    # own ``commit_delivery_pending`` park: ``action=none`` / ``pending``, ADR
+    # 0175 addendum) is a delivery decision, not a resume — fall through to the
+    # ``needs_delivery_decision`` branch. Only a gate core did not resolve as
+    # decidable (an in-flight resolved-but-unapplied record, a scope block)
+    # keeps the resume-first route.
     if (
         proj.status == "halted"
         and proj.halt_reason in _DELIVERY_GATE_RESUME_REASONS
+        and cond != "needs_delivery_decision"
     ):
         return cond, [
             _resume_action(
@@ -515,7 +552,28 @@ def _resolve_next_actions(
         return cond, [_status_action(run_id)]
 
     if cond == "recover_via_source_run":
-        return cond, _recover_via_source_actions(run_id, proj.recommended_run_id)
+        return cond, _recover_via_source_actions(
+            run_id, proj.recommended_run_id, proj.recommended_next_action,
+        )
+
+    if cond == "delivery_inconsistent":
+        # ADR 0191 — Git carries a delivery commit the run does not record.
+        # Read-only follow-ups only: the recording step is an operator CLI
+        # action (``orcho reconcile-delivery``) that needs a verified sha, and
+        # a resume would reason about a delivery that already happened.
+        return cond, [
+            NextActionRecord(
+                intent=(
+                    "Inspect the run's delivery evidence before recording the "
+                    "commit named in `reason` with `orcho reconcile-delivery`."
+                ),
+                tool="orcho_run_evidence",
+                args={"run_id": run_id, "slice": "delivery"},
+                optional=True,
+                kind="ready_call",
+            ),
+            _status_action(run_id),
+        ]
 
     if cond == "resume_inert_terminal":
         # Terminal run — never a resume of THIS run. The lineage subject still
@@ -523,7 +581,9 @@ def _resolve_next_actions(
         # implementation) and a stop/unknown dead-end (read-only, no
         # from_run_plan) from a plain inspection-only terminal.
         if proj.recommended_next_action == "plan_artifact_continuation":
-            return cond, _plan_artifact_continuation_actions(run_id)
+            return cond, _plan_artifact_continuation_actions(
+                proj.recommended_run_id or run_id,
+            )
         if proj.recommended_next_action == "stop_unknown":
             return cond, _stop_unknown_actions(run_id, list(proj.missing_facts))
         # Clean terminal-success / no recovery subject — inspection only.
@@ -611,6 +671,9 @@ def inspect_run_diagnosis(run_id: str) -> RunDiagnosis:
     """
     proj = project_run_diagnosis(run_id)
     condition, next_actions = _resolve_next_actions(proj)
+    # Same single criterion projection path as status / delivery / the
+    # evidence matrix slice; never a second derivation of readiness.
+    criterion_readiness = read_criterion_readiness(run_id)
     reason = proj.reason
     provider_pressure = None
 
@@ -629,16 +692,25 @@ def inspect_run_diagnosis(run_id: str) -> RunDiagnosis:
         status=proj.status,
         recommended_run_id=proj.recommended_run_id,
         available_actions=list(proj.available_actions),
+        pending_human_criteria=list(
+            getattr(proj, "pending_human_criteria", []) or []
+        ),
         decision_recorded=proj.decision_artifact_exists,
         decision_state=proj.decision_state,
         decision_degraded_reason=proj.decision_degraded_reason,
-        next_actions=next_actions,
+        # Routed through the shared criterion-aware gate, so a run diagnosed
+        # as resumable still leads with the criterion only an operator can
+        # clear.
+        next_actions=gate_actions_on_criteria(
+            run_id, next_actions, criterion_readiness,
+        ),
         continuation_subject=proj.continuation_subject,
         recommended_next_action=proj.recommended_next_action,
         recovery_lineage=_recovery_lineage_wire(proj),
         provider_pressure=provider_pressure,
         control=proj.control,
         control_reason=proj.control_reason,
+        criterion_readiness=criterion_readiness,
     )
 
 

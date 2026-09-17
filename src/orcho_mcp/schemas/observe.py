@@ -874,6 +874,15 @@ class RunLiveHandoff(BaseModel):
     )
     decision_state: Literal["recorded", "missing", "degraded"] = "missing"
     decision_degraded_reason: str | None = None
+    pending_human_criteria: list[str] = Field(
+        default_factory=list,
+        description="``human`` acceptance criteria still awaiting an operator "
+                    "verdict. Record each with orcho_criterion_decide BEFORE "
+                    "orcho_run_resume so final acceptance reads a ready matrix "
+                    "instead of rejecting into a correction follow-up. Empty "
+                    "when the run has no accepted plan or no open human "
+                    "criteria.",
+    )
 
 
 class RunLiveTerminal(BaseModel):
@@ -917,12 +926,19 @@ class RunLiveTerminal(BaseModel):
                     "success status while final_acceptance is REJECTED). "
                     "Empty for a coherent terminal card.",
     )
-    delivery_committed: bool = Field(
-        default=False,
+    delivery_committed: bool | None = Field(
+        default=None,
         description="True when the run's Orcho-managed delivery already landed "
                     "in the target checkout (a ``committed`` / "
-                    "``applied_uncommitted`` delivery). ``False`` when no "
-                    "delivery landed or the run carries no delivery block.",
+                    "``applied_uncommitted`` delivery). ``False`` when the run "
+                    "records that no delivery landed (a non-delivered block, "
+                    "or a clean terminal with no delivery). ``None`` when the "
+                    "answer is unknown: the run stopped on a failure terminal "
+                    "before recording a delivery block, or the target checkout "
+                    "carries a delivery commit the run does not record "
+                    "(``inconsistencies`` then lists "
+                    "``delivery_commit_unrecorded``; ``orcho_run_diagnose`` "
+                    "names the commit).",
     )
     delivery_published: bool = Field(
         default=False,
@@ -935,6 +951,25 @@ class RunLiveTerminal(BaseModel):
                     "when the delivery was published; ``None`` when no pull "
                     "request was opened.",
     )
+
+
+class RunLiveGateProgress(BaseModel):
+    """Observed output of one active gate invocation; no process-health verdict."""
+
+    command: str
+    hook: str
+    phase: str
+    invocation_id: str
+    started_at: str
+    observed_at: str
+    elapsed_s: float
+    last_output_at: str | None
+    stdout_tail: str = Field(max_length=2000)
+    stderr_tail: str = Field(max_length=2000)
+    has_output: bool
+    execution_state: Literal["running", "settled"]
+    exit_code: int | None
+    outcome: str | None
 
 
 class RunLiveStatusCard(BaseModel):
@@ -954,6 +989,7 @@ class RunLiveStatusCard(BaseModel):
     - ``stalled`` — core diagnosed an over-budget startup with no durable
       progress; inspect it and, when MCP owns the run, cancel it rather than
       resuming or watching it as active;
+    - ``running_gate`` — an active verification command, including between phases;
     - ``running_phase`` — executing a phase, no subtask in flight;
     - ``running_subtask`` — executing a ``subtask_dag`` subtask
       (``current_subtask`` carries index/total/goal/state);
@@ -976,6 +1012,7 @@ class RunLiveStatusCard(BaseModel):
         "starting",
         "stalled",
         "running_phase",
+        "running_gate",
         "running_subtask",
         "awaiting_handoff",
         "terminal_success",
@@ -995,6 +1032,12 @@ class RunLiveStatusCard(BaseModel):
         description="Live progress coordinate for the in-flight "
                     "subtask_dag subtask (index/total/goal/state), or "
                     "``None`` when no subtask is currently running.",
+    )
+    active_gate: RunLiveGateProgress | None = Field(
+        default=None,
+        description="Active verification command, including between phases. "
+                    "Bounded output is visible after the child flushes its pipes; "
+                    "absent after settlement. Timestamps do not assert health.",
     )
     last_activity: RunLiveActivity | None = Field(
         default=None,
@@ -1059,6 +1102,7 @@ __all__ = [
     "RunLiveActivity",
     "RunLiveHandoff",
     "RunLiveStatusCard",
+    "RunLiveGateProgress",
     "RunLiveTerminal",
     "RunWatchResult",
     "WatchTrigger",

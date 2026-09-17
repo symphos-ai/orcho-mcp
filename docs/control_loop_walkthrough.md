@@ -310,6 +310,8 @@ for f in result.findings:
 | `scope_expansion` | scope-expansion audit — classification, category, evidence, has_blocker flag |
 | `delivery` | post-release commit-delivery outcome — release_verdict, decision_status, action, applied/committed/skipped/failed, commit_sha, published_commit_sha, halt_reason |
 | `correction` | correction fixed-point outcome — non_converging, repeated blockers, parent/child run_ids, suggested_actions |
+| `criterion_decisions` | the run's append-only human-criterion decision log in durable write order — `decision_id` (what a matrix `human_decision` proof ref cites), `criterion_id`, the verdict, core's opaque `recorded_at`, plus `note` / `actor` / `supersedes` when used (absent, never `null`, when not). `[]` for a run with no decisions. |
+| `criterion_matrix` | ADR 0188 criterion matrix — one row per plan acceptance criterion (id, intent, verification class, executors, discriminated proof method, proof refs, state, reason, blocking) plus the summary (`total`, `blocking_open`, `ready`, `counts_by_state`, `pending_human_ids`). The key is **omitted** for a run with no criterion contract; a plan with no criteria carries an explicit empty matrix. |
 | `all` (default) | every slice in one response |
 
 ---

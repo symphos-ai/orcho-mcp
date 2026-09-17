@@ -2,19 +2,18 @@
 from __future__ import annotations
 
 import json
-import os
-import sys
 
 import anyio
 import pytest
 
 pytest.importorskip("mcp.client.stdio")
 
-from mcp import ClientSession, StdioServerParameters, types  # noqa: E402
+from mcp import ClientSession, types  # noqa: E402
 from mcp.client.stdio import stdio_client  # noqa: E402
 from pydantic import AnyUrl  # noqa: E402
 
 from tests.fixtures.mcp_workspace import event, meta, write_run  # noqa: E402
+from tests.fixtures.stdio import _build_server_params  # noqa: E402
 
 
 @pytest.mark.anyio
@@ -37,11 +36,10 @@ async def test_resource_subscribe_emits_update_when_resource_changes(fake_worksp
             notifications.append(str(message.root.params.uri))
             updated.set()
 
-    params = StdioServerParameters(
-        command=sys.executable,
-        args=["-m", "orcho_mcp"],
-        env={**os.environ, "ORCHO_WORKSPACE": str(fake_workspace)},
-    )
+    # Shared L3 plumbing: it pins the subprocess PYTHONPATH to THIS checkout
+    # (and the paired core), so the spawned server is the source under test
+    # rather than whatever ``orcho_mcp`` the bare interpreter can import.
+    params = _build_server_params(fake_workspace)
     async with stdio_client(params) as (read, write), ClientSession(
         read,
         write,

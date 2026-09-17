@@ -17,6 +17,9 @@ Module layout:
   ``authoring``    orcho_plan_validate / orcho_prompts_resolve.
   ``run_control``  orcho_run_start / resume / cancel / phase_handoff_decide.
   ``inspection``   orcho_run_evidence / orcho_run_diff.
+  ``criteria``     ADR 0188 typed acceptance criteria: plan criteria, the
+                   criterion matrix, typed human decisions, and
+                   orcho_criterion_decide.
 
 This ``__init__`` re-exports every model from the family modules so
 existing callers (``from orcho_mcp.schemas import RunStatus``,
@@ -33,6 +36,23 @@ from orcho_mcp.schemas.authoring import (
     PromptResolveResult,
     SubTaskRecord,
 )
+from orcho_mcp.schemas.criteria import (
+    CriterionDecisionInputRequiredResult,
+    CriterionDecisionRecordedResult,
+    CriterionGateRefRecord,
+    CriterionMatrixRecord,
+    CriterionMatrixSummaryRecord,
+    CriterionMethodGates,
+    CriterionMethodInspection,
+    CriterionMethodManual,
+    CriterionProofRefRecord,
+    CriterionReadinessField,
+    CriterionRowRecord,
+    HumanCriterionDecisionRecord,
+    PlanCriterionRecord,
+    TaskAcceptanceRefsRecord,
+)
+from orcho_mcp.schemas.delivery_reconcile import DeliveryReconcileResult
 from orcho_mcp.schemas.inspection import (
     CorrectionSliceRecord,
     CriterionReportRecord,
@@ -129,6 +149,7 @@ from orcho_mcp.schemas.run_control import (
     RuntimeOverrideArg,
     TypedRunResult,
     TypedRunStartedResult,
+    UnknownArgumentsResult,
 )
 from orcho_mcp.schemas.shared import (
     ContinuationSubjectLiteral,
@@ -157,6 +178,7 @@ from orcho_mcp.schemas.workspace import (
 )
 
 __all__ = [
+    "DeliveryReconcileResult",
     # shared
     "ContinuationSubjectLiteral",
     "CorrectionExitResult",
@@ -239,6 +261,22 @@ __all__ = [
     "RuntimeOverrideArg",
     "TypedRunResult",
     "TypedRunStartedResult",
+    "UnknownArgumentsResult",
+    # criteria (ADR 0188)
+    "CriterionDecisionInputRequiredResult",
+    "CriterionDecisionRecordedResult",
+    "CriterionGateRefRecord",
+    "CriterionMatrixRecord",
+    "CriterionMatrixSummaryRecord",
+    "CriterionMethodGates",
+    "CriterionMethodInspection",
+    "CriterionMethodManual",
+    "CriterionProofRefRecord",
+    "CriterionReadinessField",
+    "CriterionRowRecord",
+    "HumanCriterionDecisionRecord",
+    "PlanCriterionRecord",
+    "TaskAcceptanceRefsRecord",
     # inspection
     "CorrectionSliceRecord",
     "CriterionReportRecord",

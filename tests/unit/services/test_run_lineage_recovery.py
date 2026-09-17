@@ -8,7 +8,11 @@ synthetic ``meta.json`` fixtures (no log scraping, no SDK pipeline):
 
 - Case A — a terminal / rejected recovery child pointing (via ``parent_run_id``
   or ``plan_source_run_id``) at a resumable source recommends resuming the
-  *source*, never a fresh ``from_run_plan``;
+  *source*, never a fresh ``from_run_plan``; "resumable" is exactly what
+  core's launch preflight accepts as a same-run checkpoint resume, so a source
+  whose scheduled-gate ledger was finalized at ``run.end`` is NOT resumable —
+  with its plan persisted the child is routed to a fresh ``from_run_plan`` run
+  off the source instead (Case A′);
 - Case B — an active follow-up child supersedes the inspected run;
 - Case C — a plan-only / research run with a persisted plan recommends a fresh
   implementation run from the plan artifact;
@@ -29,7 +33,12 @@ from orcho_mcp.services.run_lineage import (
     RecommendedNextAction,
     project_recovery_lineage,
 )
-from tests.fixtures.mcp_workspace import meta, supervisor_state, write_run
+from tests.fixtures.mcp_workspace import (
+    finalized_gate_ledger,
+    meta,
+    supervisor_state,
+    write_run,
+)
 
 _RETAINED_WORKTREE = {"isolation": "worktree", "path": "/tmp/wt/source"}
 # Minimal durable parsed_plan.json body — a plan-only subject requires the
@@ -147,6 +156,68 @@ def test_case_a_terminal_source_is_not_resumable_falls_to_unknown(fake_workspace
     assert rec.continuation_subject == ContinuationSubject.UNKNOWN
     assert rec.recommended_next_action == RecommendedNextAction.STOP_UNKNOWN
     # The source pointer is still reported for diagnostics, but not resumable.
+    assert rec.source_run_id == "20260101_000001"
+    assert rec.source_resumable is False
+    assert "no source/parent run id" in rec.missing_facts
+
+
+# ── Case A′ — source refused by launch preflight, plan launchable ─────────────
+
+
+def _recovery_child(source_run_id: str = "20260101_000001"):
+    return meta(
+        status="halted", project="/p/x", task="recovery",
+        halt_reason="phase_handoff_halt",
+        resume_mode="followup", parent_run_id=source_run_id,
+    )
+
+
+def test_case_a_prime_finalized_source_ledger_routes_to_from_run_plan(fake_workspace):
+    # Field shape: a checkpoint-looking source (failed, retained worktree,
+    # persisted plan) whose scheduled-gate ledger was finalized at run.end.
+    # Core's launch preflight refuses "resume the source" for it, so the
+    # projection must not recommend that dead resume; the durable exit is a NEW
+    # from_run_plan run off the source's plan artifact.
+    write_run(
+        fake_workspace, "20260101_000001",
+        meta=_source_failed_with_worktree(plan_source="local"),
+        parsed_plan=_PARSED_PLAN,
+        scheduled_gate_ledger=finalized_gate_ledger(),
+    )
+    write_run(fake_workspace, "20260101_000002", meta=_recovery_child())
+
+    rec = project_recovery_lineage("20260101_000002")
+
+    assert rec.is_terminal_or_rejected is True
+    assert rec.continuation_subject == ContinuationSubject.PLAN_ARTIFACT
+    assert rec.recommended_next_action == RecommendedNextAction.PLAN_ARTIFACT_CONTINUATION
+    assert rec.recommended_run_id == "20260101_000001"
+    assert rec.source_run_id == "20260101_000001"
+    assert rec.source_status == "failed"
+    assert rec.source_resumable is False
+    # Reported facts stay reported; they no longer decide resumability.
+    assert rec.source_worktree_preserved is True
+    assert rec.missing_facts == []
+    assert "finalized scheduled-gate ledger" in rec.reason
+    assert "from_run_plan=20260101_000001" in rec.reason
+
+
+def test_case_a_prime_finalized_source_ledger_without_plan_is_unknown(fake_workspace):
+    # Same refused source, no persisted plan: neither via-source operation
+    # passes preflight, so the child stops as an explicit unknown rather than
+    # being pointed at a resume the launcher would refuse.
+    write_run(
+        fake_workspace, "20260101_000001",
+        meta=_source_failed_with_worktree(),
+        scheduled_gate_ledger=finalized_gate_ledger(),
+    )
+    write_run(fake_workspace, "20260101_000002", meta=_recovery_child())
+
+    rec = project_recovery_lineage("20260101_000002")
+
+    assert rec.continuation_subject == ContinuationSubject.UNKNOWN
+    assert rec.recommended_next_action == RecommendedNextAction.STOP_UNKNOWN
+    assert rec.recommended_run_id is None
     assert rec.source_run_id == "20260101_000001"
     assert rec.source_resumable is False
     assert "no source/parent run id" in rec.missing_facts

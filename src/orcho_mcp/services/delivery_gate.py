@@ -33,6 +33,10 @@ from orcho_mcp.schemas import (
     NextActionRecord,
 )
 from orcho_mcp.schemas.inspection import PrIntentRecord
+from orcho_mcp.services.criterion_projection import (
+    gate_actions_on_criteria,
+    read_criterion_readiness,
+)
 from orcho_mcp.services.errors import map_sdk_errors
 from orcho_mcp.services.run_artifacts import (
     get_run_commit_decision_raw,
@@ -497,7 +501,30 @@ def project_delivery_gate(run_id: str) -> DeliveryGateProjection:
     and action availability, then enriches the projection from durable
     artifacts (``meta.json``, ``commit_decisions``, ``diff.patch``). Secondary
     artifact failures degrade the diff summary but never hide a decidable gate.
+
+    Thin facade over :func:`_project_delivery_gate_state`, which owns the gate
+    classification and its several early returns. Attaching the ADR 0188
+    criterion readiness here — once, on the way out — is what keeps the
+    delivery view agreeing with status / diagnose / the evidence matrix slice
+    without threading the same read through every branch.
     """
+    gate = _project_delivery_gate_state(run_id)
+    readiness = read_criterion_readiness(run_id)
+    if readiness is None:
+        return gate
+    return gate.model_copy(update={
+        "criterion_readiness": readiness,
+        # An open blocking criterion is core's release gap, so a shipping
+        # ready_call must not sit beside it unqualified. The shared gate leads
+        # with the criterion decision and demotes the delivery calls.
+        "next_actions": gate_actions_on_criteria(
+            run_id, list(gate.next_actions), readiness,
+        ),
+    })
+
+
+def _project_delivery_gate_state(run_id: str) -> DeliveryGateProjection:
+    """Classify the gate itself — kind, actions, diff, delivery facts."""
     with map_sdk_errors(run_id):
         state = _sdk_delivery_decision_state(run_id, cwd=None)
 
@@ -709,11 +736,14 @@ class DeliveryDisposition(NamedTuple):
     status, the SAME set that classifies a ``delivery_completed`` gate),
     whether it opened a pull request (``published``), and that PR's live
     ``pr_url``. All defaults are the empty disposition so a run with no
-    delivery reads ``(False, False, None)``.
+    delivery reads ``(False, False, None)``. ``has_record`` (ADR 0191) says
+    whether a ``commit_delivery`` block exists at all, so a terminal card can
+    tell a recorded absence from an unknown (a run that died before recording).
     """
     committed: bool = False
     published: bool = False
     pr_url: str | None = None
+    has_record: bool = False
 
 
 def delivery_disposition(run_id: str) -> DeliveryDisposition:
@@ -740,6 +770,7 @@ def delivery_disposition(run_id: str) -> DeliveryDisposition:
     pr_url = _extract_pr_url(cd)
     return DeliveryDisposition(
         committed=committed, published=bool(pr_url), pr_url=pr_url,
+        has_record=cd is not None,
     )
 
 

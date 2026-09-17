@@ -14,6 +14,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from orcho_mcp.schemas.criteria import CriterionReadinessField, omit_absent_keys
 from orcho_mcp.schemas.observe import CurrentSubtaskRecord
 from orcho_mcp.schemas.shared import (
     ContinuationSubjectLiteral,
@@ -642,6 +643,12 @@ class RunStatus(BaseModel):
             "progress prefer ``orcho_run_live_status``."
         ),
     )
+    criterion_readiness: CriterionReadinessField = None
+
+    # Absent key, not a null field: a run predating ADR 0188 (or one with no
+    # accepted plan) has no criterion contract at all, and ``null`` would read
+    # as "readiness unknown" rather than "no criteria declared".
+    _omit = omit_absent_keys("criterion_readiness")
 
 
 # ── orcho_run_metrics ────────────────────────────────────────────────────────

@@ -21,6 +21,7 @@ This file is the **layout map**, not the methodology guide.
 | `src/orcho_mcp/workspace_state.py` | `tests/unit/workspace_state/` | flat module |
 | `src/orcho_mcp/prompts.py` + `src/orcho_mcp/onboarding.py` | `tests/unit/prompts/` | grouped — prompts/onboarding registration tested together |
 | `src/orcho_mcp/client_interactions.py` | `tests/unit/client/` | flat module |
+| `src/orcho_mcp/tool_argument_guard.py` | `tests/unit/tool_arguments/` | flat module — driven through the registered `CallToolRequest` handler, not the pure helpers |
 | `src/orcho_mcp/tools.py` | covered indirectly via per-domain test dirs above plus `tests/unit/architecture/` boundary tests | `tools.py` is a thin adapter; its business logic lives in the per-domain services |
 
 ## Cross-cutting suites

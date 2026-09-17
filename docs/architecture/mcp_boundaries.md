@@ -133,6 +133,152 @@ Enforced by `tests/unit/architecture/test_no_direct_run_state.py`
 `supervisor` forbidden edges in
 `tests/unit/architecture/test_import_graph.py`.
 
+## Criterion projection (ADR 0188 — single source, five surfaces)
+
+A run's acceptance criteria are a *traceability contract*: each criterion has
+a stable id, exactly one verification class (`executable` / `agent_assertion` /
+`human`), and a row in the criterion matrix stating what proves it and whether
+it blocks release.
+
+**orcho-core owns all of it.** Criterion identity, the verification classes,
+the state algebra, receipt freshness, gate selection, executors, blocking
+consequences, readiness, and the durable human-decision log are core's. MCP
+projects those facts onto the wire and adds nothing.
+
+`services/criterion_projection.py` is the single projection path. It is the
+ONLY module that imports the criterion SDK slice, and every surface reads
+through it:
+
+| Surface | What it shows | Source |
+| --- | --- | --- |
+| `orcho_run_evidence` `slice="plan"` | typed criteria + per-task `acceptance_refs` | `project_plan_criteria` / `project_task_acceptance_refs`, both fed by ONE `sdk.get_plan_summary` read |
+| `orcho_run_evidence` `slice="criterion_matrix"` | rows + summary | `project_criterion_matrix` |
+| `orcho_run_evidence` `slice="criterion_decisions"` | the durable decision log | `list_human_decisions` |
+| `orcho_run_status` | `criterion_readiness` | `read_criterion_readiness` |
+| `orcho_run_diagnose` | `criterion_readiness` | `read_criterion_readiness` |
+| `orcho_delivery_gate` | `criterion_readiness` | `read_criterion_readiness` |
+| `orcho_criterion_decide` | the durable decision + the matrix after it | `record_human_decision` + `project_criterion_matrix` |
+
+Sharing one read is what makes those surfaces agree about blockers by
+construction rather than by convention.
+
+### Absent is not empty, and never `null`
+
+Three shapes are distinct and must stay distinct end to end:
+
+- **absent** — a run predating the contract, or with no accepted plan. The SDK
+  returns `None`; the wire OMITS the key. Same for `criterion_readiness`.
+- **explicit empty** — a new-format plan declaring no criteria. Present, with
+  `rows: []` and the zeroed summary (`ready: true`).
+- **populated** — rows in plan order.
+
+`null` is never emitted for any of them. `schemas/criteria.py` carries the two
+halves of that rule: `non_nullable_optional` (the JSON Schema policy, so the
+published contract does not advertise `null`) and `omit_absent_keys` (the dump
+policy, so the serializer does not produce one). The same pair governs an
+unused `note` / `actor` / `supersedes` on a human decision.
+
+`counts_by_state` is a closed contract: keys are the known `CriterionState`
+values, counts are positive (only *present* states appear), and the key order
+is **data** — core's canonical state order, validated rather than trusted,
+because a dict that round-trips every value in a different order has silently
+lost the one meaning it carries.
+`recorded_at` is core's canonical RFC 3339 UTC string, carried opaquely and
+never reparsed.
+
+### One projection, one next action
+
+Agreeing on the readiness *number* is not enough. A snapshot that reports
+`ready: false` beside a ready-to-forward "ship" call tells a captain two
+contradictory things, and the captain will believe the actionable one.
+`gate_actions_on_criteria` is therefore the single criterion-aware action
+projection all three surfaces route through:
+
+- the pending `orcho_criterion_decide` call comes **first** — it is the only
+  call that can clear the blocker;
+- whenever `ready` is false, a shipping `ready_call`
+  (`orcho_delivery_decide`) is **demoted** to `operator_input_required` with
+  `blocking_open`, state counts, and any pending human ids in `context`, never
+  deleted. This includes failed/missing executable proof and a rejected human
+  criterion, where no decision prompt remains. Deleting hides a real gate;
+  leaving it `ready_call` invites forwarding a delivery core's release gaps
+  will refuse.
+- everything else — resume, and every read-only inspection — is untouched. A
+  criterion gate is a release-boundary concern, not a reason to strand a
+  mid-flight run.
+
+None of that is new policy: core's reducer already marks these rows
+`blocking`, and `criterion_release_gaps` already refuses to ship on them. This
+forwards that fact into the action list.
+
+Criterion capability or evidence failure is not absence. The key is omitted
+only when an available core SDK actually returns `None`; a missing SDK symbol
+or malformed current matrix fails on evidence, status, diagnosis, and delivery
+rather than exposing mutation actions without trustworthy readiness.
+
+### The write is the commitment; the readback is a courtesy
+
+`orcho_criterion_decide` records the decision first and then re-reads the
+matrix. Those two steps are deliberately decoupled: once the durable journal
+has changed, the append-only log will refuse a repeat of the same verdict, so
+raising a readback failure as if the decision had failed would leave an
+operator retrying into "already decided" with no way to tell a lost write from
+a recorded one. A failed readback therefore keeps `outcome:
+decision_recorded`, omits `matrix`, and names the reason in `matrix_error`.
+The caller re-reads with `orcho_run_evidence` instead of re-deciding.
+
+### Strict is the point
+
+The wire models are as strict as the contract, not merely shaped like it:
+required keys have no defaults, `gate_refs` / `executors` / `instructions` are
+non-empty, ids carry the `C<n>` grammar, summary counters are non-negative and
+must agree with `ready`, an explicit `null` for an unused human-decision
+optional is rejected on read, and every exact criterion model sets
+`extra="forbid"`. That last one is load-bearing: Pydantic's default is to
+*drop* an unmodelled key, so `{"kind": "inspection", "gate_refs": [...]}`
+would validate and then serialize without the `gate_refs` it was handed — MCP
+repairing a malformed payload and breaking byte-equivalence in the least
+visible way available. A permissive model would do two harmful things
+at once — publish a JSON Schema weaker than what clients are told to trust,
+and silently repair a truncated SDK payload into a plausible-looking wire
+payload. Negative coverage lives in
+`tests/unit/services/test_criterion_wire_validation.py`.
+
+### What MCP must never do
+
+Turn a developer claim, a reviewer finding, a transcript command, a
+command-name-only match, or an unrelated phase-handoff decision into proof;
+assign an executor; recompute a state or a readiness verdict; or infer an
+operator's `accept` / `reject` from chat prose. `orcho_criterion_decide`
+without an explicit verdict either elicits one natively or returns
+`operator_input_required` — and writes nothing either way.
+
+### Consumer census
+
+The repo-wide census behind this section (run before the projection landed)
+covered every import of the changed core plan / evidence / readiness SDK
+slices, every plan / evidence / status / diagnose / delivery / resource
+projection, the `PlanSliceRecord` / `EvidenceResult` / next-action
+serializers, the nullable dump policies, catalog registration, and the schema
+snapshot assertions. Two consumers needed changes beyond the additive ones:
+`PlanSliceRecord.acceptance_criteria` (was `list[str]`) and
+`services/run_artifacts.get_run_allowed_modifications`, which read the durable
+plan artifact's top level instead of the `{"artifact_version", "plan"}`
+envelope's inner body — the latter now goes through `_plan_body`.
+
+The per-task reference edges are deliberately NOT read from that artifact.
+They arrive on `PlanSummary.task_acceptance_refs`, the same public reader that
+hands over the criteria, so one plan yields one graph. Splitting a single
+contract across two readers lets them disagree, and a private-file read that
+degrades to `[]` would show fully typed criteria beside a silently missing set
+of owners. The SDK reader is fail-closed: a malformed edge raises rather than
+returning a partial graph.
+
+Enforced by `tests/unit/architecture/test_criterion_boundary.py`: one SDK call
+site, no local state table, no string criteria, no `null` for an absent
+criterion payload. Byte-equivalence against the installed core SDK's versioned
+examples lives in `tests/unit/services/test_criterion_wire_equivalence.py`.
+
 ## Provider-pressure projection (single source, four surfaces)
 
 A run is under *provider pressure* when core types its failure as a

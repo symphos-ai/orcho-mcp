@@ -44,6 +44,7 @@ group with its own name:
 | Tool | Purpose |
 |---|---|
 | `orcho_phase_handoff_decide` | Resolve a paused phase handoff (`awaiting_phase_handoff`). Writes a decision artifact under `<run_dir>/phase_handoff_decisions/{safe_handoff_id}.json`. `continue` / `retry_feedback` / `continue_with_waiver` leave `meta.status` paused for a follow-up `orcho_run_resume`; `halt` flips `meta.status` to `halted` synchronously. Pure state transition; never spawns. |
+| `orcho_criterion_decide` | Record an operator `accept` / `reject` on one `human` acceptance criterion (ADR 0188). Called without `decision`, it requests the verdict through native MCP form elicitation when the client supports it, and otherwise returns `operator_input_required` with the exact missing input and a ready-call — **writing nothing** in either case. A verdict is never inferred from conversation. All validation and persistence belong to the engine; unknown / non-human criteria, wrong-run decisions, and conflicting decisions fail before any write. |
 | `orcho_handoff_advice` | LLM advisor for a paused handoff: recommends the smallest honest next action and writes a durable advice artifact. Advice, never a decision. |
 | `orcho_delivery_decide` | Resolve a parked post-release delivery / correction gate. Delegates to orcho-core's SDK decision entrypoint; the SDK owns all delivery guards and state mutation. Pure state transition; never spawns. |
 
@@ -452,7 +453,7 @@ never returns a `pid`.
 | `applied` | `RunResumeResult` | yes | The run is genuinely resumable (`running` restart, `failed`, `interrupted`, or a non-terminal `halted`). Carries the fresh spawn handle (`pid` / `run_dir` / `started_at` / `command`). |
 | `pending_decision` | `ResumePendingDecisionResult` | no | Paused on `awaiting_phase_handoff` with no recorded decision. Resolve with `orcho_phase_handoff_decide` first, then resume. |
 | `superseded_by_child` | `ResumeBlockedResult` | no | A newer unfinished follow-up child is continuing this run. `recommended_run_id` names the child to resume instead of this parent. |
-| `recover_via_source_run` | `ResumeBlockedResult` | no | This run is a terminal / rejected recovery run, but durable lineage points at a *resumable source* run that still owns the retained checkpoint / worktree. `recommended_run_id` names that source. **Not success-shaped — no `pid`.** Carries a `ready_call` `orcho_run_resume` on the source, not a `from_run_plan`. |
+| `recover_via_source_run` | `ResumeBlockedResult` | no | This run is a terminal / rejected recovery run whose durable lineage points at a *source* run; `recommended_run_id` names it. **Not success-shaped — no `pid`.** The single `ready_call` is the via-source operation core's launch preflight accepts: `orcho_run_resume` on the source when its checkpoint resume passes preflight, or `orcho_run_start(from_run_plan=<source>)` when preflight refuses a same-run resume of the source (e.g. its `scheduled_gate_ledger.json` was finalized at `run.end`) but accepts a fresh launch off its persisted plan artifact. |
 | `rejected_terminal` | `ResumeBlockedResult` | no | The run is terminal (terminal success or a terminal halt reason) with no resumable lineage subject; resuming is inert. **Not success-shaped — no `pid`.** Points at read-only inspection, never a resume. `recommended_run_id` stays `None`. |
 
 `ResumeBlockedResult` carries **no spawn fields** (no `pid` / `run_dir` /
@@ -461,7 +462,8 @@ never returns a `pid`.
 [Diagnosing a run](#diagnosing-a-run--orcho_run_diagnose)): the
 `superseded_by_child` outcome carries a `ready_call` `orcho_run_resume`
 on the child; `recover_via_source_run` carries a `ready_call`
-`orcho_run_resume` on the source; `rejected_terminal` carries only
+`orcho_run_resume` on the source, or `orcho_run_start(from_run_plan=<source>)`
+when preflight refuses the source resume; `rejected_terminal` carries only
 read-only inspection calls.
 
 The guard is defensive: a run that cannot be classified (unresolvable /
@@ -524,6 +526,17 @@ returned `CallToolResult` is passed through verbatim, this never validates
 against or widens the success `outputSchema`. The wire contract is pinned by
 `tests/integration/protocol/test_stdio_inspect_only_refusal.py` and the L4
 `tests/acceptance/mock_pipeline/test_foreign_run_control_boundary.py`.
+
+That same wrapper is also the server's argument-name check, and it runs
+*first*: before dispatch it compares the incoming argument keys against the
+tool's published `inputSchema.properties` and, for any key the tool does not
+declare, returns a `CallToolResult` with `isError=true` and
+`structuredContent.kind='unknown_arguments'` naming the unknown key(s) and
+every accepted name. A call such as `orcho_run_start(project=...)` therefore
+never reaches a tool body and starts nothing. Pinned by
+`tests/unit/tool_arguments/test_unknown_arguments_rejected.py` (the registered
+handler, swept across every tool in the catalog) and
+`tests/integration/protocol/test_stdio_unknown_arguments.py` (the stdio wire).
 
 Deferred / out of scope:
 
@@ -743,6 +756,8 @@ fit the answer in its context window.
 | `"verification_receipts"` | `list[VerificationReceiptRecord]` — durable verification-environment receipts: interpreter, cwd, import checks, commands, clean-tree note, and artifact path. |
 | `"verification_timeline"` | `VerificationTimelineRecord` — canonical scheduled-gate ledger rows and identity-scoped events. Rows preserve `(command, hook, phase)`, declaration/selection facts, execution policy/consequence/executor/trigger, nullable disposition, and `receipt_evidence`. |
 | `"verification_cockpit"` | `VerificationTimelineRecord` — the same canonical scheduled-gate ledger projection under the cockpit view name; its rows and events are identical to `verification_timeline`. |
+| `"criterion_decisions"` | `list[HumanCriterionDecisionRecord]` — the run's append-only human-criterion decision log (ADR 0188) in durable write order. Each record carries the `decision_id` a matrix `human_decision` proof ref cites, `run_id`, `criterion_id`, the `accept` / `reject` verdict, core's canonical `recorded_at` (opaque — never reparsed), and `note` / `actor` / `supersedes` when used; an unused optional key is **absent**, never `null`. This is how a client that reconnects after a resume resolves a proof ref into the decision behind it. `[]` for a run with no recorded decisions. |
+| `"criterion_matrix"` | `CriterionMatrixRecord` — the ADR 0188 criterion matrix. One row per plan acceptance criterion, in plan order: `criterion_id`, `intent`, `verify` (`executable` / `agent_assertion` / `human`), the `executors` that own it, a discriminated `method` (`gates` with complete `(command, hook, phase)` identities / `inspection` / `manual` with the operator instructions), `proof_refs` (`receipt` / `finding` / `claim` / `human_decision`), `state`, `reason`, and `blocking`; plus `summary` (`total`, `blocking_open`, `ready`, `counts_by_state` in the canonical state order, `pending_human_ids`). Forwarded from orcho-core unchanged — no row state, readiness, receipt freshness, gate selection, executor, or blocking consequence is recomputed here. The key is **omitted** (never `null`) for a run with no criterion contract; a new-format plan with no criteria is present with `rows: []` and the zeroed summary. |
 
 ### Filters
 
@@ -830,17 +845,19 @@ terminal parent.
 | `stalled` | Core observed that a running startup exceeded its durable progress budget. | Inspect `orcho_run_status` and `orcho_run_evidence(slice="errors")`; `orcho_run_cancel(run_id)` is ready only when `control="mcp_controllable"`. `available_actions=[]`; never resume or watch. |
 | `needs_decision` | Paused on `awaiting_phase_handoff`; an operator must record a decision first. | Typed decide calls (see below); `available_actions` carries the verbs. |
 | `needs_delivery_decision` | Parked at a post-release delivery / correction gate. | Inspect `orcho_delivery_gate`; choose one of its ready `orcho_delivery_decide` calls. |
-| `recover_via_source_run` | This run is a terminal / rejected recovery run, but durable lineage points at a *resumable source* run that still owns the retained checkpoint / worktree. | `ready_call` `orcho_run_resume(run_id=recommended_run_id)` — resume the source, **not** a `from_run_plan` against this inert run. |
+| `recover_via_source_run` | This run is a terminal / rejected recovery run whose durable lineage points at a *source* run (`recommended_run_id`); continue via the source, **not** via this inert run. `recommended_next_action` says which via-source operation core's launch preflight accepts. | `resume_source_run` → `ready_call` `orcho_run_resume(run_id=recommended_run_id)`. `plan_artifact_continuation` → `ready_call` `orcho_run_start(from_run_plan=recommended_run_id)`: preflight refuses a same-run resume of the source (e.g. a finalized scheduled-gate ledger) but accepts a fresh launch off its persisted plan. Never a resume the preflight would refuse. |
 | `resume_inert_terminal` | Terminal (terminal success or a terminal halt reason); resuming is inert. | `ready_call` `orcho_run_evidence(slice="errors")` + `orcho_run_status` — never a resume. The typed `recommended_next_action` distinguishes a `plan_artifact_continuation`, a clean `start_followup`, and a `stop_unknown` dead-end (see below). |
 | `superseded_by_child` | A newer unfinished follow-up child continues this run. | `ready_call` `orcho_run_resume(run_id=recommended_run_id)` — resume the child, not this parent. |
+| `delivery_inconsistent` | The target checkout carries a delivery commit this run does not record (the run stopped between the commit and its audit, or predates the delivery ledger). `reason` names the sha. | `ready_call` `orcho_run_diagnose` + `orcho_run_evidence(slice="delivery")` — never a resume. `recommended_next_action='reconcile_delivery'`: an operator verifies the commit and records it with the CLI `orcho reconcile-delivery <run_id> --apply --commit <sha>`; `orcho_run_resume` is refused (`resume_outcome='delivery_inconsistent'`) until then. |
 | `blocked_worktree` | A follow-up blocked because the parent's undelivered diff is not replayable here. | See [blocked_worktree shape](#blocked_worktree-next-actions). |
 | `provider_pressure` | A residual `halted` / `failed` / `interrupted` stop that core typed as a provider runtime/access failure (rate-limit, transient runtime fault, access loss) — **not** a rejected review / failed acceptance / operator halt. The typed `provider_pressure` field carries the core facts and conservative resume-later/inspect actions. See [provider pressure](#provider-pressure). | `ready_call` `orcho_run_evidence(slice="errors")` + `orcho_run_resume(run_id)` (+ `orcho_run_status`) from the shared helper; never a feedback verb. |
 | `halted` / `failed` / `interrupted` | A resumable non-terminal stop. | `ready_call` `orcho_run_resume(run_id)` + `orcho_run_evidence(slice="errors")`. |
 
-`recommended_run_id` names the run to resume instead of this one (the
-active child for `superseded_by_child`; the resumable source for
-`recover_via_source_run`; the known parent for `blocked_worktree`); it is
-`None` otherwise.
+`recommended_run_id` names the run to continue through instead of this one
+(the active child for `superseded_by_child`; the source for
+`recover_via_source_run` — the resume target, or the `from_run_plan` parent
+when the source cannot be resumed in place; the known parent for
+`blocked_worktree`); it is `None` otherwise.
 
 ### Provider pressure
 
@@ -892,10 +909,10 @@ same `services.run_lineage` resolver that backs
 
 | `continuation_subject` | `recommended_next_action` | Meaning |
 |---|---|---|
-| `source_run_checkpoint` | `resume_source_run` | Resume the resumable source run's checkpoint (the inert recovery run is **not** the subject). |
+| `source_run_checkpoint` | `resume_source_run` | Resume the source run's checkpoint — core's launch preflight accepts it (the inert recovery run is **not** the subject). |
 | `active_child_run` | `resume_active_child` | Resume the live follow-up child. |
 | `delivery_gate` | `delivery_decision` | Resolve the pending delivery / correction gate. |
-| `plan_artifact` | `plan_artifact_continuation` | Implement the persisted plan artifact as a **new** run via `from_run_plan` (see warning below). |
+| `plan_artifact` | `plan_artifact_continuation` | Implement the persisted plan artifact as a **new** run via `from_run_plan` (see warning below). `recommended_run_id` is the plan-owning run: this run, or — under `recover_via_source_run` — the source, when preflight refuses to resume the source in place but accepts a launch off its plan. |
 | `none` | `start_followup` | Clean terminal-success; start a fresh follow-up. |
 | `unknown` | `stop_unknown` | Terminal dead-end with no durable continuation subject; `recovery_lineage.missing_facts` enumerates exactly which durable facts are absent. No `from_run_plan` is offered. |
 

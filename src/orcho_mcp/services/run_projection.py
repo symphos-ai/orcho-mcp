@@ -372,6 +372,12 @@ class PendingHandoffProjection:
     decision_state: Literal["recorded", "missing", "degraded"] = "missing"
     decision_degraded_reason: str | None = None
     suggested_next_action: str | None = None
+    # ``human`` acceptance criteria still awaiting an operator verdict while the
+    # run is paused. Deciding them (``orcho_criterion_decide``) BEFORE
+    # ``orcho_run_resume`` lets final acceptance read a ready matrix instead of
+    # rejecting into a correction follow-up. Mirrors core's
+    # ``RunDiagnosis.pending_human_criteria``; empty without an accepted plan.
+    pending_human_criteria: list[str] = field(default_factory=list)
 
 
 def _round_label(
@@ -396,25 +402,65 @@ def _round_label(
 
 
 def _suggested_next_action(
-    decision_state: Literal["recorded", "missing", "degraded"], actions: list[str],
+    decision_state: Literal["recorded", "missing", "degraded"],
+    actions: list[str],
+    pending_human: list[str] | tuple[str, ...] = (),
 ) -> str:
     """One-line next-step pointer for a pending handoff.
 
     When a decision artifact already exists the operator's choice is
     recorded and only ``orcho_run_resume`` remains; otherwise the run is
     still awaiting a decision via ``orcho_phase_handoff_decide``.
+    ``pending_human`` names the ``human`` criteria still awaiting a verdict:
+    the pointer tells the operator to record them before resuming, so final
+    acceptance sees a ready matrix instead of rejecting into a correction
+    follow-up.
     """
     if decision_state == "recorded":
-        return (
+        base = (
             "call orcho_run_resume to apply the recorded decision and "
             "continue the run"
         )
-    if decision_state == "degraded":
+    elif decision_state == "degraded":
         return "inspect orcho_run_diagnose; the persisted handoff decision could not be read"
-    return (
-        "call orcho_phase_handoff_decide to resolve the pause, then "
-        "orcho_run_resume to continue"
-    )
+    else:
+        base = (
+            "call orcho_phase_handoff_decide to resolve the pause, then "
+            "orcho_run_resume to continue"
+        )
+    if pending_human:
+        listed = ", ".join(pending_human)
+        base = (
+            f"{base}; open human criteria {listed}: record each with "
+            "orcho_criterion_decide before orcho_run_resume, so final "
+            "acceptance sees them"
+        )
+    return base
+
+
+def _pending_human_criteria(run_id: str, run_dir: Path) -> list[str]:
+    """``human`` criteria without a recorded verdict, from the run's own matrix.
+
+    Read through the SDK matrix reader (the same reducer every surface uses);
+    never raises — no accepted plan, no human criteria, or an unreadable
+    matrix simply yields ``[]``, and the projection stays byte-identical to
+    a run written before human criteria existed.
+    """
+    try:
+        from sdk.criterion_matrix import get_criterion_matrix
+
+        matrix = get_criterion_matrix(run_id, runs_dir=run_dir.parent, cwd=None)
+    except Exception:  # noqa: BLE001 — a read-only hint must never break the projection
+        return []
+    if not isinstance(matrix, dict):
+        return []
+    summary = matrix.get("summary")
+    if not isinstance(summary, dict):
+        return []
+    ids = summary.get("pending_human_ids")
+    if not isinstance(ids, list):
+        return []
+    return [str(cid) for cid in ids if cid]
 
 
 def project_pending_handoff(
@@ -467,6 +513,7 @@ def project_pending_handoff(
     loop_max_rounds = _coerce_optional_int(handoff_payload.get("loop_max_rounds"))
     last_output = _coerce_optional_str(handoff_payload.get("last_output"))
     decision = _read_decision_artifact(run_id, handoff_id, runs_dir=run_dir.parent)
+    pending_human = _pending_human_criteria(run_id, run_dir)
 
     return PendingHandoffProjection(
         status=status,
@@ -483,7 +530,9 @@ def project_pending_handoff(
         decision_degraded_reason=decision.reason,
         suggested_next_action=_suggested_next_action(
             decision.state, actions,
+            pending_human,
         ),
+        pending_human_criteria=pending_human,
     )
 
 
@@ -1268,6 +1317,9 @@ _CONDITION_RECOVER_VIA_SOURCE_RUN = "recover_via_source_run"
 _CONDITION_RESUME_INERT_TERMINAL = "resume_inert_terminal"
 _CONDITION_STALLED = "stalled"
 _CONDITION_ACTIVE = "active"
+# ADR 0191 — Git carries a delivery commit for the run that its durable record
+# does not; core resolves it (never a resume target).
+_CONDITION_DELIVERY_INCONSISTENT = "delivery_inconsistent"
 
 # Conditions where core's ``run_diagnosis`` already encodes the correct
 # terminal / decision / recover answer. The post-core rejected-dead-end
@@ -1282,6 +1334,7 @@ _CORE_RESOLVED_CONDITIONS = frozenset({
     _CONDITION_SUPERSEDED_BY_CHILD,
     _CONDITION_BLOCKED_WORKTREE,
     _CONDITION_NEEDS_DELIVERY_DECISION,
+    _CONDITION_DELIVERY_INCONSISTENT,
     _CONDITION_CORRECTION_FOLLOWUP_REQUIRED,
     _CONDITION_RECOVER_VIA_SOURCE_RUN,
     _CONDITION_RESUME_INERT_TERMINAL,
@@ -1315,6 +1368,8 @@ class RunDiagnosisProjection:
     recommended_action: str | None = None
     handoff_id: str | None = None
     available_actions: list[str] = field(default_factory=list)
+    # Open ``human`` criteria on a paused run (core ``pending_human_criteria``).
+    pending_human_criteria: list[str] = field(default_factory=list)
     parent_run_id: str | None = None
     blocked: bool = False
     block_message: str | None = None
@@ -1666,6 +1721,9 @@ def _project_run_diagnosis(
             halt_reason=halt_reason,
             handoff_id=diagnosis.handoff_id,
             available_actions=list(diagnosis.available_actions),
+            pending_human_criteria=list(
+                getattr(diagnosis, "pending_human_criteria", ()) or ()
+            ),
             parent_run_id=parent_run_id,
             decision_artifact_exists=decision_recorded,
             decision_state=decision_state,
@@ -1753,6 +1811,24 @@ def _project_run_diagnosis(
             available_actions=list(diagnosis.available_actions),
             parent_run_id=parent_run_id,
             delivery_gate_kind=delivery_gate_kind,
+            continuation_subject=diagnosis.continuation_subject,
+            recommended_next_action=diagnosis.recommended_next_action,
+            recovery_lineage=recovery_lineage,
+        )
+
+    # (4b) delivery_inconsistent — Git carries a delivery commit the run does
+    # not record (ADR 0191). Core owns the probe (ledger + read-only git); MCP
+    # preserves the verdict, the reason (which names the sha and the CLI
+    # command) and the ``reconcile_delivery`` recommendation verbatim.
+    if cond == _CONDITION_DELIVERY_INCONSISTENT:
+        return RunDiagnosisProjection(
+            condition=cond,
+            reason=diagnosis.reason,
+            run_id=run_id,
+            status=status,
+            halt_reason=halt_reason,
+            recommended_run_id=diagnosis.recommended_run_id,
+            parent_run_id=parent_run_id,
             continuation_subject=diagnosis.continuation_subject,
             recommended_next_action=diagnosis.recommended_next_action,
             recovery_lineage=recovery_lineage,
