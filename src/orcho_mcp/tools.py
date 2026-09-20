@@ -945,8 +945,8 @@ async def orcho_run_start(
     and the subprocess exits rc=4; the caller resolves the pause via
     ``orcho_phase_handoff_decide`` and follows up with
     ``orcho_run_resume`` for ``continue`` / ``retry_feedback`` /
-    ``continue_with_waiver`` actions. ``halt`` is terminal and needs no
-    resume.
+    ``retry_verification`` / ``continue_with_waiver`` actions. ``halt``
+    is terminal and needs no resume.
 
     Attachments:
         ``attach``: paths whose kind is auto-detected from extension.
@@ -1243,6 +1243,10 @@ async def orcho_phase_handoff_decide(
       2. Caller reads the active payload via ``orcho_run_status`` and
          decides: ``continue`` (manual override), ``retry_feedback``
          (one extra human-directed plan round; requires ``feedback``),
+         ``retry_verification`` (re-run the recorded blocking
+         verification gates after the external preconditions they
+         failed on have been fixed; takes no ``feedback`` — there is no
+         agent round, the engine just runs the gates again),
          ``continue_with_waiver`` (accept the rejected verdict and
          proceed, recording a durable operator waiver; requires
          ``feedback``), or ``halt`` (terminate the run). ``note`` is
@@ -1255,10 +1259,10 @@ async def orcho_phase_handoff_decide(
          ``<run_dir>/phase_handoff_decisions/{safe_handoff_id}.json``.
          For ``halt``, ``meta.status`` is flipped to ``halted``
          synchronously and ``meta.phase_handoff`` is cleared.
-      4. ``continue`` / ``retry_feedback`` / ``continue_with_waiver`` do
-         not advance the run on their own. Follow up with
-         ``orcho_run_resume`` to actually resume execution. ``halt`` is
-         terminal — no resume.
+      4. ``continue`` / ``retry_feedback`` / ``retry_verification`` /
+         ``continue_with_waiver`` do not advance the run on their own.
+         Follow up with ``orcho_run_resume`` to actually resume
+         execution. ``halt`` is terminal — no resume.
 
     Decisions are exact-payload idempotent: the same
     ``(handoff_id, action, feedback, note)`` may be replayed and
@@ -1270,11 +1274,14 @@ async def orcho_phase_handoff_decide(
         handoff_id: id from the active ``meta.phase_handoff.id``
             (e.g. ``"validate_plan:plan_round:2"``).
         action: ``"continue"``, ``"retry_feedback"``,
-            ``"continue_with_waiver"``, or ``"halt"``. Must be in the
-            active handoff's ``available_actions``.
+            ``"retry_verification"``, ``"continue_with_waiver"``, or
+            ``"halt"``. Must be in the active handoff's
+            ``available_actions``.
         feedback: human direction injected into the next round (or the
             waiver text). Required for ``retry_feedback`` and
-            ``continue_with_waiver``; rejected for ``continue`` / ``halt``.
+            ``continue_with_waiver``; rejected for ``continue`` /
+            ``halt``. Not used for ``retry_verification`` — that action
+            re-runs the recorded gates and carries no message.
         note: free-form audit text.
 
     A run NOT started by this MCP server (no durable ``mcp_supervisor.json``

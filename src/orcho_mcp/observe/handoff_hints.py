@@ -40,17 +40,21 @@ from orcho_mcp.services.run_projection import project_handoff_read_model
 # structured decision packet the agent can render directly. Orcho stays
 # bounded; the agent owns the conversation.
 
-# Severity-ordered action preference for ``default_action``. ``retry_feedback``
-# is the safest default after a reject because it loops back through the
-# pipeline; ``continue`` skips the gate; ``halt`` is terminal.
-# ``continue_with_waiver`` is intentionally last: it is a deliberate
-# override that bypasses the gate while recording a durable operator
-# waiver, never the safe auto-default Orcho should suggest unsolicited —
-# so on a rejected handoff (which always offers continue / retry_feedback
-# / halt) it is never picked, but it stays in the tuple so the preference
-# list enumerates the full action vocabulary.
+# Severity-ordered action preference for ``default_action``.
+# ``retry_verification`` is first: the runtime only offers it when the
+# failure was the verification environment itself, so re-running the
+# gates bypasses nothing and is strictly safer than a waiver or a halt.
+# ``retry_feedback`` is next — the safest default after a reject because
+# it loops back through the pipeline; ``continue`` skips the gate;
+# ``halt`` is terminal. ``continue_with_waiver`` is intentionally last:
+# it is a deliberate override that bypasses the gate while recording a
+# durable operator waiver, never the safe auto-default Orcho should
+# suggest unsolicited — so on a rejected handoff (which always offers
+# continue / retry_feedback / halt) it is never picked, but it stays in
+# the tuple so the preference list enumerates the full action vocabulary.
 _HANDOFF_DEFAULT_ACTION_PREFERENCE: tuple[str, ...] = (
-    "retry_feedback", "continue", "halt", "continue_with_waiver",
+    "retry_verification", "retry_feedback", "continue", "halt",
+    "continue_with_waiver",
 )
 
 # Actions that require a free-form ``feedback`` string alongside the
@@ -69,6 +73,7 @@ _HANDOFF_FEEDBACK_ACTIONS: frozenset[str] = frozenset({
 # that need the raw set.
 _HANDOFF_KNOWN_ACTIONS: frozenset[str] = frozenset({
     "continue", "retry_feedback", "halt", "continue_with_waiver",
+    "retry_verification",
 })
 
 # Operator-side prompt the agent surfaces to the user when collecting
@@ -115,6 +120,9 @@ _HANDOFF_ACTION_DESCRIPTIONS: dict[str, str] = {
     "continue": "override and continue",
     "halt": "stop the run",
     "continue_with_waiver": "override with a recorded waiver",
+    "retry_verification": (
+        "re-run the failed verification gates after fixing the environment"
+    ),
 }
 
 # Statuses that signal a paused run requiring a handoff decision. Mirrors
@@ -152,11 +160,15 @@ def _handoff_pause_summary(
 def _handoff_default_action(actions: list[str]) -> str | None:
     """Pick a safe default from ``available_actions``.
 
-    Preference order is ``retry_feedback`` > ``continue`` > ``halt`` >
-    ``continue_with_waiver`` — the waiver override sits last because it
-    deliberately bypasses the gate, so Orcho never suggests it unsolicited.
-    Refuses to suggest an action that is not on the offered list — Orcho
-    never invents capabilities the runtime did not advertise.
+    Preference order is ``retry_verification`` > ``retry_feedback`` >
+    ``continue`` > ``halt`` > ``continue_with_waiver``.
+    ``retry_verification`` leads because the runtime only offers it when
+    the verification environment itself failed: re-running the gates
+    bypasses nothing, so it is safer than both the waiver and the halt.
+    The waiver override sits last because it deliberately bypasses the
+    gate, so Orcho never suggests it unsolicited. Refuses to suggest an
+    action that is not on the offered list — Orcho never invents
+    capabilities the runtime did not advertise.
     """
     for candidate in _HANDOFF_DEFAULT_ACTION_PREFERENCE:
         if candidate in actions:
@@ -196,6 +208,10 @@ def _build_choices(
     - **``continue``**: ``requires_feedback=False``, ``args`` is
       complete (``run_id``, ``handoff_id``, ``action``), safe to
       send as-is. Same resume followup.
+    - **``retry_verification``**: takes no feedback — the operator
+      fixed the verification environment, there is nothing to say to
+      the pipeline. ``requires_feedback=False``, ``elicitation=None``,
+      ``args`` complete and safe to send as-is, resume followup.
     - **``halt``**: ``requires_feedback=False``, ``args`` complete,
       ``followup=None`` (halt is terminal — no resume).
     """

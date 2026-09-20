@@ -579,7 +579,10 @@ class HandoffDecisionChoice(BaseModel):
     under ``feedback_field`` before calling — ``args`` deliberately
     omits the feedback key so a weak agent cannot forward a placeholder
     string. When ``requires_feedback`` is ``False``, ``args`` is
-    complete and safe to send as-is.
+    complete and safe to send as-is. ``retry_verification`` is
+    feedback-free on purpose: the engine re-runs the recorded set of
+    blocking verification gates, with no agent round in between, so
+    there is nothing for the user to write.
 
     ``followup`` carries the next step after the decision is recorded
     (today: ``orcho_run_resume`` for non-halt actions). ``None`` for
@@ -591,7 +594,8 @@ class HandoffDecisionChoice(BaseModel):
     )
     action: str = Field(
         description="The decision verb (``continue`` / ``retry_feedback`` "
-                    "/ ``continue_with_waiver`` / ``halt``).",
+                    "/ ``retry_verification`` / ``continue_with_waiver`` "
+                    "/ ``halt``).",
     )
     tool: str = Field(
         description="MCP tool to call for the decision (today: "
@@ -607,7 +611,11 @@ class HandoffDecisionChoice(BaseModel):
     requires_feedback: bool = Field(
         description="``True`` when the action needs a free-form feedback "
                     "string from the user before the call. ``False`` "
-                    "means ``args`` is complete and safe to send as-is.",
+                    "means ``args`` is complete and safe to send as-is — "
+                    "including ``retry_verification``, which takes no "
+                    "feedback because the engine simply re-runs the "
+                    "recorded blocking verification gates without an "
+                    "agent round.",
     )
     feedback_field: str | None = Field(
         default=None,
@@ -625,6 +633,7 @@ class HandoffDecisionChoice(BaseModel):
         description="The tool call to make after the decision is recorded. "
                     "Today: ``orcho_run_resume`` with ``{run_id}`` for "
                     "``continue`` / ``retry_feedback`` / "
+                    "``retry_verification`` / "
                     "``continue_with_waiver``; ``None`` for "
                     "``halt`` (terminal — no resume).",
     )
@@ -708,8 +717,11 @@ class HandoffDecisionHint(BaseModel):
         default=None,
         description="Suggested action when the agent has no explicit user "
                     "preference. Chosen from ``available_actions`` only "
-                    "(``retry_feedback`` > ``continue`` > ``halt`` > "
-                    "``continue_with_waiver``; the waiver override sits "
+                    "(``retry_verification`` > ``retry_feedback`` > "
+                    "``continue`` > ``halt`` > "
+                    "``continue_with_waiver``; re-running the "
+                    "verification gates leads because it bypasses "
+                    "nothing, and the waiver override sits "
                     "last and is never suggested unsolicited). "
                     "``None`` if no actions are available — Orcho never "
                     "suggests an action the runtime did not offer.",
@@ -741,6 +753,7 @@ class HandoffDecisionHint(BaseModel):
         description="Ready-to-call decision menu. One entry per known "
                     "action in ``available_actions`` (today: "
                     "``continue`` / ``retry_feedback`` / "
+                    "``retry_verification`` / "
                     "``continue_with_waiver`` / ``halt``). "
                     "Each choice carries pre-filled tool args, a "
                     "``requires_feedback`` flag, and a ``followup`` "
@@ -853,7 +866,8 @@ class RunLiveHandoff(BaseModel):
     default_action: str | None = Field(
         default=None,
         description="Suggested action from the handoff-hint heuristic "
-                    "(``retry_feedback`` > ``continue`` > ``halt`` > "
+                    "(``retry_verification`` > ``retry_feedback`` > "
+                    "``continue`` > ``halt`` > "
                     "``continue_with_waiver``); ``None`` when none offered.",
     )
     verdict: str | None = Field(
