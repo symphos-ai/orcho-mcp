@@ -913,6 +913,12 @@ async def _watch_for_handoff(run_id: str):
             id="all-four",
         ),
         pytest.param(
+            ["retry_verification", "continue_with_waiver", "halt"],
+            # env-only gate failure menu — all three known, runtime order kept.
+            ["retry_verification", "continue_with_waiver", "halt"],
+            id="env-gate-three",
+        ),
+        pytest.param(
             ["continue", "halt"],
             ["continue", "halt"],
             id="continue-and-halt",
@@ -1118,3 +1124,94 @@ async def test_handoff_choice_halt_terminal_no_followup(fake_workspace):
         "handoff_id": "validate_plan:plan_round:1",
         "action": "halt",
     }
+
+
+@pytest.mark.anyio
+async def test_handoff_choice_retry_verification_feedback_free(fake_workspace):
+    """``retry_verification`` is a callable, feedback-free choice.
+
+    The runtime offers it when the verification gates failed on the
+    environment rather than on the work, so the operator has nothing to
+    tell the pipeline — the choice carries complete ``args``, advertises
+    no feedback field or elicitation, and resumes the run afterwards.
+    It is also the safest offer on this menu, so it wins ``default_action``
+    over ``continue_with_waiver`` and ``halt``.
+    """
+    _write_handoff_run(
+        fake_workspace,
+        available_actions=["retry_verification", "continue_with_waiver", "halt"],
+    )
+    r = await _watch_for_handoff(_HANDOFF_RUN_ID)
+    assert r.handoff is not None
+
+    by_action = {c.action: c for c in r.handoff.choices}
+    assert list(by_action) == [
+        "retry_verification", "continue_with_waiver", "halt",
+    ]
+
+    retry = by_action["retry_verification"]
+    assert retry.tool == "orcho_phase_handoff_decide"
+    assert retry.args == {
+        "run_id": _HANDOFF_RUN_ID,
+        "handoff_id": "validate_plan:plan_round:1",
+        "action": "retry_verification",
+    }
+    # No feedback anywhere: not in args, not advertised, not elicited.
+    assert "feedback" not in retry.args
+    assert retry.requires_feedback is False
+    assert retry.feedback_field is None
+    assert retry.feedback_placeholder is None
+    assert retry.elicitation is None
+    # Non-terminal — the decision is followed by a resume.
+    assert retry.followup is not None
+    assert retry.followup.tool == "orcho_run_resume"
+    assert retry.followup.args == {"run_id": _HANDOFF_RUN_ID}
+
+    # Safest offer on this menu wins the default; the waiver stays gated.
+    assert r.handoff.default_action == "retry_verification"
+    assert r.handoff.feedback_required_for == ["continue_with_waiver"]
+    assert by_action["continue_with_waiver"].requires_feedback is True
+    assert by_action["halt"].followup is None
+
+    prompt = r.handoff.recommended_user_prompt
+    assert "- retry_verification:" in prompt
+    assert "If retry_verification, provide feedback" not in prompt
+
+
+@pytest.mark.anyio
+async def test_handoff_retry_verification_not_invented(fake_workspace):
+    """Orcho never offers ``retry_verification`` the runtime did not.
+
+    Registering the verb must not make it appear on menus that omit it,
+    nor let it win ``default_action`` there.
+    """
+    _write_handoff_run(
+        fake_workspace,
+        available_actions=["continue_with_waiver", "halt"],
+    )
+    r = await _watch_for_handoff(_HANDOFF_RUN_ID)
+    assert r.handoff is not None
+    assert "retry_verification" not in r.handoff.available_actions
+    assert "retry_verification" not in [c.action for c in r.handoff.choices]
+    assert r.handoff.default_action == "halt"
+
+
+def test_every_known_action_is_fully_registered():
+    """Invariant: a known verb carries prompt copy and a default rank.
+
+    ``_build_choices`` indexes ``_HANDOFF_ACTION_DESCRIPTIONS`` directly,
+    so a verb added to ``_HANDOFF_KNOWN_ACTIONS`` alone would raise
+    ``KeyError`` at the exact moment the runtime paused — the one moment
+    the builder must never raise. Missing it from the preference tuple
+    would instead silently drop it out of ``default_action`` ranking.
+    """
+    from orcho_mcp.observe.handoff_hints import (
+        _HANDOFF_ACTION_DESCRIPTIONS,
+        _HANDOFF_DEFAULT_ACTION_PREFERENCE,
+        _HANDOFF_KNOWN_ACTIONS,
+    )
+
+    for action in _HANDOFF_KNOWN_ACTIONS:
+        assert action in _HANDOFF_ACTION_DESCRIPTIONS
+        assert _HANDOFF_ACTION_DESCRIPTIONS[action]
+        assert action in _HANDOFF_DEFAULT_ACTION_PREFERENCE
