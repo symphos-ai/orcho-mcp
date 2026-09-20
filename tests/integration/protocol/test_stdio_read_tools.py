@@ -252,6 +252,86 @@ async def test_stdio_watch_handoff_waiver_wire_surface(fake_workspace):
 
 
 @pytest.mark.anyio
+async def test_stdio_watch_handoff_retry_verification_wire_surface(fake_workspace):
+    """``retry_verification`` round-trips over stdio as a callable choice.
+
+    Seeds a pause raised by a blocking verification gate and asserts an
+    MCP-speaking client sees the verb end-to-end: it rides verbatim in
+    ``available_actions``, wins ``default_action``, stays out of
+    ``feedback_required_for``, and serialises as exactly one choice with
+    complete ``args``, no feedback affordances, and the non-terminal
+    ``orcho_run_resume`` followup. Guards against the structured content
+    dropping the verb or gating it behind feedback it does not accept.
+    """
+    seeded_actions = ["retry_verification", "continue_with_waiver", "halt"]
+    write_run(
+        fake_workspace, "20260101_000001",
+        meta={
+            "project": "/p",
+            "status": "awaiting_phase_handoff",
+            "task": "retry_verification wire smoke",
+            "phase_handoff": {
+                "id": "implement:verification_gates:1",
+                "phase": "implement",
+                "available_actions": seeded_actions,
+                "findings": [
+                    {"severity": "P1", "title": "lint gate could not run"},
+                ],
+            },
+        },
+        events=[_ev(1), _ev(2)],
+    )
+
+    async with initialized_stdio_session(fake_workspace) as (session, _):
+        result = await session.call_tool(
+            "orcho_run_watch",
+            {
+                "run_id": "20260101_000001",
+                "since_seq": 0,
+                "until": "handoff_or_terminal",
+                "timeout_s": 5,
+            },
+        )
+        payload = result.structuredContent
+        assert payload is not None
+        assert payload["trigger"]["kind"] == "handoff"
+        handoff = payload["handoff"]
+        assert handoff is not None
+        # Verbatim runtime offering, and the safest verb wins the default.
+        assert handoff["available_actions"] == seeded_actions
+        assert handoff["default_action"] == "retry_verification"
+        # The verb takes no feedback, so only the waiver is gated.
+        assert handoff["feedback_required_for"] == ["continue_with_waiver"]
+
+        # Choice order mirrors the seeded runtime order.
+        assert [c["action"] for c in handoff["choices"]] == seeded_actions
+        retries = [
+            c for c in handoff["choices"]
+            if c["action"] == "retry_verification"
+        ]
+        assert len(retries) == 1, (
+            "retry_verification must serialise as exactly one decision choice"
+        )
+        [retry] = retries
+        assert retry["tool"] == "orcho_phase_handoff_decide"
+        assert retry["args"] == {
+            "run_id": "20260101_000001",
+            "handoff_id": "implement:verification_gates:1",
+            "action": "retry_verification",
+        }
+        # No feedback affordances anywhere on the wire.
+        assert retry["requires_feedback"] is False
+        assert retry["feedback_field"] is None
+        assert retry["feedback_placeholder"] is None
+        assert retry["elicitation"] is None
+        # Non-terminal verb: the complete resume followup rides through.
+        assert retry["followup"] == {
+            "tool": "orcho_run_resume",
+            "args": {"run_id": "20260101_000001"},
+        }
+
+
+@pytest.mark.anyio
 async def test_stdio_watch_codex_profile(fake_workspace):
     """``interaction_client="codex"`` round-trips through stdio
     and shapes ``client_hints`` toward the Ask-style render.

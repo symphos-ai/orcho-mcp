@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+## 0.11.0 - 2026-09-20
+
+The MCP server now presents the environment-only verification retry from
+`orcho-core` 0.11.0 as a complete typed operator action.
+
+### Changed
+
+- Requires `orcho-core>=0.11.0,<0.12`. Upgrade both packages together and
+  restart the server before using the new action.
+
+### Fixed
+
+- A parked run that core marks eligible for `retry_verification` now includes
+  that action in typed handoff choices instead of exposing it only in the raw
+  available-action list.
+- `retry_verification` becomes the default action when core recommends it. The
+  choice requires no feedback, includes complete call arguments, and provides
+  the follow-up resume operation for the same run.
+
+### Upgrade Notes
+
+- Restart long-lived MCP processes after upgrading so their tool responses use
+  the 0.11 core and projection contracts.
+
 ## 0.10.0 - 2026-09-17
 
 The MCP server exposes criterion evidence and recoverable delivery from
