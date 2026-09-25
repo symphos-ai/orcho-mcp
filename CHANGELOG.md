@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Changed
+
+- `orcho_reconcile_delivery` documents that `commit` may name the operator's
+  own delivery commit after the run's delivery commit failed; `orcho-core`
+  records it when its parent and tree match the intended delivery.
+
 ## 0.11.0 - 2026-09-20
 
 The MCP server now presents the environment-only verification retry from
