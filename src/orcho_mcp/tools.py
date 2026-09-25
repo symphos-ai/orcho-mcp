@@ -1385,14 +1385,19 @@ def orcho_reconcile_delivery(
     operator has delivered the run manually. The operator must have verified
     that the existing commit belongs to this run. Core discovers the commit
     and records its delivery with operator attribution and reconciled
-    provenance. A rejected release retains its verdict and delivery override;
+    provenance. When the run's own delivery commit failed, core also accepts
+    a commit the operator made by hand, whatever its message, if its only
+    parent is the run's recorded delivery base and its tree equals the run's
+    change. A rejected release retains its verdict and delivery override;
     this records delivery without approving that release.
 
     Args:
         run_id: run whose delivery needs recording.
         operator: identity of the operator recording the delivery.
         commit: optional SHA or unique prefix of the commit verified by the
-            operator; must match the commit discovered by core.
+            operator; must match the commit discovered by core, or be the
+            operator's own delivery of the run's change after a failed
+            engine commit.
         note: optional operator rationale, recorded by core.
         workspace: optional workspace path for SDK run lookup.
         runs_dir: optional runs directory for SDK run lookup.
