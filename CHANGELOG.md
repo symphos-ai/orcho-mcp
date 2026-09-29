@@ -2,8 +2,15 @@
 
 ## Unreleased
 
+## 0.11.1 - 2026-09-29
+
+This release keeps delivery reconciliation guidance aligned with
+`orcho-core` 0.11.1.
+
 ### Changed
 
+- Requires `orcho-core>=0.11.1,<0.12`. Upgrade the package set together and
+  restart long-lived MCP server processes.
 - `orcho_reconcile_delivery` documents that `commit` may name the operator's
   own delivery commit after the run's delivery commit failed; `orcho-core`
   records it when its parent and tree match the intended delivery.
